@@ -237,6 +237,7 @@ pub(super) fn draw_shelf(
     for (url, round) in &layout.nearby {
         app.prefetch(url.as_deref(), COVER, *round);
     }
+    let marker = playing_marker(app);
     if let Some(y) = row(area, layout.y) {
         let pageable = layout.total > layout.items.len();
         let title_width = area.width.saturating_sub(if pageable { 28 } else { 2 }) as usize;
@@ -277,11 +278,17 @@ pub(super) fn draw_shelf(
         }
         draw_cover(frame, app, (x, cover_y), area, item, COVER);
         let buf = frame.buffer_mut();
-        let title_style = if is_selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+        let playing = is_playing(app, item);
+        let title_style = card_title_style(accent, playing, is_selected);
         let width = COVER.width as usize;
         let text_y = cover_y + COVER.height as i32;
         if let Some(y) = row(area, text_y) {
-            buf.set_string(x, y, text::truncate(&item.title, width), title_style);
+            let title_width = if playing { width - 4 } else { width };
+            buf.set_string(x, y, text::truncate(&item.title, title_width), title_style);
+            // Below the cover, so it never lands on image cells.
+            if playing {
+                buf.set_string(x + COVER.width - 3, y, marker, Style::new().fg(accent));
+            }
         }
         if let Some(y) = row(area, text_y + 1) {
             buf.set_string(x, y, text::truncate(&item.subtitle, width), Style::new().fg(MUTED));
@@ -309,6 +316,7 @@ fn draw_shortcuts(
 ) {
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let marker = playing_marker(app);
     let columns = shortcut_columns(area.width);
     let tile_width = (area.width - TILE_GAP * (columns - 1)) / columns;
     for (index, item) in layout.items.iter().enumerate() {
@@ -319,21 +327,61 @@ fn draw_shortcuts(
         let is_selected = selected == Some(index);
         frame.buffer_mut().set_style(tile, Style::new().bg(if is_selected { selection } else { RAISED }));
         draw_cover(frame, app, (x, tile_y), area, item, TILE_COVER);
-        let style = if is_selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
+        let playing = is_playing(app, item);
+        let style = if playing { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
         let hovered = super::hovered(app, tile);
-        // A hovered tile shows its play button at the right end; the name stops short of it.
-        let reserved = TILE_COVER.width + 3 + if hovered { super::PLAY_BUTTON_WIDTH + 1 } else { 0 };
+        // The end of the row holds the play button while hovered, else the playing tile's
+        // equalizer; the name stops short of either.
+        let reserved = TILE_COVER.width
+            + 3
+            + if hovered {
+                super::PLAY_BUTTON_WIDTH + 1
+            } else if playing {
+                4
+            } else {
+                0
+            };
         let name = text::truncate(&item.title, tile_width.saturating_sub(reserved) as usize);
         // Vertically centered next to the cover.
-        if let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32) {
+        let name_y = row(area, tile_y + (TILE_COVER.height / 2) as i32);
+        if let Some(y) = name_y {
             frame.buffer_mut().set_string(x + TILE_COVER.width + 2, y, name, style);
         }
         app.hits.push((tile, Hit::Card { shelf: layout.index, item: index }));
-        if hovered && let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32) {
+        let Some(y) = name_y else { continue };
+        // The play button of a hovered tile takes the equalizer's place.
+        if hovered {
             let hit = Hit::CardPlay { shelf: layout.index, item: index };
             super::play_button(frame.buffer_mut(), app, x + tile_width - 1, y, hit, false);
+        } else if playing {
+            frame.buffer_mut().set_string(x + tile_width - 4, y, marker, Style::new().fg(accent));
         }
     }
+}
+
+/// A card's title: the accent marks what plays, as in track lists. The selection shows as the
+/// background, so its title is only bold.
+pub(super) fn card_title_style(accent: Color, playing: bool, selected: bool) -> Style {
+    match (playing, selected) {
+        (true, _) => Style::new().fg(accent).bold(),
+        (false, true) => Style::new().fg(TEXT).bold(),
+        (false, false) => Style::new().fg(TEXT),
+    }
+}
+
+/// Whether `item` is what plays now: the playlist, album or show the music comes from, or the
+/// episode itself, since an episode plays from its whole show.
+fn is_playing(app: &App, item: &HomeItem) -> bool {
+    match item.kind {
+        ItemKind::Episode => app.now.track.as_ref().is_some_and(|track| track.uri == item.uri),
+        _ => app.playing_context() == Some(item.uri.as_str()),
+    }
+}
+
+/// What marks the playing card: a moving equalizer, or a speaker while paused, as in the
+/// sidebar.
+pub(super) fn playing_marker(app: &App) -> &'static str {
+    if app.now.playing { text::equalizer(app.frame()) } else { crate::icons::icons().volume }
 }
 
 /// A card's cover at `(x, y)`, cut to `clip`; an icon on a plain square while it loads.

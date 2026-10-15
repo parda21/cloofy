@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::{home, sidebar, text};
 use crate::{
-    app::{App, Focus, Hit, LibraryFilter},
+    app::{App, Focus, Hit, LibraryEntry, LibraryFilter},
     theme::{MUTED, RAISED, TEXT},
     views::View,
 };
@@ -30,6 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let accent = app.accent.color();
     let selection = if app.focus == Focus::Content { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let marker = home::playing_marker(app);
     let View::Library(view) = &app.view else { return };
     let filter = view.filter;
 
@@ -92,13 +93,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let (title, subtitle, _, _) = sidebar::describe(app, entry);
             let row = Rect::new(grid.x, y, grid.width, 1);
             let selected = index == cursor;
+            let playing = is_playing(app, entry);
             let buf = frame.buffer_mut();
             if selected {
                 buf.set_style(row, Style::new().bg(selection));
             }
-            let title_style = if selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+            let title_style = home::card_title_style(accent, playing, selected);
             let width = grid.width as usize;
-            buf.set_string(row.x, y, text::truncate(&title, width / 2), title_style);
+            let title_width = if playing { (width / 2).saturating_sub(5) } else { width / 2 };
+            buf.set_string(row.x, y, text::truncate(&title, title_width), title_style);
+            // At the end of the title column, before the subtitle.
+            if playing {
+                buf.set_string(row.x + (width / 2) as u16 - 4, y, marker, Style::new().fg(accent));
+            }
             buf.set_string(
                 row.x + (width / 2) as u16 + 2,
                 y,
@@ -130,11 +137,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             frame.buffer_mut().set_style(part, Style::new().bg(RAISED));
         }
-        let title_style = if selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+        let playing = is_playing(app, entry);
+        let title_style = home::card_title_style(accent, playing, selected);
         let buf = frame.buffer_mut();
         let text_y = y + COVER.height as i32;
         if let Some(row) = home::row(grid, text_y) {
-            buf.set_string(x, row, text::truncate(&title, COVER.width as usize), title_style);
+            let width = COVER.width - if playing { 4 } else { 0 };
+            buf.set_string(x, row, text::truncate(&title, width as usize), title_style);
+            // Below the cover, so it never lands on image cells.
+            if playing {
+                buf.set_string(x + COVER.width - 3, row, marker, Style::new().fg(accent));
+            }
         }
         if let Some(row) = home::row(grid, text_y + 1) {
             buf.set_string(x, row, text::truncate(&subtitle, COVER.width as usize), Style::new().fg(MUTED));
@@ -148,4 +161,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+}
+
+/// Whether `entry` is what plays now, as in the sidebar.
+fn is_playing(app: &App, entry: LibraryEntry) -> bool {
+    app.playing_context().is_some_and(|context| app.entry_uri(entry).as_deref() == Some(context))
 }
