@@ -63,6 +63,13 @@ pub async fn run(paths: &Paths) -> Result<()> {
     // Must run after entering the alternate screen and before reading input events.
     let picker = image_picker();
     crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+    // ratatui's panic hook restores the screen but not mouse reporting, which would leave the
+    // shell printing escape codes for every mouse move.
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+        restore(info);
+    }));
     let crossfade = config.crossfade.unwrap_or(0).min(12);
     let result = run_app(&mut terminal, paths, api, picker, crossfade).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
