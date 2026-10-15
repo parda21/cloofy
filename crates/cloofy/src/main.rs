@@ -68,11 +68,17 @@ fn main() -> Result<()> {
 
 /// glibc gives each thread that allocates its own heap arena and holds on to memory freed in
 /// it; across tokio's worker pool that adds up to tens of megabytes. Two arenas are plenty.
+///
+/// glibc also raises its mmap threshold to the largest block freed so far, up to 32 MB. After
+/// the first big cover, every image buffer and response body was carved from the arenas, which
+/// only shrink when trimmed. A fixed threshold keeps large blocks in their own mappings, which
+/// go back to the system as soon as they are freed.
 fn limit_malloc_arenas() {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     // SAFETY: called before any other thread exists.
     unsafe {
         libc::mallopt(libc::M_ARENA_MAX, 2);
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 256 * 1024);
     }
 }
 
