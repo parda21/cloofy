@@ -156,10 +156,8 @@ impl Loader {
         image_cache: PathBuf,
         keep_sources: bool,
     ) -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("cloofy/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .unwrap_or_default();
+        let http =
+            cloofy_spotify::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default();
         // Leave cores for the interface and audio.
         let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
         Self {
