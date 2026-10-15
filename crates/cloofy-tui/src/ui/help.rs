@@ -18,29 +18,47 @@ const NAVIGATION: Section = (
     "NAVIGATION",
     &[
         ("↑ ↓  j k", "Move"),
+        ("← →  h l", "Move between cards"),
+        ("←  h", "To the sidebar"),
+        ("← →", "Filter (in sidebar)"),
         ("enter", "Open / play"),
-        ("← →  h l", "Sidebar ↔ content"),
         ("tab", "Switch pane"),
         ("g  G", "Top / bottom"),
+        ("PgUp PgDn", "Page up / down"),
+        ("^U  ^D", "Half a page up / down"),
+        ("1  2  3", "Home, Search, Library"),
+        ("<  >", "Filter (Library page)"),
         ("esc", "Back"),
     ],
 );
 const PLAYBACK: Section = (
     "PLAYBACK",
     &[
-        ("space", "Play / Pause, takes over other device"),
+        ("space", "Play / pause"),
         ("]  [", "Next / previous song"),
         ("⇧←  ⇧→  H L", "Seek 5 seconds"),
         ("+  -", "Volume"),
         ("s", "Shuffle"),
-        ("r", "Repeat: off → all → one"),
-        ("z", "Now playing with lyrics"),
+        ("r", "Repeat: off, all, one"),
+        ("p", "Play (Home, artist)"),
+        ("D", "Start DJ"),
+        ("X", "Crossfade length"),
+        ("z", "Now playing & lyrics"),
         ("d", "Switch device"),
     ],
 );
-const LIBRARY: Section = ("LIBRARY", &[("f", "Like / save"), ("q", "Add to queue"), ("a", "Add to playlist")]);
+const LIBRARY: Section = (
+    "LIBRARY",
+    &[
+        ("f", "Like / save"),
+        ("F", "Follow artist"),
+        ("q", "Add to queue"),
+        ("a", "Add to playlist"),
+        (".", "Actions menu"),
+    ],
+);
 const GENERAL: Section =
-    ("GENERAL", &[("^K  :", "Command palette"), ("/", "Search"), ("?", "This help"), ("^C", "Quit")]);
+    ("GENERAL", &[("^K  :", "Command palette"), ("/", "Search"), ("?", "This help"), ("^C  ^Q", "Quit")]);
 
 /// Everything in one column where the window is tall enough.
 const ONE_COLUMN: &[&[Section]] = &[&[NAVIGATION, PLAYBACK, LIBRARY, GENERAL]];
@@ -51,7 +69,7 @@ const TWO_COLUMN_WIDTH: u16 = 100;
 /// Two columns narrower than this would cut most descriptions short.
 const TWO_COLUMN_MIN_WIDTH: u16 = 72;
 /// Room for the keys in front of each description.
-const KEY_WIDTH: usize = 14;
+const KEY_WIDTH: usize = 13;
 /// Space between the border and the text, and between columns.
 const PADDING: u16 = 3;
 
