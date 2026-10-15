@@ -150,11 +150,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             buf.set_string(text_x, y, text::truncate(&stats.join(" · "), width), Style::new().fg(MUTED));
         }
         let row = [
-            (HeaderButton::Play, format!("{} Play", icons().play), true),
-            (HeaderButton::Shuffle, format!("{} Shuffle", icons().shuffle), false),
+            (HeaderButton::Play, text::icon_label(icons().play, "Play"), true),
+            (HeaderButton::Shuffle, text::icon_label(icons().shuffle, "Shuffle"), false),
             (
                 HeaderButton::Save,
-                if following { format!("{} Following", icons().saved) } else { format!("{} Follow", icons().save) },
+                if following {
+                    text::icon_label(icons().saved, "Following")
+                } else {
+                    text::icon_label(icons().save, "Follow")
+                },
                 false,
             ),
             (HeaderButton::More, icons().more.to_owned(), false),
