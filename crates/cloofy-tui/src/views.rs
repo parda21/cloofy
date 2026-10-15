@@ -201,6 +201,8 @@ pub struct SearchView {
     /// Set while typing; the search starts once the input rests for a moment.
     pub typed_at: Option<Instant>,
     pub list: ListCursor,
+    /// Screen rows per result at the last draw, so the mouse wheel scrolls by rows.
+    pub entry_rows: u16,
 }
 
 impl SearchView {
@@ -212,10 +214,10 @@ impl SearchView {
                 entries.extend(items);
             }
         };
-        section("SONGS", results.tracks.into_iter().map(SearchEntry::Track).collect());
-        section("ARTISTS", results.artists.into_iter().map(SearchEntry::Artist).collect());
-        section("ALBUMS", results.albums.into_iter().map(SearchEntry::Album).collect());
-        section("PLAYLISTS", results.playlists.into_iter().map(SearchEntry::Playlist).collect());
+        section("Songs", results.tracks.into_iter().map(SearchEntry::Track).collect());
+        section("Artists", results.artists.into_iter().map(SearchEntry::Artist).collect());
+        section("Albums", results.albums.into_iter().map(SearchEntry::Album).collect());
+        section("Playlists", results.playlists.into_iter().map(SearchEntry::Playlist).collect());
         self.entries = entries;
         self.searched = query;
         self.list = ListCursor::default();
