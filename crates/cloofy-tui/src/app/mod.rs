@@ -1460,7 +1460,8 @@ impl App {
         let distance = target - self.lyrics_scroll;
         if distance.abs() < 0.02 || self.calm() {
             self.lyrics_scroll = target;
-            return false;
+            // A jump needs drawing; the last tiny step of a glide does not.
+            return distance.abs() >= 0.02;
         }
         self.lyrics_scroll += distance * 0.25;
         true
