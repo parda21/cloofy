@@ -303,6 +303,8 @@ pub struct App {
     last_eviction: Instant,
     /// Frames drawn so far.
     draws: u64,
+    /// Covers the frame being drawn will likely show soon; see [`App::prefetch`].
+    prefetch: Vec<(String, Size, bool)>,
     /// Known library state per URI: liked songs, saved albums, followed playlists.
     pub saved: HashMap<String, bool>,
     /// Library changes not sent yet: wanted state, item name, time of the last toggle.
@@ -395,6 +397,7 @@ impl App {
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
             draws: 0,
+            prefetch: Vec::new(),
             saved: HashMap::new(),
             pending_saves: HashMap::new(),
             saving: HashSet::new(),
@@ -1907,11 +1910,31 @@ impl App {
     /// Finishes drawing a frame.
     pub fn end_frame(&mut self) {
         self.loader.frame_drawn(self.draws);
+        // Covers on screen were requested while drawing, so the ones near them queue up after.
+        let mut queue = std::mem::take(&mut self.prefetch);
+        for (url, size, round) in queue.drain(..) {
+            let key = image_key(&url, size);
+            if self.images.contains_key(&key) {
+                continue;
+            }
+            self.images.insert(key.clone(), ImageSlot::Loading(Arc::new(AtomicU64::new(self.draws))));
+            // Counts as used once, so the cover is dropped again if it is never shown.
+            self.image_used.insert(key.clone(), Instant::now());
+            self.loader.prefetch_image(key, url, size, round);
+        }
+        self.prefetch = queue;
+    }
+
+    /// Asks for a cover that is likely shown soon, such as the next page of a shelf, so it is
+    /// there when it scrolls into view. Loaded after the frame's visible covers.
+    pub fn prefetch(&mut self, url: Option<&str>, size: Size, round: bool) {
+        let url = url.unwrap_or(crate::art::PLACEHOLDER_COVER);
+        self.prefetch.push((url.to_owned(), size, round));
     }
 
     /// The cover for `url` at `size`, loading it on first use.
     pub fn image(&mut self, url: &str, size: Size, round: bool) -> Option<&Picture> {
-        let key = format!("{}x{}:{url}", size.width, size.height);
+        let key = image_key(url, size);
         self.image_used.insert(key.clone(), Instant::now());
         match self.images.get(&key) {
             Some(ImageSlot::Loading(drawn)) => drawn.store(self.draws, Ordering::Relaxed),
@@ -2294,6 +2317,11 @@ impl App {
     fn error(&mut self, text: String) {
         self.status = Some(Status { text, error: true, since: Instant::now() });
     }
+}
+
+/// Images are kept per URL and cell size.
+fn image_key(url: &str, size: Size) -> String {
+    format!("{}x{}:{url}", size.width, size.height)
 }
 
 /// A picked overlay entry, unified across the different pickers.

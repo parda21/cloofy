@@ -59,9 +59,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let visible = cursor.visible((list.height / ENTRY_ROWS) as usize, entries.len());
     app.nav.offset = cursor.offset;
+    let ahead = visible.end..(visible.end + visible.len()).min(entries.len());
     for (row, position) in visible.enumerate() {
         let y = list.y + row as u16 * ENTRY_ROWS;
         entry(frame, app, area, y, position + NavItem::FIXED, entries[position]);
+    }
+    // The next screenful of thumbnails, so scrolling down finds them loaded.
+    for position in ahead {
+        let (_, _, image_url, round) = describe(app, entries[position]);
+        app.prefetch(image_url.as_deref(), THUMB, round);
     }
     let fits = (list.height / ENTRY_ROWS) as usize;
     super::scrollbar(frame.buffer_mut(), area.right() - 1, list.y, list.height, entries.len(), app.nav.offset, fits);

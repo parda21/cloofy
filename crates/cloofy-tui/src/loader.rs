@@ -126,6 +126,9 @@ pub struct Loader {
     /// Turns for decoding and encoding covers. A screenful asks for dozens at once; run all
     /// together, they would hog every core and need a few megabytes of buffers each.
     encode_turns: Arc<Semaphore>,
+    /// Turns for covers loaded ahead of being shown, separate so they never hold up the ones on
+    /// screen.
+    prefetch_turns: Arc<Semaphore>,
     /// The number of the last frame drawn; see [`Loader::frame_drawn`].
     frames_drawn: Arc<AtomicU64>,
 }
@@ -163,6 +166,7 @@ impl Loader {
             keep_sources,
             image_cache,
             encode_turns: Arc::new(Semaphore::new(turns)),
+            prefetch_turns: Arc::new(Semaphore::new(2)),
             frames_drawn: Arc::default(),
         }
     }
@@ -231,12 +235,7 @@ impl Loader {
                 if !on_screen() {
                     return Ok(None);
                 }
-                let mask = move |image: &mut image::DynamicImage| {
-                    if round {
-                        *image = circle(image);
-                    }
-                };
-                this.encode_image(source, size, mask).await.map(|(picture, ())| Some(picture))
+                this.encode_image(source, size, mask(round)).await.map(|(picture, ())| Some(picture))
             }
             .await;
             this.send(match result {
@@ -244,6 +243,20 @@ impl Loader {
                 Ok(None) => DataEvent::ImageSkipped { key },
                 Err(err) => DataEvent::Image { key, result: Err(format!("{err:#}")) },
             });
+        });
+    }
+
+    /// Loads an image the interface is likely to show soon, like [`Loader::image`] but one of
+    /// two at a time, download included, and whether on screen or not.
+    pub fn prefetch_image(&self, key: String, url: String, size: Size, round: bool) {
+        self.spawn(move |this| async move {
+            let result = async {
+                let _turn = this.prefetch_turns.acquire().await?;
+                let source = this.fetch_image(&url).await?;
+                this.encode_image(source, size, mask(round)).await.map(|(picture, ())| picture)
+            }
+            .await;
+            this.send(DataEvent::Image { key, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
 
@@ -517,6 +530,15 @@ impl Loader {
 /// with any Rust release and would orphan the whole cache.
 fn cache_name(url: &str) -> String {
     Sha256::digest(url.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Masks artist portraits to a circle; other images stay as they are.
+fn mask(round: bool) -> impl FnOnce(&mut image::DynamicImage) + Send + 'static {
+    move |image| {
+        if round {
+            *image = circle(image);
+        }
+    }
 }
 
 /// Makes everything outside the inscribed circle transparent, with a soft edge.

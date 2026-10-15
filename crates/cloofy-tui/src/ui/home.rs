@@ -36,11 +36,26 @@ pub(super) struct ShelfLayout {
     /// Index of the first visible card.
     pub first: usize,
     pub items: Vec<HomeItem>,
+    /// Covers of the pages before and after the visible one, loaded ahead.
+    pub nearby: Vec<(Option<String>, bool)>,
 }
 
 /// How many cards fit next to each other.
 pub(super) fn visible_cards(width: u16) -> usize {
     ((width + CARD_GAP) / (COVER.width + CARD_GAP)).max(1) as usize
+}
+
+/// Cover URLs, and whether they are round, of the pages left and right of the `cards` items
+/// from `first`. Loading them ahead lets paging show the next cards at once.
+pub(super) fn nearby(items: &[HomeItem], first: usize, cards: usize) -> Vec<(Option<String>, bool)> {
+    let before = first.saturating_sub(cards)..first;
+    let after = (first + cards).min(items.len())..(first + 2 * cards).min(items.len());
+    before.chain(after).map(|index| cover_of(&items[index])).collect()
+}
+
+/// An item's cover URL and whether it is drawn round.
+fn cover_of(item: &HomeItem) -> (Option<String>, bool) {
+    (item.image_url.clone(), item.kind == ItemKind::Artist)
 }
 
 /// Scrolls a shelf horizontally so the selected card stays visible.
@@ -112,12 +127,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let cards = visible_cards(inner.width);
     view.cards = cards;
     let mut layouts = Vec::new();
+    // The first page of the shelf below the screen, so scrolling down finds it loaded.
+    let mut below = Vec::new();
     for (index, shelf) in home.shelves.iter().enumerate() {
         let y = inner.y as i32 + starts[index] as i32 - scroll as i32;
         if y + heights[index] as i32 <= inner.y as i32 {
             continue;
         }
         if y >= inner.bottom() as i32 {
+            if !shelf.shortcuts {
+                let first = view.offsets[index];
+                below.extend(shelf.items.iter().skip(first).take(cards).map(cover_of));
+            }
             break;
         }
         let first = if shelf.shortcuts {
@@ -139,9 +160,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             total: shelf.items.len(),
             first,
             items: shelf.items.iter().skip(first).take(count).cloned().collect(),
+            nearby: if shelf.shortcuts { Vec::new() } else { nearby(&shelf.items, first, cards) },
         });
     }
     let selected = (view.shelf, view.item);
+    for (url, round) in below {
+        app.prefetch(url.as_deref(), COVER, round);
+    }
 
     for layout in layouts {
         let selected_item = (selected.0 == layout.index).then_some(selected.1);
@@ -209,6 +234,9 @@ pub(super) fn draw_shelf(
 ) {
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    for (url, round) in &layout.nearby {
+        app.prefetch(url.as_deref(), COVER, *round);
+    }
     if let Some(y) = row(area, layout.y) {
         let pageable = layout.total > layout.items.len();
         let title_width = area.width.saturating_sub(if pageable { 28 } else { 2 }) as usize;
@@ -334,5 +362,41 @@ pub(super) fn draw_cover(
     };
     if let Some(row) = row(clip, y + (size.height / 2) as i32) {
         buf.set_string(x + size.width / 2, row, icon, Style::new().fg(FAINT));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn items(count: usize) -> Vec<HomeItem> {
+        (0..count)
+            .map(|i| HomeItem {
+                uri: format!("spotify:playlist:{i}"),
+                kind: ItemKind::Playlist,
+                title: String::new(),
+                subtitle: String::new(),
+                image_url: Some(i.to_string()),
+                owner_id: String::new(),
+                owner_name: String::new(),
+                context_uri: String::new(),
+            })
+            .collect()
+    }
+
+    fn urls(nearby: Vec<(Option<String>, bool)>) -> Vec<String> {
+        nearby.into_iter().filter_map(|(url, _)| url).collect()
+    }
+
+    #[test]
+    fn nearby_covers_are_the_pages_on_either_side() {
+        assert_eq!(urls(nearby(&items(20), 6, 3)), ["3", "4", "5", "9", "10", "11"]);
+    }
+
+    #[test]
+    fn nearby_covers_stop_at_the_ends_of_the_shelf() {
+        assert_eq!(urls(nearby(&items(5), 0, 3)), ["3", "4"]);
+        assert_eq!(urls(nearby(&items(5), 2, 3)), ["0", "1"]);
+        assert!(nearby(&items(2), 0, 3).is_empty());
     }
 }
