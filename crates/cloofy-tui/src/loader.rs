@@ -140,6 +140,8 @@ pub struct Loader {
     picker: Picker,
     pathfinder: Arc<OnceCell<Pathfinder>>,
     pathfinder_hashes: PathBuf,
+    /// The user's Spotify ID, to tell their own playlists from followed ones.
+    user_id: Arc<OnceCell<String>>,
     /// Keep decoded images for dev snapshots.
     keep_sources: bool,
     image_cache: PathBuf,
@@ -181,6 +183,7 @@ impl Loader {
             picker,
             pathfinder: Arc::default(),
             pathfinder_hashes,
+            user_id: Arc::default(),
             keep_sources,
             image_cache,
             encode_turns: Arc::new(Semaphore::new(turns)),
@@ -209,9 +212,19 @@ impl Loader {
 
     pub fn me(&self) {
         self.spawn(|this| async move {
-            let result = catalog::me(&this.api).await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::Me(result));
+            let result = catalog::me(&this.api).await;
+            if let Ok(user) = &result {
+                let _ = this.user_id.set(user.id.clone());
+            }
+            this.send(DataEvent::Me(result.map_err(|e| format!("{e:#}"))));
         });
+    }
+
+    /// The user's ID; asks Spotify itself when `/me` has not answered yet, as happens for a
+    /// playlist restored at startup.
+    async fn user_id(&self) -> Option<String> {
+        let id = self.user_id.get_or_try_init(|| async { catalog::me(&self.api).await.map(|user| user.id) }).await;
+        id.ok().cloned()
     }
 
     pub fn home(&self, view: u64) {
@@ -305,11 +318,11 @@ impl Loader {
     }
 
     /// Loads all tracks of a source, page by page.
-    pub fn tracks(&self, view: u64, source: TrackSource, me: Option<String>) {
+    pub fn tracks(&self, view: u64, source: TrackSource) {
         self.spawn(move |this| async move {
             if let TrackSource::Playlist(playlist) = &source
-                && me.as_deref() != Some(playlist.owner_id.as_str())
                 && !playlist.collaborative
+                && this.user_id().await.as_deref() != Some(playlist.owner_id.as_str())
             {
                 let page = this.internal_playlist(&playlist.id).await;
                 this.send(DataEvent::Tracks { view, page: page.map_err(|e| format!("{e:#}")) });

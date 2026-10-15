@@ -34,6 +34,8 @@ pub enum SavedView {
         name: String,
         owner_id: String,
         owner_name: String,
+        #[serde(default)]
+        collaborative: bool,
         image_url: Option<String>,
     },
     Album {
