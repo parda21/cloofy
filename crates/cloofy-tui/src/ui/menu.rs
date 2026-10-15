@@ -36,6 +36,12 @@ pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
         .border_style(Style::new().fg(FAINT))
         .style(Style::new().bg(RAISED))
         .render(popup, buf);
+    let mut hits = vec![(popup, Hit::OverlayArea)];
+    if popup.height < 4 {
+        // No room for the title and its rule; the buffer ends right below.
+        app.hits.extend(hits);
+        return;
+    }
     let inner_width = popup.width.saturating_sub(4) as usize;
     buf.set_string(
         popup.x + 2,
@@ -50,7 +56,6 @@ pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
         Style::new().fg(FAINT),
     );
 
-    let mut hits = vec![(popup, Hit::OverlayArea)];
     for (index, (_, label)) in menu.items.iter().enumerate() {
         let row_y = popup.y + 3 + index as u16;
         if row_y >= popup.bottom().saturating_sub(1) {

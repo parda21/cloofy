@@ -6,9 +6,9 @@ use ratatui::{
     style::{Color, Style},
 };
 
-use super::{home, sidebar, text};
+use super::{content, home, sidebar, text};
 use crate::{
-    app::{App, Focus, Hit, LibraryFilter},
+    app::{App, Focus, Hit, LibraryEntry, LibraryFilter},
     theme::{MUTED, RAISED, TEXT},
     views::View,
 };
@@ -30,6 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let accent = app.accent.color();
     let selection = if app.focus == Focus::Content { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let marker = home::playing_marker(app);
     let View::Library(view) = &app.view else { return };
     let filter = view.filter;
 
@@ -41,8 +42,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let entries = app.library_entries_for(filter);
     let grid = Rect::new(inner.x, inner.y + HEADER_ROWS, inner.width, inner.height.saturating_sub(HEADER_ROWS));
+    let loading = app.playlists_loading || app.library_loading;
     if entries.is_empty() {
-        frame.buffer_mut().set_string(grid.x, grid.y, "Nothing here yet.", Style::new().fg(MUTED));
+        let message = if loading {
+            format!("{}  Loading…", text::spinner(app.frame()))
+        } else {
+            "Nothing here yet.".to_owned()
+        };
+        frame.buffer_mut().set_string(grid.x, grid.y, message, Style::new().fg(MUTED));
         return;
     }
     // Too little room for covers: one entry per row instead.
@@ -71,7 +78,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if let View::Library(v) = &mut app.view {
         v.columns = columns;
         v.top = top;
-        v.cursor = cursor;
+        // The library arrives in parts; a restored cursor may point at one still on its way.
+        if !loading {
+            v.cursor = cursor;
+        }
     }
 
     let first = top / row_height * columns;
@@ -81,17 +91,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {
             let Some(y) = home::row(grid, row_y(index)) else { continue };
             let (title, subtitle, _, _) = sidebar::describe(app, entry);
-            let row = Rect::new(grid.x, y, grid.width, 1);
+            let row = content::row_band(grid, y, 1);
             let selected = index == cursor;
+            let playing = is_playing(app, entry);
             let buf = frame.buffer_mut();
             if selected {
                 buf.set_style(row, Style::new().bg(selection));
             }
-            let title_style = if selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+            let title_style = home::card_title_style(accent, playing, selected);
             let width = grid.width as usize;
-            buf.set_string(row.x, y, text::truncate(&title, width / 2), title_style);
+            let title_width = if playing { (width / 2).saturating_sub(5) } else { width / 2 };
+            buf.set_string(grid.x, y, text::truncate(&title, title_width), title_style);
+            // At the end of the title column, before the subtitle.
+            if playing {
+                buf.set_string(grid.x + (width / 2) as u16 - 4, y, marker, Style::new().fg(accent));
+            }
             buf.set_string(
-                row.x + (width / 2) as u16 + 2,
+                grid.x + (width / 2) as u16 + 2,
                 y,
                 text::truncate(&subtitle, width / 2 - 2),
                 Style::new().fg(MUTED),
@@ -100,10 +116,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         return;
     }
-    // The selection reaches one row above the cards, into the gap below the tabs.
-    let clip = Rect { y: grid.y - 1, height: grid.height + 1, ..grid };
+    // The next screenful of covers, so scrolling down finds them loaded.
+    for &entry in entries.iter().take(last + (last - first)).skip(last) {
+        let (_, _, image_url, round) = sidebar::describe(app, entry);
+        app.prefetch(image_url.as_deref(), COVER, round);
+    }
+    // The selection reaches one row above the cards, into the gap below the tabs, and one
+    // column past the cover on both sides, the first column's too.
+    let clip = Rect { x: grid.x.saturating_sub(1), y: grid.y - 1, width: grid.width + 2, height: grid.height + 1 };
     for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {
-        let x = grid.x + (index % columns) as u16 * (COVER.width + GAP);
+        let x = home::card_x(grid.x, grid.width, columns, index % columns);
         let y = row_y(index);
         let card = home::clip(clip, x.saturating_sub(1), COVER.width + 2, y - 1, COVER.height + 4);
         let selected = index == cursor;
@@ -116,11 +138,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             frame.buffer_mut().set_style(part, Style::new().bg(RAISED));
         }
-        let title_style = if selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+        let playing = is_playing(app, entry);
+        let title_style = home::card_title_style(accent, playing, selected);
         let buf = frame.buffer_mut();
         let text_y = y + COVER.height as i32;
         if let Some(row) = home::row(grid, text_y) {
-            buf.set_string(x, row, text::truncate(&title, COVER.width as usize), title_style);
+            let width = COVER.width - if playing { 4 } else { 0 };
+            buf.set_string(x, row, text::truncate(&title, width as usize), title_style);
+            // Below the cover, so it never lands on image cells.
+            if playing {
+                buf.set_string(x + COVER.width - 3, row, marker, Style::new().fg(accent));
+            }
         }
         if let Some(row) = home::row(grid, text_y + 1) {
             buf.set_string(x, row, text::truncate(&subtitle, COVER.width as usize), Style::new().fg(MUTED));
@@ -130,8 +158,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             if super::hovered(app, card)
                 && let Some(row) = home::row(grid, y + COVER.height as i32 - 1)
             {
-                super::play_button(frame.buffer_mut(), app, x + COVER.width, row, Hit::RowPlay(index));
+                super::play_button(frame.buffer_mut(), app, x + COVER.width, row, Hit::RowPlay(index), true);
             }
         }
     }
+}
+
+/// Whether `entry` is what plays now, as in the sidebar.
+fn is_playing(app: &App, entry: LibraryEntry) -> bool {
+    app.playing_context().is_some_and(|context| app.entry_uri(entry).as_deref() == Some(context))
 }

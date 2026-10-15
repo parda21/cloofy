@@ -37,6 +37,8 @@ pub struct Placement {
     /// The image's cells as drawn, row by row; cells that differ at the end of the frame were
     /// drawn over. Empty while snapshots are off.
     pub cells: Vec<Cell>,
+    /// The first time a Kitty image is drawn: the upload of its pixels, written after the frame.
+    pub upload: Option<String>,
 }
 
 pub struct Snapshotter {
@@ -115,8 +117,13 @@ impl Snapshotter {
         for placement in placements {
             let Some(source) = &placement.source else { continue };
             let (w, h) = (placement.size.width as u32 * self.cell_w, placement.size.height as u32 * self.cell_h);
-            // The app already fitted the image to whole cells; fill them like the terminal does.
-            let scaled = source.resize_exact(w, h, FilterType::Triangle);
+            // Fit the image into its cells, centred, as kitty does; the images of the other
+            // protocols already have about the shape of their cells.
+            let fitted = source.resize(w, h, FilterType::Triangle).to_rgba8();
+            let mut canvas = RgbaImage::new(w, h);
+            let (dx, dy) = ((w - fitted.width()) / 2, (h - fitted.height()) / 2);
+            image::imageops::overlay(&mut canvas, &fitted, dx.into(), dy.into());
+            let scaled = DynamicImage::from(canvas);
             let visible =
                 scaled.crop_imm(0, placement.skip as u32 * self.cell_h, w, placement.area.height as u32 * self.cell_h);
             let x = (placement.area.x - area.x) as i64 * self.cell_w as i64;

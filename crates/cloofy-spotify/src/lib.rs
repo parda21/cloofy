@@ -4,6 +4,7 @@ pub mod config;
 pub mod connect;
 pub mod doctor;
 pub mod home;
+pub mod http;
 pub mod lyrics;
 pub mod pathfinder;
 pub mod paths;

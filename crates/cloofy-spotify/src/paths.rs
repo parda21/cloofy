@@ -47,6 +47,11 @@ impl Paths {
         self.cache.join("audio")
     }
 
+    /// Tracks being streamed; librespot copies each to the audio cache once it is complete.
+    pub fn audio_tmp(&self) -> PathBuf {
+        self.cache.join("tmp")
+    }
+
     pub fn pathfinder_hashes(&self) -> PathBuf {
         self.cache.join("pathfinder-hashes.json")
     }
@@ -62,7 +67,7 @@ impl Paths {
 }
 
 /// Writes a file only the current user can read, creating parent directories as needed.
-pub(crate) fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

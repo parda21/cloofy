@@ -42,22 +42,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
     let playing_uri = app.now.track.as_ref().map(|t| t.uri.clone());
     let playing = app.now.playing;
+    let loading_uri = app.now.pending.as_ref().and_then(|p| p.uri.clone());
     let View::Artist(view) = &mut app.view else { return };
 
     let Some(page) = &view.page else {
+        // Laid out like the loaded header, so nothing moves when the page arrives: an empty
+        // portrait, the name beside it and the status where the stats will be.
         let buf = frame.buffer_mut();
-        buf.set_string(inner.x, inner.y, "ARTIST", Style::new().fg(FAINT).bold());
-        buf.set_string(inner.x, inner.y + 1, &view.name, Style::new().fg(TEXT).bold());
-        let message = match &view.error {
-            Some(err) => Span::styled(format!("✕  {err}"), DANGER),
-            None => Span::styled(format!("{}  Loading…", text::spinner(frame_no)), MUTED),
+        let portrait = Rect::new(inner.x, inner.y, PORTRAIT.width, PORTRAIT.height).intersection(inner);
+        buf.set_style(portrait, Style::new().bg(RAISED));
+        let text_x = inner.x + PORTRAIT.width + 3;
+        let width = inner.right().saturating_sub(text_x) as usize;
+        let status = match &view.error {
+            Some(err) => (format!("✕  {err}"), Style::new().fg(DANGER)),
+            None => (format!("{}  Loading…", text::spinner(frame_no)), Style::new().fg(MUTED)),
         };
-        buf.set_line(inner.x, inner.y + 3, &Line::from(message), inner.width);
+        let lines = [
+            ("ARTIST".to_owned(), Style::new().fg(FAINT).bold()),
+            (view.name.clone(), Style::new().fg(TEXT).bold()),
+            status,
+        ];
+        for (y, (line, style)) in (inner.y + 1..inner.bottom()).zip(lines) {
+            buf.set_string(text_x, y, text::truncate(&line, width), style);
+        }
         return;
     };
 
-    // Virtual layout: header, "Popular" with its tracks, then the shelves.
-    let tracks_top = HEADER_ROWS + 2;
+    // Virtual layout: header, "Popular" with its tracks, then the shelves. The heading has a
+    // blank row before its tracks, like shelf titles before their covers.
+    let tracks_top = HEADER_ROWS + 3;
     let shelves_top = tracks_top + page.top_tracks.len() as u16 + 2;
     let track_count = page.top_tracks.len();
     let (selected_top, selected_bottom) = match view.row.checked_sub(track_count) {
@@ -109,6 +122,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 total: shelf.items.len(),
                 first,
                 items: shelf.items.iter().skip(first).take(cards).cloned().collect(),
+                nearby: home::nearby(&shelf.items, first, cards),
             })
         })
         .collect();
@@ -147,11 +161,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             buf.set_string(text_x, y, text::truncate(&stats.join(" · "), width), Style::new().fg(MUTED));
         }
         let row = [
-            (HeaderButton::Play, format!("{} Play", icons().play), true),
-            (HeaderButton::Shuffle, format!("{} Shuffle", icons().shuffle), false),
+            (HeaderButton::Play, text::icon_label(icons().play, "Play"), true),
+            (HeaderButton::Shuffle, text::icon_label(icons().shuffle, "Shuffle"), false),
             (
                 HeaderButton::Save,
-                if following { format!("{} Following", icons().saved) } else { format!("{} Follow", icons().save) },
+                if following {
+                    text::icon_label(icons().saved, "Following")
+                } else {
+                    text::icon_label(icons().save, "Follow")
+                },
                 false,
             ),
             (HeaderButton::More, icons().more.to_owned(), false),
@@ -161,7 +179,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    if let Some(y) = screen_y(tracks_top - 1) {
+    if let Some(y) = screen_y(tracks_top - 2) {
         frame.buffer_mut().set_string(inner.x, y, "Popular", Style::new().fg(TEXT).bold());
     }
     let title_width = (inner.width as usize).saturating_sub(5 + 16 + 9);
@@ -170,13 +188,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let is_selected = row == index;
         let buf = frame.buffer_mut();
         if is_selected {
-            buf.set_style(Rect::new(inner.x.saturating_sub(1), y, inner.width + 2, 1), Style::new().bg(selection));
+            buf.set_style(content::row_band(inner, y, 1), Style::new().bg(selection));
             if focused {
                 buf.set_string(inner.x.saturating_sub(2), y, "▌", Style::new().fg(accent));
             }
         }
         let is_current = playing_uri.as_deref() == Some(track.uri.as_str());
         let number = match (is_current, playing) {
+            _ if loading_uri.as_deref() == Some(track.uri.as_str()) => {
+                Span::styled(fit(&right(text::spinner(frame_no), 3), 5), accent)
+            }
             (false, _) => Span::styled(fit(&right(&(index + 1).to_string(), 3), 5), FAINT),
             (true, true) => Span::styled(fit(&format!(" {}", text::equalizer(frame_no)), 5), accent),
             (true, false) => Span::styled(fit("  ▶", 5), accent),
@@ -197,7 +218,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(right(&text::duration(track.duration_ms), 5), FAINT),
         ]);
         frame.buffer_mut().set_line(inner.x, y, &line, inner.width);
-        app.hits.push((Rect::new(inner.x, y, inner.width, 1), Hit::Row(index)));
+        app.hits.push((content::row_band(inner, y, 1), Hit::Row(index)));
     }
 
     for layout in layouts {

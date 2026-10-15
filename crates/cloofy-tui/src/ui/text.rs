@@ -36,6 +36,11 @@ pub fn right(text: &str, width: usize) -> String {
     format!("{text:>width$}")
 }
 
+/// `icon  label`: Nerd Font icons spill into the cell after them, so one space would vanish.
+pub fn icon_label(icon: &str, label: &str) -> String {
+    format!("{icon}  {label}")
+}
+
 /// `3:58`
 pub fn duration(ms: u32) -> String {
     let secs = ms / 1000;

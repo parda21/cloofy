@@ -1,6 +1,7 @@
 //! The personalized Home feed, as the official clients show it.
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::pathfinder::{self, Pathfinder};
@@ -9,13 +10,13 @@ const SECTION_ITEMS: u32 = 20;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
 const IMAGE_WIDTH: u64 = 300;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Home {
     pub greeting: String,
     pub shelves: Vec<Shelf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Shelf {
     pub uri: String,
     pub title: String,
@@ -24,7 +25,7 @@ pub struct Shelf {
     pub items: Vec<HomeItem>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ItemKind {
     Playlist,
     Album,
@@ -34,7 +35,7 @@ pub enum ItemKind {
     Episode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HomeItem {
     pub uri: String,
     pub kind: ItemKind,

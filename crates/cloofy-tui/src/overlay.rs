@@ -10,7 +10,7 @@ pub enum Overlay {
     Help,
     Palette(Picker<PaletteAction>),
     AddToPlaylist { uris: Vec<String>, picker: Picker<usize> },
-    Devices { devices: Vec<cloofy_spotify::connect::Device>, picker: Picker<usize> },
+    Devices { devices: Vec<cloofy_spotify::connect::Device>, picker: Picker<usize>, refreshing: bool },
     Menu(Menu),
 }
 
@@ -166,6 +166,21 @@ impl<T: Copy> Picker<T> {
         PickerOutcome::Stay
     }
 
+    /// Swaps in fresh items, keeping the query and the selection on the item `selected` finds.
+    pub fn set_items(&mut self, items: Vec<PickItem<T>>, selected: impl Fn(&T) -> bool) {
+        self.items = items;
+        let query = std::mem::take(&mut self.query);
+        self.set_query(query);
+        if let Some(position) = self.matches.iter().position(|&index| selected(&self.items[index].value)) {
+            self.cursor.selected = position;
+        }
+    }
+
+    /// The item under the cursor.
+    pub fn selected(&self) -> Option<&T> {
+        self.matches.get(self.cursor.selected).map(|&index| &self.items[index].value)
+    }
+
     /// Picks the match at `position` (as shown, best match first).
     pub fn select(&self, position: usize) -> PickerOutcome<T> {
         match self.matches.get(position) {
@@ -184,5 +199,34 @@ impl<T: Copy> Picker<T> {
             .map(|(candidate, _)| candidate.index)
             .collect();
         self.cursor = ListCursor::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn items(labels: &[&str]) -> Vec<PickItem<usize>> {
+        labels
+            .iter()
+            .enumerate()
+            .map(|(value, label)| PickItem { label: (*label).into(), detail: String::new(), image_url: None, value })
+            .collect()
+    }
+
+    #[test]
+    fn fresh_items_keep_the_query_and_the_selected_item() {
+        let mut picker = Picker::new(items(&["Phone", "Kitchen speaker", "Living room speaker"]));
+        for c in "speaker".chars() {
+            picker.on_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        picker.on_key(KeyEvent::from(KeyCode::Down));
+        let kept = picker.items[*picker.selected().unwrap()].label.clone();
+        // A new device shows up and the order changes.
+        let fresh = ["Living room speaker", "TV", "Kitchen speaker", "Phone"];
+        picker.set_items(items(&fresh), |&value| fresh[value] == kept);
+        assert_eq!(picker.query, "speaker");
+        assert_eq!(picker.matches.len(), 2);
+        assert_eq!(fresh[*picker.selected().unwrap()], kept);
     }
 }
