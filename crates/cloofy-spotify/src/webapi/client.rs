@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf};
+use std::{fs, io, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use reqwest::{Method, StatusCode};
@@ -10,6 +10,12 @@ use super::auth::{self, Token};
 use crate::paths::write_private;
 
 const API_BASE: &str = "https://api.spotify.com/v1";
+/// Tries per read request, including the first.
+const MAX_ATTEMPTS: u32 = 3;
+/// Pause before repeating a read that failed on the way (timeout, 502, 503).
+const RETRY_DELAY: Duration = Duration::from_millis(300);
+/// Longest rate-limit wait worth sitting out; longer ones are reported instead.
+const MAX_RETRY_AFTER: u64 = 10;
 
 /// Web API client for the user's own Spotify app; refreshes its token on demand.
 pub struct WebApi {
@@ -36,7 +42,7 @@ impl ApiResponse {
 
 impl WebApi {
     pub fn new(client_id: impl Into<String>, token_path: PathBuf) -> Result<Self> {
-        let http = reqwest::Client::builder().user_agent(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
+        let http = crate::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
         let token = read_token(&token_path)?;
         Ok(Self { http, client_id: client_id.into(), token_path, token: Mutex::new(token) })
     }
@@ -74,19 +80,46 @@ impl WebApi {
         Ok(())
     }
 
+    /// Reads are retried after a rate limit or a passing network failure. Writes never are:
+    /// a play or save must not happen twice, or seconds after the user asked for it.
     pub async fn request(&self, method: Method, path: &str, body: Option<&Value>) -> Result<ApiResponse> {
         let token = self.access_token().await?;
-        let mut request = self.http.request(method.clone(), format!("{API_BASE}{path}")).bearer_auth(token);
-        request = match body {
-            Some(body) => request.json(body),
-            // Spotify rejects body-less writes without a Content-Length (411).
-            None if method != Method::GET => request.body(Vec::new()),
-            None => request,
-        };
-        let response = request.send().await?;
-        let status = response.status();
-        let body = serde_json::from_slice(&response.bytes().await?).unwrap_or(Value::Null);
-        Ok(ApiResponse { status, body })
+        let url = format!("{API_BASE}{path}");
+        let retries = method == Method::GET;
+        let mut attempt = 1;
+        loop {
+            let mut request = self.http.request(method.clone(), &url).bearer_auth(&token);
+            request = match body {
+                Some(body) => request.json(body),
+                // Spotify rejects body-less writes without a Content-Length (411).
+                None if method != Method::GET => request.body(Vec::new()),
+                None => request,
+            };
+            let delay = match request.send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let delay = match status {
+                        StatusCode::TOO_MANY_REQUESTS => {
+                            tracing::warn!("Web API rate limit on {path}");
+                            retry_after(&response)
+                        }
+                        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE if attempt == 1 => Some(RETRY_DELAY),
+                        _ => None,
+                    };
+                    match delay {
+                        Some(delay) if retries && attempt < MAX_ATTEMPTS => delay,
+                        _ => {
+                            let body = serde_json::from_slice(&response.bytes().await?).unwrap_or(Value::Null);
+                            return Ok(ApiResponse { status, body });
+                        }
+                    }
+                }
+                Err(err) if retries && attempt == 1 && (err.is_timeout() || err.is_connect()) => RETRY_DELAY,
+                Err(err) => return Err(err.into()),
+            };
+            tokio::time::sleep(delay).await;
+            attempt += 1;
+        }
     }
 
     async fn access_token(&self) -> Result<String> {
@@ -108,6 +141,17 @@ impl WebApi {
         write_private(&self.token_path, &serde_json::to_vec_pretty(token)?)
             .with_context(|| format!("{} is not writable", self.token_path.display()))
     }
+}
+
+/// How long Spotify asks to wait after a rate limit; `None` when that is too long to sit out.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    let seconds = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(1);
+    (seconds <= MAX_RETRY_AFTER).then(|| Duration::from_secs(seconds))
 }
 
 fn read_token(path: &PathBuf) -> Result<Option<Token>> {
