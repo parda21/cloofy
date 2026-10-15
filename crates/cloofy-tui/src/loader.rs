@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use cloofy_spotify::{
     artist::{self, ArtistPage},
     catalog::{self, AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User},
@@ -40,6 +40,19 @@ use crate::{
 
 /// Cached cover art unused for this long is deleted at startup.
 const IMAGE_CACHE_AGE: Duration = Duration::from_secs(60 * 24 * 60 * 60);
+
+/// How long lyrics wait for the session, so a track restored at startup still gets Spotify's
+/// synced lyrics instead of going straight to LRCLIB.
+const LYRICS_SESSION_WAIT: Duration = Duration::from_secs(5);
+
+/// The librespot session as the loader sees it.
+#[derive(Clone)]
+pub enum SessionState {
+    Connecting,
+    Ready(Session),
+    /// Connecting failed; requests that need the session fail too instead of waiting forever.
+    Failed(String),
+}
 
 /// An encoded image plus, in snapshot mode, its source for pasting into PNG snapshots.
 pub struct Picture {
@@ -122,7 +135,7 @@ pub enum DataEvent {
 pub struct Loader {
     api: Arc<WebApi>,
     tx: UnboundedSender<AppEvent>,
-    session: watch::Receiver<Option<Session>>,
+    session: watch::Receiver<SessionState>,
     http: reqwest::Client,
     picker: Picker,
     pathfinder: Arc<OnceCell<Pathfinder>>,
@@ -150,7 +163,7 @@ impl Loader {
     pub fn new(
         api: Arc<WebApi>,
         tx: UnboundedSender<AppEvent>,
-        session: watch::Receiver<Option<Session>>,
+        session: watch::Receiver<SessionState>,
         picker: Picker,
         pathfinder_hashes: PathBuf,
         image_cache: PathBuf,
@@ -325,8 +338,12 @@ impl Loader {
 
     async fn session(&self) -> Result<Session> {
         let mut session = self.session.clone();
-        let session = session.wait_for(Option::is_some).await?;
-        Ok(session.clone().expect("checked by wait_for"))
+        let state = session.wait_for(|state| !matches!(state, SessionState::Connecting)).await?;
+        match &*state {
+            SessionState::Ready(session) => Ok(session.clone()),
+            SessionState::Failed(err) => bail!("No connection to Spotify: {err}"),
+            SessionState::Connecting => unreachable!("checked by wait_for"),
+        }
     }
 
     pub fn search(&self, view: u64, query: String) {
@@ -460,7 +477,7 @@ impl Loader {
         let album = track.album.clone();
         let duration_ms = track.duration_ms;
         self.spawn(move |this| async move {
-            let session = this.session.borrow().clone();
+            let session = tokio::time::timeout(LYRICS_SESSION_WAIT, this.session()).await.ok().and_then(Result::ok);
             let query = LyricsQuery { uri: &uri, title: &title, artist: &artist, album: &album, duration_ms };
             let result = lyrics::fetch(session.as_ref(), &this.http, query).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Lyrics { uri, result });
