@@ -36,6 +36,9 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(1);
 /// long in case nothing pauses it.
 const SILENT_AFTER_LOSS: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_millis(10);
+/// How often to try again to open an output after opening one failed, as freshly connected
+/// Bluetooth headphones may refuse at first.
+const OPEN_RETRY: Duration = Duration::from_secs(1);
 
 pub struct FollowingSink {
     host: cpal::Host,
@@ -45,6 +48,8 @@ pub struct FollowingSink {
     _watch: OutputWatch,
     silent_until: Option<Instant>,
     lost: UnboundedSender<String>,
+    /// When to try opening an output again, while there is none.
+    reopen_at: Option<Instant>,
 }
 
 struct Output {
@@ -64,7 +69,8 @@ impl FollowingSink {
         })?;
         let host = cpal::default_host();
         let output = open(&host, &stale);
-        Some(Self { host, output, stale, _watch: watch, silent_until: None, lost })
+        let reopen_at = output.is_none().then(|| Instant::now() + OPEN_RETRY);
+        Some(Self { host, output, stale, _watch: watch, silent_until: None, lost, reopen_at })
     }
 
     /// Moves to the default output when it changed or the stream failed. While playing, an
@@ -81,7 +87,25 @@ impl FollowingSink {
             let _ = self.lost.send(previous.name);
             self.silent_until = Some(Instant::now() + SILENT_AFTER_LOSS);
         }
-        self.output = open(&self.host, &self.stale);
+        self.reopen();
+    }
+
+    /// Opens the default output. A failure is logged once, not on every retry.
+    fn reopen(&mut self) {
+        self.output = match open_default(&self.host, &self.stale) {
+            Ok(output) => {
+                tracing::info!("audio output: {}", output.name);
+                self.reopen_at = None;
+                Some(output)
+            }
+            Err(err) => {
+                if self.reopen_at.is_none() {
+                    tracing::warn!("no audio output: {err:#}");
+                }
+                self.reopen_at = Some(Instant::now() + OPEN_RETRY);
+                None
+            }
+        };
     }
 
     fn is_present(&self, name: &str) -> bool {
@@ -132,6 +156,10 @@ impl Sink for FollowingSink {
             samples.fill(0.0);
         }
         let Some(output) = &self.output else {
+            // Opening failed: the next write tries again once it's due.
+            if self.reopen_at.is_some_and(|at| Instant::now() >= at) {
+                self.stale.store(true, Ordering::Relaxed);
+            }
             // Nowhere to play: keep the pace, so playback doesn't race ahead.
             let frames = samples.len() as f64 / f64::from(NUM_CHANNELS);
             thread::sleep(Duration::from_secs_f64(frames / f64::from(SAMPLE_RATE)));
