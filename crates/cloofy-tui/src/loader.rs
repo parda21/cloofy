@@ -1,6 +1,12 @@
 //! Background data loading. Every request runs in its own task and reports back as an event.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use anyhow::Result;
 use cloofy_spotify::{
@@ -45,6 +51,10 @@ pub enum DataEvent {
     Image {
         key: String,
         result: Result<Picture, String>,
+    },
+    /// The image was off screen by its turn and was not decoded.
+    ImageSkipped {
+        key: String,
     },
     Playlists(Result<Vec<PlaylistInfo>, String>),
     /// The rest of the library; each part may fail on its own.
@@ -111,6 +121,8 @@ pub struct Loader {
     /// Turns for decoding and encoding covers. A screenful asks for dozens at once; run all
     /// together, they would hog every core and need a few megabytes of buffers each.
     encode_turns: Arc<Semaphore>,
+    /// The number of the last frame drawn; see [`Loader::frame_drawn`].
+    frames_drawn: Arc<AtomicU64>,
 }
 
 /// An image to decode: downloaded bytes, or artwork cloofy draws itself.
@@ -146,7 +158,14 @@ impl Loader {
             keep_sources,
             image_cache,
             encode_turns: Arc::new(Semaphore::new(turns)),
+            frames_drawn: Arc::default(),
         }
+    }
+
+    /// Notes that frame `number` is on screen. An image request whose image the frame did not
+    /// draw has scrolled out of view.
+    pub fn frame_drawn(&self, number: u64) {
+        self.frames_drawn.store(number, Ordering::Relaxed);
     }
 
     fn send(&self, event: DataEvent) {
@@ -190,21 +209,36 @@ impl Loader {
     }
 
     /// Loads an image at a fixed cell size; `round` masks it to a circle (artist portraits).
-    pub fn image(&self, key: String, url: String, size: Size, round: bool) {
+    /// `drawn` is the number of the last frame that drew the image.
+    pub fn image(&self, key: String, url: String, size: Size, round: bool, drawn: Arc<AtomicU64>) {
         self.spawn(move |this| async move {
+            // A fast scroll asks for every cover it passes. Ones gone from the screen by their
+            // turn are skipped, so the covers where the scroll stops come first; they are asked
+            // for again if they come back.
+            let on_screen = || drawn.load(Ordering::Relaxed) >= this.frames_drawn.load(Ordering::Relaxed);
             let result = async {
                 let source = this.fetch_image(&url).await?;
+                if !on_screen() {
+                    return Ok(None);
+                }
                 // Downloads run freely; decoding waits for a turn, held until the encode is done.
                 let _turn = this.encode_turns.acquire().await?;
+                if !on_screen() {
+                    return Ok(None);
+                }
                 let mask = move |image: &mut image::DynamicImage| {
                     if round {
                         *image = circle(image);
                     }
                 };
-                this.encode_image(source, size, mask).await.map(|(picture, ())| picture)
+                this.encode_image(source, size, mask).await.map(|(picture, ())| Some(picture))
             }
             .await;
-            this.send(DataEvent::Image { key, result: result.map_err(|e| format!("{e:#}")) });
+            this.send(match result {
+                Ok(Some(picture)) => DataEvent::Image { key, result: Ok(picture) },
+                Ok(None) => DataEvent::ImageSkipped { key },
+                Err(err) => DataEvent::Image { key, result: Err(format!("{err:#}")) },
+            });
         });
     }
 

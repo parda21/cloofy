@@ -43,6 +43,7 @@ const PLAYER_HEIGHT: u16 = 5;
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    app.begin_frame();
     let area = frame.area();
     app.screen = area;
     app.hits.clear();
@@ -103,6 +104,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();
     app.effects.process_effects(elapsed.into(), frame.buffer_mut(), area);
+    app.end_frame();
 }
 
 fn draw_content(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
