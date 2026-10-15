@@ -199,16 +199,20 @@ fn take_upload(cell: &mut Cell) -> Option<String> {
     Some(upload)
 }
 
-/// The play button of a hovered card, ending at column `right` in row `y`. A dark cell to
-/// its left sets it off from covers in the accent color.
-pub(super) fn play_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, hit: Hit) {
+pub(super) const PLAY_BUTTON_WIDTH: u16 = 3;
+
+/// The play button of a hovered card, ending at column `right` in row `y`. On a cover, a dark
+/// cell to its left sets it off from covers in the accent color.
+pub(super) fn play_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, hit: Hit, on_cover: bool) {
     let icons = icons();
-    let area = Rect::new(right.saturating_sub(3), y, 3, 1).intersection(buf.area);
+    let area = Rect::new(right.saturating_sub(PLAY_BUTTON_WIDTH), y, PLAY_BUTTON_WIDTH, 1).intersection(buf.area);
     let accent = app.accent.color();
-    if let Some(edge) = area.x.checked_sub(1) {
+    if on_cover && let Some(edge) = area.x.checked_sub(1) {
         buf.set_string(edge, y, " ", Style::new().bg(BG));
     }
-    buf.set_style(area, Style::new().bg(accent));
+    // Blank the cells rather than only recoloring them: over a cover they hold image cells,
+    // which would keep showing pieces of the picture around the icon.
+    buf.set_string(area.x, y, " ".repeat(area.width as usize), Style::new().bg(accent));
     buf.set_string(area.x + 1, y, icons.play, Style::new().fg(BG).bg(accent));
     app.hits.push((area, hit));
 }
