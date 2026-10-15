@@ -2619,11 +2619,23 @@ impl App {
         self.seek_to(target as u32);
     }
 
+    /// Moves the bar at once; repeated seeks add up instead of all starting from the same spot.
     fn seek_to(&mut self, position_ms: u32) {
+        let Some(track) = &self.now.track else { return };
+        // Spirc refuses positions past the end.
+        let position_ms = if track.duration_ms > 0 { position_ms.min(track.duration_ms) } else { position_ms };
         if self.remote_active {
+            self.now.set_position(position_ms);
             self.remote(connect::Command::Seek(position_ms));
-        } else {
+        } else if self.local_active {
+            self.now.seek(position_ms);
             self.control(|c| c.seek(position_ms));
+        } else {
+            // cloofy's inactive device ignores seeks; space starts from the new spot instead.
+            self.now.set_position(position_ms);
+            if let Some(last) = &mut self.resume {
+                last.position_ms = position_ms;
+            }
         }
     }
 

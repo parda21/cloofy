@@ -15,6 +15,10 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::app::AppEvent;
 
 const DEVICE_NAME: &str = "cloofy";
+/// How long a change made in cloofy wins over reports the player sent before it got there.
+const ECHO_WINDOW: Duration = Duration::from_millis(1500);
+/// A reported position this close to a seek target confirms the seek.
+const SEEK_TOLERANCE_MS: u32 = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -55,6 +59,8 @@ pub struct NowPlaying {
     pub cover: Option<Cover>,
     /// The other Spotify Connect device that is playing, if not cloofy itself.
     pub device: Option<String>,
+    /// A seek sent to the local player that it hasn't confirmed yet: target and when.
+    seeking: Option<(u32, Instant)>,
 }
 
 impl NowPlaying {
@@ -69,6 +75,7 @@ impl NowPlaying {
             volume: u16::MAX / 2,
             cover: None,
             device: None,
+            seeking: None,
         }
     }
 
@@ -78,9 +85,34 @@ impl NowPlaying {
         (self.position_ms + elapsed).min(duration)
     }
 
-    fn set_position(&mut self, position_ms: u32) {
+    pub(crate) fn set_position(&mut self, position_ms: u32) {
         self.position_ms = position_ms;
         self.position_at = Instant::now();
+    }
+
+    /// Starts or stops the clock where it stands, so pausing doesn't jump.
+    pub fn set_playing(&mut self, playing: bool) {
+        self.set_position(self.position_ms());
+        self.playing = playing;
+    }
+
+    /// Moves to `position_ms` at once for a seek sent to the local player. The player confirms
+    /// only after decoding there, which can wait for a download.
+    pub fn seek(&mut self, position_ms: u32) {
+        self.set_position(position_ms);
+        self.seeking = Some((position_ms, Instant::now()));
+    }
+
+    /// Takes a position the local player reported, unless it predates the last seek: the
+    /// player reports positions it had before the seek, which would make the bar jump back.
+    fn report_position(&mut self, position_ms: u32) {
+        if let Some((target, at)) = self.seeking {
+            if position_ms.abs_diff(target) > SEEK_TOLERANCE_MS && at.elapsed() < ECHO_WINDOW {
+                return;
+            }
+            self.seeking = None;
+        }
+        self.set_position(position_ms);
     }
 
     /// Shows the track from the last session, paused where it was left.
@@ -143,23 +175,26 @@ impl NowPlaying {
                 let track = current_track(&audio_item);
                 let cover_url = track.cover_url.clone();
                 self.track = Some(track);
+                self.seeking = None;
                 self.set_position(0);
                 if self.cover.as_ref().map(|c| &c.url) != cover_url.as_ref() {
                     return cover_url;
                 }
             }
             PlayerEvent::Playing { position_ms, .. } => {
+                // Freeze first, so a report from before a seek leaves the shown position put.
+                self.set_playing(false);
+                self.report_position(position_ms);
                 self.playing = true;
-                self.set_position(position_ms);
             }
             PlayerEvent::Paused { position_ms, .. } => {
-                self.playing = false;
-                self.set_position(position_ms);
+                self.set_playing(false);
+                self.report_position(position_ms);
             }
             PlayerEvent::Stopped { .. } => self.playing = false,
             PlayerEvent::PositionCorrection { position_ms, .. }
             | PlayerEvent::PositionChanged { position_ms, .. }
-            | PlayerEvent::Seeked { position_ms, .. } => self.set_position(position_ms),
+            | PlayerEvent::Seeked { position_ms, .. } => self.report_position(position_ms),
             PlayerEvent::ShuffleChanged { shuffle } => self.shuffle = shuffle,
             PlayerEvent::RepeatChanged { context, track } => {
                 self.repeat = match (context, track) {
@@ -327,4 +362,102 @@ pub fn spawn(paths: Paths, crossfade: Duration, tx: UnboundedSender<AppEvent>) {
             Err(err) => AppEvent::PlayerFailed(format!("{err:#}")),
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use librespot::core::SpotifyUri;
+
+    use super::*;
+
+    const URI: &str = "spotify:track:4uLU6hMCjMI75M1A2tKUQC";
+
+    fn track(uri: &str) -> CurrentTrack {
+        CurrentTrack {
+            uri: uri.into(),
+            name: "Song".into(),
+            artists: vec!["Artist".into()],
+            artist_uris: Vec::new(),
+            album: "Album".into(),
+            album_uri: None,
+            duration_ms: 200_000,
+            cover_url: None,
+            cover_url_large: None,
+        }
+    }
+
+    /// A paused track, so positions don't move while a test runs.
+    fn paused_track() -> NowPlaying {
+        let mut now = NowPlaying::new();
+        now.track = Some(track(URI));
+        now
+    }
+
+    fn id() -> SpotifyUri {
+        SpotifyUri::from_uri(URI).unwrap()
+    }
+
+    fn seeked(position_ms: u32) -> PlayerEvent {
+        PlayerEvent::Seeked { play_request_id: 1, track_id: id(), position_ms }
+    }
+
+    fn position_changed(position_ms: u32) -> PlayerEvent {
+        PlayerEvent::PositionChanged { play_request_id: 1, track_id: id(), position_ms }
+    }
+
+    #[test]
+    fn seek_moves_at_once_and_ignores_reports_from_before() {
+        let mut now = paused_track();
+        now.seek(60_000);
+        assert_eq!(now.position_ms(), 60_000);
+        now.apply(position_changed(10_000));
+        assert_eq!(now.position_ms(), 60_000);
+        now.apply(seeked(60_200));
+        assert_eq!(now.position_ms(), 60_200);
+        // Confirmed: the player's reports count again.
+        now.apply(position_changed(10_000));
+        assert_eq!(now.position_ms(), 10_000);
+    }
+
+    #[test]
+    fn quick_seeks_wait_for_the_last_one() {
+        let mut now = paused_track();
+        now.seek(5_000);
+        now.seek(10_000);
+        now.apply(seeked(5_000));
+        assert_eq!(now.position_ms(), 10_000);
+        now.apply(seeked(10_000));
+        assert_eq!(now.position_ms(), 10_000);
+    }
+
+    #[test]
+    fn a_lost_seek_stops_holding_the_position() {
+        let mut now = paused_track();
+        now.seek(60_000);
+        now.seeking = Some((60_000, Instant::now() - ECHO_WINDOW));
+        now.apply(position_changed(10_000));
+        assert_eq!(now.position_ms(), 10_000);
+    }
+
+    #[test]
+    fn pausing_after_a_seek_keeps_the_new_position() {
+        let mut now = paused_track();
+        now.playing = true;
+        now.seek(90_000);
+        now.apply(PlayerEvent::Paused { play_request_id: 1, track_id: id(), position_ms: 30_000 });
+        assert!(!now.playing);
+        assert!((90_000..90_500).contains(&now.position_ms()));
+    }
+
+    #[test]
+    fn pausing_freezes_the_clock_where_it_stands() {
+        let mut now = paused_track();
+        now.playing = true;
+        now.position_ms = 1_000;
+        now.position_at = Instant::now() - Duration::from_secs(2);
+        now.set_playing(false);
+        let frozen = now.position_ms();
+        assert!((3_000..3_500).contains(&frozen));
+        assert_eq!(now.position_ms(), frozen);
+    }
 }
