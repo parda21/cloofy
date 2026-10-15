@@ -27,6 +27,14 @@ pub mod power {
     }
 }
 
+pub mod settings {
+    use crate::settings::Settings;
+
+    pub fn current() -> Settings {
+        Settings::default()
+    }
+}
+
 pub mod media {
     use std::sync::Arc;
 

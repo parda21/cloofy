@@ -49,6 +49,13 @@ impl Accent {
         self.since = Instant::now();
     }
 
+    /// Switches without fading.
+    pub fn jump(&mut self, target: Rgb) {
+        self.from = target;
+        self.to = target;
+        self.since = Instant::now() - ACCENT_FADE;
+    }
+
     pub fn rgb(&self) -> Rgb {
         let t = (self.since.elapsed().as_secs_f32() / ACCENT_FADE.as_secs_f32()).min(1.0);
         let eased = 1.0 - (1.0 - t).powi(3);
@@ -130,4 +137,20 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
         _ => (c, 0.0, x),
     };
     (r + m, g + m, b + m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jumping_skips_the_fade() {
+        let mut accent = Accent::new();
+        let target = Rgb(200, 40, 90);
+        accent.set(target);
+        assert!(accent.is_fading());
+        accent.jump(target);
+        assert!(!accent.is_fading());
+        assert_eq!(accent.rgb(), target);
+    }
 }
