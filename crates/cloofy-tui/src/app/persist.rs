@@ -117,6 +117,10 @@ impl App {
             self.crossfade = crossfade;
         }
         self.restored_volume = state.volume;
+        // The player starts at this volume too, so the slider can show it right away.
+        if let Some(volume) = state.volume {
+            self.now.volume = volume;
+        }
 
         let selection = state.selection;
         match state.view {

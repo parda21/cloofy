@@ -85,8 +85,9 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
     );
     loader.prune_image_cache();
     let notices = tx.clone();
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx.clone());
     let saved = state::load(&paths.state_file());
+    let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
+    playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, tx.clone());
     let mut app = App::new(loader, session_tx, tx, crossfade, saved, paths.clone());
 
     let mut input = EventStream::new();
