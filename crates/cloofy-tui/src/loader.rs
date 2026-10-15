@@ -42,6 +42,8 @@ use crate::{
 /// Cached cover art unused for this long is deleted at startup.
 const IMAGE_CACHE_AGE: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 
+/// Track metadata requests running at the same time for one playlist.
+const METADATA_BATCHES: usize = 3;
 /// Library checks running at the same time for one list.
 const SAVED_CONCURRENCY: usize = 2;
 /// How long lyrics wait for the session, so a track restored at startup still gets Spotify's
@@ -343,8 +345,9 @@ impl Loader {
                 && !playlist.collaborative
                 && this.user_id().await.as_deref() != Some(playlist.owner_id.as_str())
             {
-                let page = this.internal_playlist(&playlist.id).await;
-                this.send(DataEvent::Tracks { view, page: page.map_err(|e| format!("{e:#}")) });
+                if let Err(err) = this.internal_playlist(view, &playlist.id).await {
+                    this.send(DataEvent::Tracks { view, page: Err(format!("{err:#}")) });
+                }
                 return;
             }
 
@@ -375,11 +378,32 @@ impl Loader {
         });
     }
 
-    /// Followed and Spotify-made playlists only resolve through librespot.
-    async fn internal_playlist(&self, id: &str) -> Result<Page<Track>> {
+    /// Followed and Spotify-made playlists only resolve through librespot. Their tracks arrive
+    /// in batches, so the first rows show while the rest load.
+    async fn internal_playlist(&self, view: u64, id: &str) -> Result<()> {
         let session = self.session().await?;
-        let items = catalog::playlist_tracks_internal(&session, id).await?;
-        Ok(Page { total: items.len() as u32, items, next_offset: None })
+        let uris = catalog::playlist_track_uris(&session, id).await?;
+        if uris.is_empty() {
+            let page = Page { items: Vec::new(), total: 0, next_offset: None };
+            self.send(DataEvent::Tracks { view, page: Ok(page) });
+            return Ok(());
+        }
+        let session = &session;
+        let batches: Vec<_> = uris.chunks(catalog::METADATA_BATCH).map(<[_]>::to_vec).collect();
+        let mut batches = stream::iter(batches)
+            .map(|batch| async move { (batch.len(), catalog::tracks_metadata(session, &batch).await) })
+            .buffered(METADATA_BATCHES);
+        let (mut requested, mut delivered) = (0, 0);
+        while let Some((len, items)) = batches.next().await {
+            requested += len;
+            delivered += items.len();
+            let last = requested == uris.len();
+            // Tracks without details are left out, so the final count is what actually arrived.
+            let total = if last { delivered } else { uris.len() } as u32;
+            let next_offset = (!last).then_some(requested as u32);
+            self.send(DataEvent::Tracks { view, page: Ok(Page { items, total, next_offset }) });
+        }
+        Ok(())
     }
 
     async fn session(&self) -> Result<Session> {

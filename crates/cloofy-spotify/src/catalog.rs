@@ -1,12 +1,20 @@
 //! Typed access to Spotify's catalog: the Web API where it still works, librespot's internal
 //! endpoints where Development Mode apps are locked out.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use futures::{StreamExt, TryStreamExt, stream};
 use librespot::{
     core::{SpotifyUri, session::Session},
     metadata::{self as meta, Metadata},
+    protocol::{
+        extended_metadata::{BatchedEntityRequest, EntityRequest, ExtensionQuery},
+        extension_kind::ExtensionKind,
+        metadata::Track as TrackMessage,
+    },
 };
+use protobuf::{EnumOrUnknown, Message};
 use reqwest::Method;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
@@ -21,7 +29,9 @@ pub const PAGE_CONCURRENCY: usize = 4;
 pub const LIBRARY_BATCH: usize = 40;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
 const IMAGE_WIDTH: u32 = 300;
-/// Concurrent metadata requests when resolving playlists through librespot.
+/// Tracks per metadata request when resolving playlists through librespot.
+pub const METADATA_BATCH: usize = 100;
+/// Concurrent requests when that batch request fails and tracks are asked for one by one.
 const METADATA_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone)]
@@ -244,20 +254,55 @@ pub async fn add_to_playlist(api: &WebApi, playlist_id: &str, uris: &[String]) -
     api.call(Method::POST, &format!("/playlists/{playlist_id}/items"), Some(&body)).await
 }
 
-/// Playlist contents through librespot, for playlists the Web API won't show (followed and
-/// Spotify-made ones).
-pub async fn playlist_tracks_internal(session: &Session, id: &str) -> Result<Vec<Track>> {
+/// The songs of a playlist through librespot, for playlists the Web API won't show (followed
+/// and Spotify-made ones). [`tracks_metadata`] fills in the details.
+pub async fn playlist_track_uris(session: &Session, id: &str) -> Result<Vec<SpotifyUri>> {
     let uri = SpotifyUri::from_uri(&format!("spotify:playlist:{id}"))?;
     let playlist = meta::Playlist::get(session, &uri).await?;
-    let uris: Vec<SpotifyUri> =
-        playlist.tracks().filter(|uri| matches!(uri, SpotifyUri::Track { .. })).cloned().collect();
-    let tracks = stream::iter(uris)
-        .map(|uri| async move { meta::Track::get(session, &uri).await })
-        .buffered(METADATA_CONCURRENCY)
-        .filter_map(|track| async move { track.ok().map(Track::from) })
-        .collect()
-        .await;
-    Ok(tracks)
+    Ok(playlist.tracks().filter(|uri| matches!(uri, SpotifyUri::Track { .. })).cloned().collect())
+}
+
+/// Details of a batch of tracks, in the given order, from a single request. Should Spotify
+/// refuse the batch, the tracks are asked for one by one. Tracks without details are left out.
+pub async fn tracks_metadata(session: &Session, uris: &[SpotifyUri]) -> Vec<Track> {
+    match batched_metadata(session, uris).await {
+        Ok(tracks) => tracks,
+        Err(err) => {
+            tracing::warn!("batched track metadata failed, asking one by one: {err:#}");
+            stream::iter(uris.to_vec())
+                .map(|uri| async move { meta::Track::get(session, &uri).await })
+                .buffered(METADATA_CONCURRENCY)
+                .filter_map(|track| async move { track.ok().map(Track::from) })
+                .collect()
+                .await
+        }
+    }
+}
+
+async fn batched_metadata(session: &Session, uris: &[SpotifyUri]) -> Result<Vec<Track>> {
+    let query = ExtensionQuery { extension_kind: EnumOrUnknown::new(ExtensionKind::TRACK_V4), ..Default::default() };
+    let request = BatchedEntityRequest {
+        entity_request: uris
+            .iter()
+            .map(|uri| EntityRequest { entity_uri: uri.to_uri(), query: vec![query.clone()], ..Default::default() })
+            .collect(),
+        ..Default::default()
+    };
+    let response = session.spclient().get_extended_metadata(request).await?;
+    // Entries need not come back in the order they were asked for.
+    let mut found: HashMap<String, Track> = response
+        .extended_metadata
+        .iter()
+        .flat_map(|array| &array.extension_data)
+        .filter(|data| matches!(data.header.status_code, 0 | 200))
+        .filter_map(|data| {
+            let message = TrackMessage::parse_from_bytes(&data.extension_data.as_ref()?.value).ok()?;
+            let uri = SpotifyUri::from_uri(&data.entity_uri).ok()?;
+            let track = <meta::Track as Metadata>::parse(&message, &uri).ok()?;
+            Some((data.entity_uri.clone(), Track::from(track)))
+        })
+        .collect();
+    Ok(uris.iter().filter_map(|uri| found.remove(&uri.to_uri())).collect())
 }
 
 /// The image closest to the preferred width; a missing width counts as a match.
