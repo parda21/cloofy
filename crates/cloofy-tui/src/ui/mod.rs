@@ -18,7 +18,7 @@ use std::time::Instant;
 use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
-    buffer::Buffer,
+    buffer::{Buffer, Cell},
     layout::{Constraint, Layout, Rect, Size},
     style::{Color, Modifier, Style},
 };
@@ -43,6 +43,7 @@ const PLAYER_HEIGHT: u16 = 5;
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    app.begin_frame();
     let area = frame.area();
     app.screen = area;
     app.hits.clear();
@@ -98,10 +99,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     hover(frame.buffer_mut(), app);
+    app.sync_hover();
 
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();
     app.effects.process_effects(elapsed.into(), frame.buffer_mut(), area);
+    app.end_frame();
 }
 
 fn draw_content(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
@@ -160,8 +163,9 @@ fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Si
     }
     let skip = (visible_top - top) as u16;
     let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
-    if area.height == size.height {
+    let upload = if area.height == size.height {
         frame.render_widget(Image::new(&picture.protocol), area);
+        take_upload(&mut frame.buffer_mut()[(area.x, area.y)])
     } else {
         // Kitty placeholders and half blocks are plain cells, so rows can be cut; Sixel and
         // iTerm2 images are a single escape sequence and cannot.
@@ -170,40 +174,47 @@ fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Si
         }
         let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
         Image::new(&picture.protocol).render(scratch.area, &mut scratch);
+        let upload = take_upload(&mut scratch[(0, 0)]);
         let buf = frame.buffer_mut();
         for row in 0..area.height {
             for column in 0..area.width {
                 buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
             }
         }
-        // The first time an image is drawn, its upload rides on the top-left cell; keep it.
-        let first = scratch[(0, 0)].symbol();
-        if skip > 0
-            && let Some(start) = first.find(KITTY_PLACEHOLDER)
-            && start > 0
-        {
-            let cell = &mut buf[(area.x, area.y)];
-            let symbol = format!("{}{}", &first[..start], cell.symbol());
-            cell.set_symbol(&symbol);
-        }
-    }
+        upload
+    };
     let cells = match picture.source {
         Some(_) => area.rows().flat_map(|row| row.columns()).map(|p| frame.buffer_mut()[p].clone()).collect(),
         None => Vec::new(),
     };
-    Some(Placement { area, size, skip, source: picture.source.clone(), cells })
+    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload })
 }
 
-/// The play button of a hovered card, ending at column `right` in row `y`. A dark cell to
-/// its left sets it off from covers in the accent color.
-pub(super) fn play_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, hit: Hit) {
+/// The first time a Kitty image is drawn, the upload of its pixels rides on its top-left cell.
+/// Takes it off, so that whatever is drawn over that cell, like an overlay, cannot lose it; the
+/// caller writes it out after the frame.
+fn take_upload(cell: &mut Cell) -> Option<String> {
+    let symbol = cell.symbol();
+    let start = symbol.find(KITTY_PLACEHOLDER).filter(|&start| start > 0)?;
+    let (upload, placeholder) = (symbol[..start].to_owned(), symbol[start..].to_owned());
+    cell.set_symbol(&placeholder);
+    Some(upload)
+}
+
+pub(super) const PLAY_BUTTON_WIDTH: u16 = 3;
+
+/// The play button of a hovered card, ending at column `right` in row `y`. On a cover, a dark
+/// cell to its left sets it off from covers in the accent color.
+pub(super) fn play_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, hit: Hit, on_cover: bool) {
     let icons = icons();
-    let area = Rect::new(right.saturating_sub(3), y, 3, 1).intersection(buf.area);
+    let area = Rect::new(right.saturating_sub(PLAY_BUTTON_WIDTH), y, PLAY_BUTTON_WIDTH, 1).intersection(buf.area);
     let accent = app.accent.color();
-    if let Some(edge) = area.x.checked_sub(1) {
+    if on_cover && let Some(edge) = area.x.checked_sub(1) {
         buf.set_string(edge, y, " ", Style::new().bg(BG));
     }
-    buf.set_style(area, Style::new().bg(accent));
+    // Blank the cells rather than only recoloring them: over a cover they hold image cells,
+    // which would keep showing pieces of the picture around the icon.
+    buf.set_string(area.x, y, " ".repeat(area.width as usize), Style::new().bg(accent));
     buf.set_string(area.x + 1, y, icons.play, Style::new().fg(BG).bg(accent));
     app.hits.push((area, hit));
 }
@@ -248,18 +259,30 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
     }
 }
 
-/// Lightens whatever clickable thing the mouse is over; links get underlined instead.
+/// Lightens whatever clickable thing the mouse is over, and more so what was just clicked;
+/// links get underlined instead.
 fn hover(buf: &mut Buffer, app: &App) {
+    // Only while the target is still there: a click that opened another page leaves none.
+    let pressed = app.pressed().map(|(hit, area)| (area, hit)).filter(|pressed| app.hits.contains(pressed));
+    if let Some((area, _)) = pressed {
+        tint(buf, app, area, 0.18);
+    }
     let Some(position) = app.mouse else { return };
-    let Some((area, hit)) = app.hits.iter().rev().find(|(area, hit)| hit.is_interactive() && area.contains(position))
-    else {
-        return;
-    };
-    let area = area.intersection(buf.area);
-    if let Hit::Link(_) = hit {
-        buf.set_style(area, Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
+    // Only the topmost target counts: an overlay's body hides the rows and cards under it.
+    let Some((area, hit)) = app.hits.iter().rev().find(|(area, _)| area.contains(position)) else { return };
+    if !hit.is_interactive() {
         return;
     }
+    if let Hit::Link(_) = hit {
+        buf.set_style(area.intersection(buf.area), Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
+    } else if pressed.is_none_or(|(pressed, _)| pressed != *area) {
+        tint(buf, app, *area, 0.06);
+    }
+}
+
+/// Mixes some white into the background of `area`.
+fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
+    let area = area.intersection(buf.area);
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
@@ -273,7 +296,7 @@ fn hover(buf: &mut Buffer, app: &App) {
                 Color::Rgb(r, g, b) => crate::theme::Rgb(r, g, b),
                 _ => crate::theme::Rgb(13, 13, 16),
             };
-            cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), 0.06).into();
+            cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), amount).into();
         }
     }
 }

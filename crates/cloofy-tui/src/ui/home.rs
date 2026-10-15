@@ -36,11 +36,40 @@ pub(super) struct ShelfLayout {
     /// Index of the first visible card.
     pub first: usize,
     pub items: Vec<HomeItem>,
+    /// Covers of the pages before and after the visible one, loaded ahead.
+    pub nearby: Vec<(Option<String>, bool)>,
 }
 
 /// How many cards fit next to each other.
 pub(super) fn visible_cards(width: u16) -> usize {
     ((width + CARD_GAP) / (COVER.width + CARD_GAP)).max(1) as usize
+}
+
+/// Cover URLs, and whether they are round, of the pages left and right of the `cards` items
+/// from `first`. Loading them ahead lets paging show the next cards at once.
+pub(super) fn nearby(items: &[HomeItem], first: usize, cards: usize) -> Vec<(Option<String>, bool)> {
+    let before = first.saturating_sub(cards)..first;
+    let after = (first + cards).min(items.len())..(first + 2 * cards).min(items.len());
+    before.chain(after).map(|index| cover_of(&items[index])).collect()
+}
+
+/// An item's cover URL and whether it is drawn round.
+fn cover_of(item: &HomeItem) -> (Option<String>, bool) {
+    (item.image_url.clone(), item.kind == ItemKind::Artist)
+}
+
+/// Left column of the card in slot `column` of a row of `slots` cards across `width`. The
+/// room left over widens the gaps, so a full row ends at the right edge like the shortcut
+/// tiles and the pager above it. Short rows keep the same spacing and stay left.
+pub(super) fn card_x(x: u16, width: u16, slots: usize, column: usize) -> u16 {
+    let (slots, column) = (slots as u16, column as u16);
+    if slots < 2 {
+        return x + column * (COVER.width + CARD_GAP);
+    }
+    let spare = width.saturating_sub(slots * COVER.width);
+    let (gap, rest) = (spare / (slots - 1), spare % (slots - 1));
+    // The first gaps take one column more each until the rest is used up.
+    x + column * (COVER.width + gap) + column.min(rest)
 }
 
 /// Scrolls a shelf horizontally so the selected card stays visible.
@@ -112,12 +141,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let cards = visible_cards(inner.width);
     view.cards = cards;
     let mut layouts = Vec::new();
+    // The first page of the shelf below the screen, so scrolling down finds it loaded.
+    let mut below = Vec::new();
     for (index, shelf) in home.shelves.iter().enumerate() {
         let y = inner.y as i32 + starts[index] as i32 - scroll as i32;
         if y + heights[index] as i32 <= inner.y as i32 {
             continue;
         }
         if y >= inner.bottom() as i32 {
+            if !shelf.shortcuts {
+                let first = view.offsets[index];
+                below.extend(shelf.items.iter().skip(first).take(cards).map(cover_of));
+            }
             break;
         }
         let first = if shelf.shortcuts {
@@ -139,9 +174,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             total: shelf.items.len(),
             first,
             items: shelf.items.iter().skip(first).take(count).cloned().collect(),
+            nearby: if shelf.shortcuts { Vec::new() } else { nearby(&shelf.items, first, cards) },
         });
     }
     let selected = (view.shelf, view.item);
+    for (url, round) in below {
+        app.prefetch(url.as_deref(), COVER, round);
+    }
 
     for layout in layouts {
         let selected_item = (selected.0 == layout.index).then_some(selected.1);
@@ -209,6 +248,10 @@ pub(super) fn draw_shelf(
 ) {
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    for (url, round) in &layout.nearby {
+        app.prefetch(url.as_deref(), COVER, *round);
+    }
+    let marker = playing_marker(app);
     if let Some(y) = row(area, layout.y) {
         let pageable = layout.total > layout.items.len();
         let title_width = area.width.saturating_sub(if pageable { 28 } else { 2 }) as usize;
@@ -239,21 +282,30 @@ pub(super) fn draw_shelf(
     }
 
     let cover_y = layout.y + 2;
+    // A card's box reaches one column past its cover on both sides, the first card's too.
+    let padded = Rect { x: area.x.saturating_sub(1), width: area.width + 2, ..area };
+    let slots = visible_cards(area.width);
     for (column, item) in layout.items.iter().enumerate() {
-        let x = area.x + column as u16 * (COVER.width + CARD_GAP);
+        let x = card_x(area.x, area.width, slots, column);
         let index = layout.first + column;
         let is_selected = selected == Some(index);
-        let card = clip(area, x.saturating_sub(1), COVER.width + 2, cover_y - 1, COVER.height + 4);
+        let card = clip(padded, x.saturating_sub(1), COVER.width + 2, cover_y - 1, COVER.height + 4);
         if is_selected && let Some(card) = card {
             frame.buffer_mut().set_style(card, Style::new().bg(selection));
         }
         draw_cover(frame, app, (x, cover_y), area, item, COVER);
         let buf = frame.buffer_mut();
-        let title_style = if is_selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+        let playing = is_playing(app, item);
+        let title_style = card_title_style(accent, playing, is_selected);
         let width = COVER.width as usize;
         let text_y = cover_y + COVER.height as i32;
         if let Some(y) = row(area, text_y) {
-            buf.set_string(x, y, text::truncate(&item.title, width), title_style);
+            let title_width = if playing { width - 4 } else { width };
+            buf.set_string(x, y, text::truncate(&item.title, title_width), title_style);
+            // Below the cover, so it never lands on image cells.
+            if playing {
+                buf.set_string(x + COVER.width - 3, y, marker, Style::new().fg(accent));
+            }
         }
         if let Some(y) = row(area, text_y + 1) {
             buf.set_string(x, y, text::truncate(&item.subtitle, width), Style::new().fg(MUTED));
@@ -265,7 +317,7 @@ pub(super) fn draw_shelf(
                 && let Some(y) = row(area, button_y)
             {
                 let hit = Hit::CardPlay { shelf: layout.index, item: index };
-                super::play_button(frame.buffer_mut(), app, x + COVER.width, y, hit);
+                super::play_button(frame.buffer_mut(), app, x + COVER.width, y, hit, true);
             }
         }
     }
@@ -281,6 +333,7 @@ fn draw_shortcuts(
 ) {
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let marker = playing_marker(app);
     let columns = shortcut_columns(area.width);
     let tile_width = (area.width - TILE_GAP * (columns - 1)) / columns;
     for (index, item) in layout.items.iter().enumerate() {
@@ -291,20 +344,61 @@ fn draw_shortcuts(
         let is_selected = selected == Some(index);
         frame.buffer_mut().set_style(tile, Style::new().bg(if is_selected { selection } else { RAISED }));
         draw_cover(frame, app, (x, tile_y), area, item, TILE_COVER);
-        let style = if is_selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
-        let name = text::truncate(&item.title, tile_width.saturating_sub(TILE_COVER.width + 3) as usize);
+        let playing = is_playing(app, item);
+        let style = if playing { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
+        let hovered = super::hovered(app, tile);
+        // The end of the row holds the play button while hovered, else the playing tile's
+        // equalizer; the name stops short of either.
+        let reserved = TILE_COVER.width
+            + 3
+            + if hovered {
+                super::PLAY_BUTTON_WIDTH + 1
+            } else if playing {
+                4
+            } else {
+                0
+            };
+        let name = text::truncate(&item.title, tile_width.saturating_sub(reserved) as usize);
         // Vertically centered next to the cover.
-        if let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32) {
+        let name_y = row(area, tile_y + (TILE_COVER.height / 2) as i32);
+        if let Some(y) = name_y {
             frame.buffer_mut().set_string(x + TILE_COVER.width + 2, y, name, style);
         }
         app.hits.push((tile, Hit::Card { shelf: layout.index, item: index }));
-        if super::hovered(app, tile)
-            && let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32)
-        {
+        let Some(y) = name_y else { continue };
+        // The play button of a hovered tile takes the equalizer's place.
+        if hovered {
             let hit = Hit::CardPlay { shelf: layout.index, item: index };
-            super::play_button(frame.buffer_mut(), app, x + tile_width - 1, y, hit);
+            super::play_button(frame.buffer_mut(), app, x + tile_width - 1, y, hit, false);
+        } else if playing {
+            frame.buffer_mut().set_string(x + tile_width - 4, y, marker, Style::new().fg(accent));
         }
     }
+}
+
+/// A card's title: the accent marks what plays, as in track lists. The selection shows as the
+/// background, so its title is only bold.
+pub(super) fn card_title_style(accent: Color, playing: bool, selected: bool) -> Style {
+    match (playing, selected) {
+        (true, _) => Style::new().fg(accent).bold(),
+        (false, true) => Style::new().fg(TEXT).bold(),
+        (false, false) => Style::new().fg(TEXT),
+    }
+}
+
+/// Whether `item` is what plays now: the playlist, album or show the music comes from, or the
+/// episode itself, since an episode plays from its whole show.
+fn is_playing(app: &App, item: &HomeItem) -> bool {
+    match item.kind {
+        ItemKind::Episode => app.now.track.as_ref().is_some_and(|track| track.uri == item.uri),
+        _ => app.playing_context() == Some(item.uri.as_str()),
+    }
+}
+
+/// What marks the playing card: a moving equalizer, or a speaker while paused, as in the
+/// sidebar.
+pub(super) fn playing_marker(app: &App) -> &'static str {
+    if app.now.playing { text::equalizer(app.frame()) } else { crate::icons::icons().volume }
 }
 
 /// A card's cover at `(x, y)`, cut to `clip`; an icon on a plain square while it loads.
@@ -333,5 +427,58 @@ pub(super) fn draw_cover(
     };
     if let Some(row) = row(clip, y + (size.height / 2) as i32) {
         buf.set_string(x + size.width / 2, row, icon, Style::new().fg(FAINT));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn items(count: usize) -> Vec<HomeItem> {
+        (0..count)
+            .map(|i| HomeItem {
+                uri: format!("spotify:playlist:{i}"),
+                kind: ItemKind::Playlist,
+                title: String::new(),
+                subtitle: String::new(),
+                image_url: Some(i.to_string()),
+                owner_id: String::new(),
+                owner_name: String::new(),
+                context_uri: String::new(),
+            })
+            .collect()
+    }
+
+    fn urls(nearby: Vec<(Option<String>, bool)>) -> Vec<String> {
+        nearby.into_iter().filter_map(|(url, _)| url).collect()
+    }
+
+    #[test]
+    fn nearby_covers_are_the_pages_on_either_side() {
+        assert_eq!(urls(nearby(&items(20), 6, 3)), ["3", "4", "5", "9", "10", "11"]);
+    }
+
+    #[test]
+    fn nearby_covers_stop_at_the_ends_of_the_shelf() {
+        assert_eq!(urls(nearby(&items(5), 0, 3)), ["3", "4"]);
+        assert_eq!(urls(nearby(&items(5), 2, 3)), ["0", "1"]);
+        assert!(nearby(&items(2), 0, 3).is_empty());
+    }
+
+    #[test]
+    fn full_rows_reach_the_right_edge() {
+        for width in COVER.width..200 {
+            let slots = visible_cards(width);
+            if slots > 1 {
+                assert_eq!(card_x(0, width, slots, slots - 1) + COVER.width, width);
+            }
+            // Gaps never shrink below the minimum and differ by at most one column.
+            let gaps: Vec<u16> = (1..slots)
+                .map(|column| card_x(0, width, slots, column) - card_x(0, width, slots, column - 1) - COVER.width)
+                .collect();
+            if let (Some(widest), Some(narrowest)) = (gaps.iter().max(), gaps.iter().min()) {
+                assert!(*narrowest >= CARD_GAP && widest - narrowest <= 1);
+            }
+        }
     }
 }

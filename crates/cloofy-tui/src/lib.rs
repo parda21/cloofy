@@ -1,6 +1,7 @@
 mod app;
 mod art;
 mod commands;
+mod datacache;
 mod icons;
 mod loader;
 mod media;
@@ -13,23 +14,41 @@ mod theme;
 mod ui;
 mod views;
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    io::{BufWriter, Stdout, Write},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Result, bail};
 use cloofy_spotify::{config::Config, paths::Paths, session, webapi::WebApi};
-use crossterm::event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream};
+use crossterm::{
+    event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream},
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+};
 use futures::{FutureExt, StreamExt};
-use ratatui::DefaultTerminal;
+use ratatui::{Terminal, backend::CrosstermBackend, buffer::Buffer};
 use ratatui_image::picker::Picker;
 use tokio::{
     sync::{mpsc, watch},
     time::MissedTickBehavior,
 };
 
-use crate::{app::App, loader::Loader};
+use crate::{
+    app::{App, AppEvent},
+    loader::{DataEvent, Loader, SessionState},
+};
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);
+/// Most loaded images taken in per frame. They arrive by the dozen when a page opens, and the
+/// frame sends the pixels of each new one, which holds up input until it is written.
+const IMAGES_PER_FRAME: usize = 12;
+
+/// Frames are collected in a buffer and written in one go, instead of in the 1 KiB pieces
+/// stdout's own buffer would send.
+type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+
 /// Low Power Mode has no animations to keep smooth, so the timer wakes cloofy less often.
 const LOW_POWER_TICK: Duration = Duration::from_millis(100);
 
@@ -43,11 +62,20 @@ pub async fn run(paths: &Paths) -> Result<()> {
     #[cfg(unix)]
     let _stderr = StderrToLog::redirect(&paths.log_file());
     icons::init(config.icons.as_deref());
-    let mut terminal = ratatui::init();
+    // Raw mode, the alternate screen and the panic hook; frames go through `terminal` below.
+    let _ = ratatui::init();
+    let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(64 * 1024, std::io::stdout())))?;
     // Must run after entering the alternate screen and before reading input events.
     let picker = image_picker();
     // Focus changes tell whether notifications are worth showing.
     crossterm::execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)?;
+    // ratatui's panic hook restores the screen but not mouse and focus reporting, which would
+    // leave the shell printing escape codes for every mouse move.
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
+        restore(info);
+    }));
     let crossfade = config.crossfade.unwrap_or(0).min(12);
     let notifier = if config.notifications == Some(false) { None } else { notify::Notifier::detect() };
     let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier).await;
@@ -57,7 +85,7 @@ pub async fn run(paths: &Paths) -> Result<()> {
 }
 
 async fn run_app(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut Term,
     paths: &Paths,
     api: Arc<WebApi>,
     picker: Picker,
@@ -65,7 +93,7 @@ async fn run_app(
     notifier: Option<notify::Notifier>,
 ) -> Result<()> {
     let (tx, mut events) = mpsc::unbounded_channel();
-    let (session_tx, session_rx) = watch::channel(None);
+    let (session_tx, session_rx) = watch::channel(SessionState::Connecting);
     let snapshotter = snapshot::Snapshotter::from_env().map(Arc::new);
     let loader = Loader::new(
         api,
@@ -76,6 +104,7 @@ async fn run_app(
         paths.cache.join("images"),
         snapshotter.is_some(),
     );
+    loader.prune_image_cache();
     let notices = tx.clone();
     let media = cloofy_os::media::Controls::new({
         let tx = tx.clone();
@@ -95,16 +124,19 @@ async fn run_app(
         }
     });
     let saved = state::load(&paths.state_file());
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), saved.volume, retry_now, tx);
-    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media, notifier);
+    let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
+    playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, retry_now, tx.clone());
+    let mut app = App::new(loader, session_tx, crossfade, saved, paths.clone(), media, notifier);
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
     let mut ticker = new_ticker(app.settings.low_power);
 
-    terminal.draw(|frame| ui::draw(frame, &mut app))?;
+    draw(terminal, &mut app, false)?;
     while !app.quit {
         let redraw = tokio::select! {
+            // Input first, so a key or click never waits behind loaded data.
+            biased;
             event = input.next() => match event {
                 Some(event) => {
                     // Handle everything already queued (a fast scroll sends dozens) before drawing once.
@@ -116,12 +148,21 @@ async fn run_app(
                 }
                 None => break,
             },
+            _ = closed.recv() => break,
             Some(event) = events.recv() => {
-                app.on_event(event);
-                true
+                // Likewise handle what else has arrived, such as a burst of covers, before
+                // drawing once.
+                let mut redraw = app.on_event(event);
+                let mut images = 0;
+                while images < IMAGES_PER_FRAME
+                    && let Ok(event) = events.try_recv()
+                {
+                    images += usize::from(matches!(event, AppEvent::Data(DataEvent::Image { .. })));
+                    redraw |= app.on_event(event);
+                }
+                redraw
             }
             _ = ticker.tick() => app.on_tick(),
-            _ = closed.recv() => break,
         };
         app.sync_media();
         app.announce_track();
@@ -129,11 +170,11 @@ async fn run_app(
             ticker = new_ticker(app.settings.low_power);
         }
         if redraw || app.snapshot_requested {
-            let frame = terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            if std::mem::take(&mut app.snapshot_requested)
+            let snapshot = std::mem::take(&mut app.snapshot_requested) && snapshotter.is_some();
+            if let Some(buffer) = draw(terminal, &mut app, snapshot)?
                 && let Some(snapshotter) = &snapshotter
             {
-                let (buffer, placements) = (frame.buffer.clone(), app.placements.clone());
+                let placements = app.placements.clone();
                 let (snapshotter, notices) = (snapshotter.clone(), notices.clone());
                 tokio::task::spawn_blocking(move || {
                     let text = match snapshotter.save(&buffer, &placements) {
@@ -144,9 +185,34 @@ async fn run_app(
                 });
             }
         }
+        // After the frame, so that nothing on screen still shows an image being deleted.
+        if !app.terminal_out.is_empty() {
+            let out = terminal.backend_mut();
+            for sequence in app.terminal_out.drain(..) {
+                out.write_all(sequence.as_bytes())?;
+            }
+            out.flush()?;
+        }
     }
     app.shutdown();
     Ok(())
+}
+
+/// Draws a frame as one synchronized update, so the terminal shows it whole rather than half
+/// painted. Returns the frame when `snapshot` asks for it.
+fn draw(terminal: &mut Term, app: &mut App, snapshot: bool) -> Result<Option<Buffer>> {
+    crossterm::queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    let frame = terminal.draw(|frame| ui::draw(frame, app))?;
+    let buffer = snapshot.then(|| frame.buffer.clone());
+    // Images drawn for the first time send their pixels now. The upload does not move the
+    // cursor, and the terminal fills in cells that wait for the image once it arrives.
+    for placement in &mut app.placements {
+        if let Some(upload) = placement.upload.take() {
+            terminal.backend_mut().write_all(upload.as_bytes())?;
+        }
+    }
+    crossterm::execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+    Ok(buffer)
 }
 
 fn ticker_period(low_power: bool) -> Duration {

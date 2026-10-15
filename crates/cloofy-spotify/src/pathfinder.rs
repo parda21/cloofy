@@ -4,7 +4,7 @@
 //! Queries are persisted: Spotify only accepts known query hashes, and those rotate every few
 //! weeks. The current ones are read from the web player's JavaScript and cached on disk.
 
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use librespot::core::session::Session;
@@ -19,6 +19,8 @@ const WEB_PLAYER: &str = "https://open.spotify.com/";
 const KNOWN_HASHES: &[(&str, &str)] = &[("home", "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1")];
 /// Greetings and shelf titles come back in this language, matching the English UI.
 const ACCEPT_LANGUAGE: &str = "en";
+/// The web player's JavaScript bundles are large; reading them may take a while.
+const BUNDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 
@@ -39,7 +41,7 @@ impl Pathfinder {
             hashes.extend(cached);
         }
         Self {
-            http: reqwest::Client::builder().user_agent(USER_AGENT).build().unwrap_or_default(),
+            http: crate::http::client(USER_AGENT).build().unwrap_or_default(),
             session,
             cache_path,
             hashes: Mutex::new(hashes),
@@ -100,7 +102,8 @@ impl Pathfinder {
         let html = self.http.get(WEB_PLAYER).send().await?.text().await?;
         let mut found = HashMap::new();
         for script in script_urls(&html).filter(|url| url.contains("web-player")) {
-            let source = self.http.get(&script).send().await?.text().await?;
+            // The bundles are several megabytes, more than the default timeout allows for.
+            let source = self.http.get(&script).timeout(BUNDLE_TIMEOUT).send().await?.text().await?;
             found.extend(persisted_hashes(&source));
         }
         if found.is_empty() {

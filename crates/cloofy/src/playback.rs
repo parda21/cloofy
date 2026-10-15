@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cloofy_player::Engine;
+use cloofy_player::{DEFAULT_VOLUME, Engine};
 use cloofy_spotify::{paths::Paths, session};
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack},
@@ -28,7 +28,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let session = pending.session.clone();
     let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
-    let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), None).await?;
+    let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), DEFAULT_VOLUME).await?;
     tokio::pin!(task);
 
     let mut options = LoadRequestOptions {
@@ -91,7 +91,7 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
     let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
-    let (spirc, task) = engine.connect_device(pending, name.clone(), None).await?;
+    let (spirc, task) = engine.connect_device(pending, name.clone(), DEFAULT_VOLUME).await?;
     tokio::pin!(task);
 
     println!(

@@ -92,6 +92,7 @@ fn top_track(track: &Value) -> Option<TopTrack> {
             album: text(track, "/albumOfTrack/name"),
             album_uri: text(track, "/albumOfTrack/uri"),
             duration_ms: track.pointer("/duration/totalMilliseconds").and_then(Value::as_u64).unwrap_or(0) as u32,
+            image_url: image(track.pointer("/albumOfTrack/coverArt/sources")),
         },
         playcount: track["playcount"].as_str().and_then(|n| n.parse().ok()).or(track["playcount"].as_u64()),
     })

@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path, time::Duration};
 
 use anyhow::{Context, Result};
 use librespot::{
@@ -12,6 +12,8 @@ use crate::paths::{Paths, write_private};
 /// Web API one. The port is free to change: Spotify accepts any port on loopback redirects.
 const OAUTH_REDIRECT: &str = "http://127.0.0.1:8975/login";
 const AUDIO_CACHE_LIMIT: u64 = 1 << 30;
+/// Downloading a track takes seconds, and every write refreshes the file's modified time.
+const STALE_TMP_AGE: Duration = Duration::from_secs(60 * 60);
 
 /// The scopes Spotify's desktop client requests (the same list librespot uses).
 const OAUTH_SCOPES: &[&str] = &[
@@ -98,5 +100,47 @@ fn config(paths: &Paths) -> Result<SessionConfig> {
         Ok(id) if !id.trim().is_empty() => config.device_id = id.trim().to_owned(),
         _ => write_private(&path, config.device_id.as_bytes())?,
     }
+    // librespot buffers each streamed track in a temp file that stays open until the track
+    // ends. /tmp is often tmpfs, where that file would hold 10–15 MB of RAM per track.
+    let tmp = paths.audio_tmp();
+    fs::create_dir_all(&tmp)?;
+    remove_stale_tmp_files(&tmp);
+    config.tmp_dir = tmp;
     Ok(config)
+}
+
+/// A killed cloofy leaves its half-streamed tracks behind, which tmpfs used to drop at boot.
+/// Only old files go: another cloofy process may have just created one and not yet reopened
+/// it by name. Files that are open keep working after removal, so nothing else is at risk.
+fn remove_stale_tmp_files(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age > STALE_TMP_AGE));
+        if stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::SystemTime;
+
+    use super::*;
+
+    #[test]
+    fn removes_only_stale_tmp_files() {
+        let dir = std::env::temp_dir().join(format!("cloofy-tmp-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (old, fresh) = (dir.join("old"), dir.join("fresh"));
+        fs::File::create(&old).unwrap().set_modified(SystemTime::now() - 2 * STALE_TMP_AGE).unwrap();
+        fs::File::create(&fresh).unwrap();
+        remove_stale_tmp_files(&dir);
+        let left = (old.exists(), fresh.exists());
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(left, (false, true));
+    }
 }

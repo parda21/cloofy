@@ -1,17 +1,114 @@
 //! Remembering the session: the open view, selections and the last track survive a restart.
 
-use std::time::Instant;
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use cloofy_spotify::catalog::{AlbumInfo, PlaylistInfo};
 use tachyonfx::EffectManager;
 
-use super::{App, COVER_SIZE, Focus};
+use super::{App, COVER_SIZE, Focus, LIBRARY_PARTS};
 use crate::{
+    datacache,
     state::{self, LastTrack, SavedView, Selection, State},
-    views::{TrackSource, View},
+    views::{HomeView, TrackSource, TrackView, View},
 };
 
+/// A cached greeting older than this ("Good morning" in the evening) is left out.
+const GREETING_FRESH: Duration = Duration::from_secs(60 * 60);
+
 impl App {
+    /// Shows the library, Home and open list of the last run until fresh ones arrive.
+    pub(super) fn load_cache(&mut self) {
+        let cache = &self.paths.cache;
+        self.cached_tracks = datacache::load(&datacache::tracks_path(cache)).map(|(tracks, _)| tracks);
+        let Some((library, age)) = datacache::load::<datacache::Library>(&datacache::library_path(cache)) else {
+            return;
+        };
+        let uris = library.playlists.iter().map(|p| &p.uri);
+        let uris = uris.chain(library.albums.iter().map(|a| &a.uri)).chain(library.artists.iter().map(|a| &a.uri));
+        self.saved.extend(uris.map(|uri| (uri.clone(), true)));
+        self.me = Some(library.user);
+        self.playlists = library.playlists;
+        self.albums = library.albums;
+        self.artists = library.artists;
+        self.shows = library.shows;
+        self.liked_total = library.liked_total;
+        if let Some(mut home) = library.home {
+            if age > GREETING_FRESH {
+                home.greeting.clear();
+            }
+            if let View::Home(v) = &mut self.view {
+                *v = HomeView::new(v.id, Some(home.clone()));
+            }
+            self.home_cache = Some(home);
+        }
+    }
+
+    /// The list the last run left open, to show at once while it loads again.
+    pub(super) fn cached_copy(&mut self, source: &TrackSource) -> Option<TrackView> {
+        let cached = self.cached_tracks.take().filter(|cached| cached.key == source.key())?;
+        if matches!(source, TrackSource::Liked) {
+            self.saved.extend(cached.tracks.iter().map(|t| (t.uri.clone(), true)));
+        }
+        Some(TrackView { tracks: cached.tracks, total: Some(cached.total), ..TrackView::new(source.clone()) })
+    }
+
+    /// Drops cached data of the account logged in last time and loads this one's.
+    pub(super) fn forget_library(&mut self) {
+        self.edit_library(|app| {
+            app.playlists.clear();
+            app.albums.clear();
+            app.artists.clear();
+            app.shows.clear();
+        });
+        self.liked_total = None;
+        self.saved.clear();
+        self.home_cache = None;
+        self.home_fetched_at = None;
+        self.playlists_loading = true;
+        self.library_loading = true;
+        self.library_pending = LIBRARY_PARTS;
+        self.loader.playlists();
+        self.loader.library();
+    }
+
+    /// Writes the library and Home for the next start; in the background unless quitting.
+    pub(super) fn save_library(&mut self, background: bool) {
+        self.data_dirty = false;
+        self.last_cache_save = Instant::now();
+        let Some(user) = self.me.clone() else { return };
+        let library = datacache::Library {
+            user,
+            playlists: self.playlists.clone(),
+            albums: self.albums.clone(),
+            artists: self.artists.clone(),
+            shows: self.shows.clone(),
+            liked_total: self.liked_total,
+            home: self.home_cache.clone(),
+        };
+        let path = datacache::library_path(&self.paths.cache);
+        write_cache(background, move || datacache::save(&path, &library));
+    }
+
+    /// Writes the open track list for the next start, once it is complete and if it changed.
+    pub(super) fn save_open_tracks(&mut self, background: bool) {
+        let View::Tracks(v) = &self.view else { return };
+        let Some(fetched_at) = v.fetched_at.filter(|_| v.incoming.is_none()) else { return };
+        if self.cached_tracks_version == Some((v.id, fetched_at)) {
+            return;
+        }
+        self.cached_tracks_version = Some((v.id, fetched_at));
+        let tracks = datacache::Tracks {
+            key: v.source.key().to_owned(),
+            total: v.total.unwrap_or(v.tracks.len() as u32),
+            tracks: v.tracks.clone(),
+        };
+        let path = datacache::tracks_path(&self.paths.cache);
+        write_cache(background, move || datacache::save(&path, &tracks));
+    }
+
     /// Reopens what was open last time. Called once, right after startup.
     pub(super) fn restore(&mut self, state: State) {
         self.library_filter = state.library_filter;
@@ -20,7 +117,7 @@ impl App {
             self.crossfade = crossfade;
         }
         self.restored_volume = state.volume;
-        // Playback starts at this volume too, see `playback::spawn`.
+        // The player starts at this volume too, so the slider can show it right away.
         if let Some(volume) = state.volume {
             self.now.volume = volume;
         }
@@ -41,14 +138,14 @@ impl App {
                 }
             }
             SavedView::Liked => self.open_tracks(TrackSource::Liked),
-            SavedView::Playlist { id, uri, name, owner_id, owner_name, image_url } => {
+            SavedView::Playlist { id, uri, name, owner_id, owner_name, collaborative, image_url } => {
                 self.open_tracks(TrackSource::Playlist(PlaylistInfo {
                     id,
                     uri,
                     name,
                     owner_id,
                     owner_name,
-                    collaborative: false,
+                    collaborative,
                     total: 0,
                     image_url,
                 }));
@@ -112,6 +209,7 @@ impl App {
                         name: p.name.clone(),
                         owner_id: p.owner_id.clone(),
                         owner_name: p.owner_name.clone(),
+                        collaborative: p.collaborative,
                         image_url: p.image_url.clone(),
                     },
                     TrackSource::Album(a) => SavedView::Album {
@@ -162,5 +260,18 @@ impl App {
         if let Err(err) = state::save(&self.state_path, &self.snapshot()) {
             tracing::warn!("saving state: {err}");
         }
+    }
+}
+
+fn write_cache(background: bool, save: impl FnOnce() -> io::Result<()> + Send + 'static) {
+    let save = move || {
+        if let Err(err) = save() {
+            tracing::warn!("saving the data cache: {err}");
+        }
+    };
+    if background {
+        tokio::task::spawn_blocking(save);
+    } else {
+        save();
     }
 }

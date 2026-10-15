@@ -59,15 +59,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let visible = cursor.visible((list.height / ENTRY_ROWS) as usize, entries.len());
     app.nav.offset = cursor.offset;
+    let ahead = visible.end..(visible.end + visible.len()).min(entries.len());
     for (row, position) in visible.enumerate() {
         let y = list.y + row as u16 * ENTRY_ROWS;
         entry(frame, app, area, y, position + NavItem::FIXED, entries[position]);
+    }
+    // The next screenful of thumbnails, so scrolling down finds them loaded.
+    for position in ahead {
+        let (_, _, image_url, round) = describe(app, entries[position]);
+        app.prefetch(image_url.as_deref(), THUMB, round);
     }
     let fits = (list.height / ENTRY_ROWS) as usize;
     super::scrollbar(frame.buffer_mut(), area.right() - 1, list.y, list.height, entries.len(), app.nav.offset, fits);
 }
 
 /// Text tabs: the active one bold with an accent underline. Returns their click areas.
+///
+/// Tabs that don't fit hide behind a chevron at either end; clicking one selects the next
+/// hidden filter in that direction. The active tab always stays in view.
 pub(super) fn tabs(
     buf: &mut ratatui::buffer::Buffer,
     x: u16,
@@ -77,12 +86,46 @@ pub(super) fn tabs(
     active: LibraryFilter,
     accent: Color,
 ) -> Vec<(Rect, LibraryFilter)> {
-    let mut x = x;
+    const GAP: u16 = 2;
+    /// A chevron plus the gap between it and the tabs.
+    const CHEVRON: u16 = 2;
+    let widths: Vec<u16> = filters.iter().map(|f| f.label().width() as u16).collect();
+    // Width of tabs `range` side by side.
+    let span = |range: std::ops::Range<usize>| -> u16 {
+        let count = range.len() as u16;
+        widths[range].iter().sum::<u16>() + GAP * count.saturating_sub(1)
+    };
+    let room = right.saturating_sub(x);
+    let active_index = filters.iter().position(|f| *f == active).unwrap_or(0);
+    // Start as far left as possible while the active tab still fits, with room for the
+    // chevrons it takes.
+    let mut start = 0;
+    if span(0..filters.len()) > room {
+        while start < active_index {
+            let left = if start > 0 { CHEVRON } else { 0 };
+            let more = if active_index + 1 < filters.len() { CHEVRON } else { 0 };
+            if left + span(start..active_index + 1) + more <= room {
+                break;
+            }
+            start += 1;
+        }
+    }
+
     let mut hits = Vec::new();
-    for &filter in filters {
-        let label = filter.label();
-        let width = label.width() as u16;
-        if x + width > right {
+    let mut x = x;
+    let icons = icons();
+    if start > 0 {
+        buf.set_string(x, y, icons.chevron_left, Style::new().fg(MUTED));
+        hits.push((Rect::new(x, y, CHEVRON, 1), filters[start - 1]));
+        x += CHEVRON;
+    }
+    for (index, &filter) in filters.iter().enumerate().skip(start) {
+        // The rest fit as they are, or this tab must leave room for the chevron.
+        let limit = if x + span(index..filters.len()) <= right { right } else { right.saturating_sub(CHEVRON) };
+        let width = widths[index];
+        if x + width > limit {
+            buf.set_string(right.saturating_sub(1), y, icons.chevron_right, Style::new().fg(MUTED));
+            hits.push((Rect::new(right.saturating_sub(CHEVRON), y, CHEVRON, 1), filter));
             break;
         }
         let style = if filter == active {
@@ -90,9 +133,9 @@ pub(super) fn tabs(
         } else {
             Style::new().fg(MUTED)
         };
-        buf.set_string(x, y, label, style);
+        buf.set_string(x, y, filter.label(), style);
         hits.push((Rect::new(x, y, width, 1), filter));
-        x += width + 3;
+        x += width + GAP;
     }
     hits
 }
@@ -117,7 +160,10 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
     let x = thumb.right() + 2;
     // What is playing shows in the accent color with a moving equalizer, like Spotify's speaker.
     let playing = app.playing_context().is_some_and(|context| app.entry_uri(entry).as_deref() == Some(context));
-    let width = area.right().saturating_sub(x + if playing { 4 } else { 1 }) as usize;
+    // Text stays out of the last column, where the scrollbar goes. The equalizer ends a column
+    // before it, and only the title row makes room for it.
+    let width = area.right().saturating_sub(x + 1) as usize;
+    let title_width = area.right().saturating_sub(x + if playing { 6 } else { 1 }) as usize;
     let title_style = match (playing, open) {
         (true, _) => Style::new().fg(app.accent.color()).bold(),
         (false, true) => Style::new().fg(TEXT).bold(),
@@ -129,9 +175,9 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
         (false, _) => icons().volume,
     };
     let buf = frame.buffer_mut();
-    buf.set_string(x, y, text::truncate(&title, width), title_style);
+    buf.set_string(x, y, text::truncate(&title, title_width), title_style);
     if playing {
-        buf.set_string(area.right().saturating_sub(3), y, equalizer, Style::new().fg(app.accent.color()));
+        buf.set_string(area.right().saturating_sub(5), y, equalizer, Style::new().fg(app.accent.color()));
     }
     buf.set_string(x, y + 1, text::truncate(&subtitle, width), Style::new().fg(MUTED));
     app.hits.push((row, Hit::Nav(index)));
@@ -163,5 +209,37 @@ pub(super) fn describe(app: &App, entry: LibraryEntry) -> (String, String, Optio
             let s = &app.shows[i];
             (s.name.clone(), "Podcast".into(), s.image_url.clone(), false)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::buffer::Buffer;
+
+    use super::*;
+
+    const ALL_KINDS: [LibraryFilter; 4] =
+        [LibraryFilter::Playlists, LibraryFilter::Albums, LibraryFilter::Artists, LibraryFilter::Podcasts];
+
+    /// Tabs as drawn in the 32-column sidebar, with the text of their row.
+    fn sidebar_tabs(active: LibraryFilter) -> (Vec<(Rect, LibraryFilter)>, String) {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 32, 1));
+        let hits = tabs(&mut buf, 3, 0, 30, &ALL_KINDS, active, Color::Reset);
+        let line = buf.content.iter().map(|cell| cell.symbol()).collect::<String>();
+        (hits, line.trim_end().to_owned())
+    }
+
+    #[test]
+    fn hidden_tabs_sit_behind_a_chevron() {
+        let (hits, line) = sidebar_tabs(LibraryFilter::All);
+        assert_eq!(line, "   Playlists  Albums         ›");
+        assert_eq!(hits.last(), Some(&(Rect::new(28, 0, 2, 1), LibraryFilter::Artists)));
+    }
+
+    #[test]
+    fn the_active_tab_stays_in_view() {
+        let (hits, line) = sidebar_tabs(LibraryFilter::Podcasts);
+        assert_eq!(line, "   ‹ Albums  Artists  Podcasts");
+        assert_eq!(hits.first(), Some(&(Rect::new(3, 0, 2, 1), LibraryFilter::Playlists)));
     }
 }

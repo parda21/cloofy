@@ -1,9 +1,14 @@
+mod library;
 mod menu;
 mod persist;
 
 use std::{
     collections::{HashMap, HashSet},
     io::Write,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -13,20 +18,21 @@ use cloofy_spotify::{
     connect::{self, Device, Playback},
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
+    paths::Paths,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use librespot::{core::session::Session, playback::player::PlayerEvent};
+use librespot::playback::player::PlayerEvent;
 use ratatui::layout::{Position, Rect, Size};
 use tachyonfx::{CellFilter, Effect, EffectManager, Interpolation, Motion, fx};
 use tokio::sync::watch;
 
 use crate::{
     commands::Command,
-    loader::{DataEvent, Loader, Picture},
+    loader::{DataEvent, Loader, Picture, SessionState},
     media::MediaSync,
     notify::Notifier,
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{Controller, Cover, NowPlaying, Repeat},
+    playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -40,26 +46,66 @@ pub const COVER_SIZE: Size = Size { width: 6, height: 3 };
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const STATUS_TTL: Duration = Duration::from_secs(4);
 const SEEK_STEP_MS: i64 = 5_000;
+/// "Previous" restarts the track once it has played this long, as in Spotify's own clients.
+const RESTART_AFTER_MS: u32 = 3_000;
 const HISTORY_LIMIT: usize = 50;
+/// Opening a page this soon after the last one skips the transition, so browsing fast stays
+/// instant.
+const QUICK_NAV: Duration = Duration::from_millis(300);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-/// Images unseen for this long are dropped from memory.
+/// Images unseen for this long are dropped from memory, unless the terminal holds them.
 const IMAGE_TTL: Duration = Duration::from_secs(120);
+/// Memory kitty may keep for the covers cloofy drew; the least recently drawn ones beyond it are
+/// deleted from the terminal.
+const TERMINAL_IMAGE_BUDGET: usize = 48 << 20;
+/// A cover that failed to load, e.g. while offline, is tried again when drawn after this long.
+const IMAGE_RETRY: Duration = Duration::from_secs(30);
 const EVICTION_INTERVAL: Duration = Duration::from_secs(30);
+/// Freed memory goes back to the system this long after the last of a burst of loads.
+const TRIM_DELAY: Duration = Duration::from_secs(1);
+/// Now Playing loads its cover for a new size once the window has kept that size this long.
+const ZEN_COVER_SETTLE: Duration = Duration::from_millis(150);
+/// A Now Playing cover that failed to load is tried again after this long.
+const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
 /// Spotify's DJ; loading it without a track asks for a fresh set.
 const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
 const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
-/// How often to check which device plays, and how soon after a remote command.
+/// How often to check which device plays, and how soon to look again while a change sent to
+/// another device doesn't show yet.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const QUICK_POLL: Duration = Duration::from_millis(500);
+/// Once Spotify pushes changes, polls follow the pushes; this is only a safety net.
+const PUSHED_POLL_INTERVAL: Duration = Duration::from_secs(15);
+/// Pushes come in bursts; one poll covers a burst.
+const PUSH_DELAY: Duration = Duration::from_millis(150);
+/// How long a push is newer than what the Web API may still report.
+const PUSH_LEAD: Duration = Duration::from_secs(2);
+/// A remote track that ends is followed by the next one about this much later.
+const TRACK_END_SLACK: Duration = Duration::from_millis(300);
+/// How long after Spotify accepted a remote command to check that the device applied it.
+const CONFIRM_DELAY: Duration = Duration::from_millis(300);
+/// How long the device label shows a transfer that the device hasn't confirmed.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
 /// Session state is also saved periodically, in case cloofy gets killed.
 const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 /// Rapid like/unlike toggles collapse into one request after this pause.
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// Track lists and artist pages opened again within this time are shown as they were; older
+/// ones are shown too, and refreshed behind the scenes.
+const PAGE_FRESH: Duration = Duration::from_secs(60);
+/// Home fetched within this time is shown again without asking Spotify.
+const HOME_FRESH: Duration = Duration::from_secs(5 * 60);
+/// While data keeps arriving, the data cache is written at most this often.
+const CACHE_SAVE_DELAY: Duration = Duration::from_secs(2);
+/// Parts of the library besides playlists, each loaded on its own.
+const LIBRARY_PARTS: u8 = 4;
+/// How long a clicked target stays lit.
+const PRESS_FLASH: Duration = Duration::from_millis(150);
 /// In Low Power Mode, a playing track redraws once a second: often enough for the clock.
 const LOW_POWER_FRAME: Duration = Duration::from_secs(1);
 /// How often to look at the system's motion and power settings.
@@ -72,6 +118,7 @@ const LONG_SLEEP: Duration = Duration::from_secs(60);
 pub enum AppEvent {
     Data(DataEvent),
     Player(PlayerEvent),
+    Pushed(ConnectPush),
     PlayerReady(Box<Controller>),
     PlayerFailed(String),
     /// The connection to Spotify dropped; a new one is on its way.
@@ -142,9 +189,11 @@ impl LibraryFilter {
 }
 
 pub enum ImageSlot {
-    Loading,
+    /// Holds the number of the last frame that drew the image, which the loader checks
+    /// before decoding it.
+    Loading(Arc<AtomicU64>),
     Ready(Picture),
-    Failed,
+    Failed(Instant),
 }
 
 /// A clickable region, registered while drawing.
@@ -206,7 +255,7 @@ impl Hit {
 /// Where a clickable name leads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
-    /// The `artist`th artist of track `row` in the open track list.
+    /// The `artist`th artist of track `row` in the open track list or search results.
     TrackArtist {
         row: usize,
         artist: usize,
@@ -226,6 +275,9 @@ pub enum HintAction {
     Activate,
     Back,
     ToggleFocus,
+    /// Does exactly what the key does where it is pressed, for keys whose meaning depends
+    /// on the focus or the page.
+    Key(KeyCode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +315,13 @@ pub struct Status {
     since: Instant,
 }
 
+/// A transfer of playback to another device, until that device shows up playing.
+struct Transfer {
+    device_id: String,
+    name: String,
+    since: Instant,
+}
+
 /// What `f`, `q` and `a` act on.
 struct Target {
     uri: String,
@@ -278,17 +337,38 @@ pub struct App {
     resume: Option<crate::state::LastTrack>,
     /// What the current track plays in, so a restart can continue there.
     last_context: Option<String>,
+    /// cloofy's own volume, saved while the slider shows another device's.
     restored_volume: Option<u16>,
+    /// Local volume changes on their way to the player.
+    volume_sync: VolumeSync,
     controller: Option<Controller>,
     /// cloofy's own Spotify Connect device ID.
     device_id: Option<String>,
+    /// cloofy's own device is the active one. Until something activates it, Spirc ignores
+    /// every command but loading a track.
+    local_active: bool,
     /// Playback runs on another device; commands go through Spotify Connect.
     remote_active: bool,
+    /// Changes sent to the other device that Spotify doesn't show yet.
+    remote_intent: RemoteIntent,
+    /// When the last command went to another device; polls started before show older state.
+    last_command: Instant,
+    /// The last device list, so the picker opens at once while a fresh one loads.
+    devices_cache: Option<Vec<Device>>,
+    /// The picker should open when the device list arrives.
+    devices_wanted: bool,
+    /// Playback is moving to another device.
+    transfer: Option<Transfer>,
     /// Seconds consecutive tracks overlap.
     crossfade: u64,
     next_poll: Instant,
     polling: bool,
-    session_tx: watch::Sender<Option<Session>>,
+    poll_started: Instant,
+    /// The last change Spotify pushed, and when.
+    last_push: Option<(ConnectPush, Instant)>,
+    session_tx: watch::Sender<SessionState>,
+    /// Where the data cache and the state file live.
+    paths: Paths,
     pub player_error: Option<String>,
     pub now: NowPlaying,
     /// The system's media controls, where there are any.
@@ -311,24 +391,52 @@ pub struct App {
     pub shows: Vec<ShowInfo>,
     pub liked_total: Option<u32>,
     pub library_loading: bool,
+    /// Parts of the library still on their way at startup.
+    library_pending: u8,
     pub library_filter: LibraryFilter,
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
+    home_fetched_at: Option<Instant>,
+    /// Library, user or Home changed since the data cache was last written.
+    data_dirty: bool,
+    last_cache_save: Instant,
+    /// The track list the last run left open, until the restored view has taken it.
+    cached_tracks: Option<crate::datacache::Tracks>,
+    /// Which load of which list the track cache holds, to write it only when it changed.
+    cached_tracks_version: Option<(u64, Instant)>,
     /// Cover art by cell size and URL.
     pub images: HashMap<String, ImageSlot>,
     /// When each image was last drawn; long-unseen ones are dropped to save memory.
     image_used: HashMap<String, Instant>,
     last_eviction: Instant,
+    /// When to hand freed memory back to the system.
+    trim_due: Option<Instant>,
+    /// Frames drawn so far.
+    draws: u64,
+    /// When the last frame started; images used since were drawn in it.
+    frame_started: Instant,
+    /// Escape sequences to write after the next frame, such as deleting images the terminal
+    /// holds.
+    pub terminal_out: Vec<String>,
+    /// Covers the frame being drawn will likely show soon; see [`App::prefetch`].
+    prefetch: Vec<(String, Size, bool)>,
     /// Known library state per URI: liked songs, saved albums, followed playlists.
     pub saved: HashMap<String, bool>,
     /// Library changes not sent yet: wanted state, item name, time of the last toggle.
     pending_saves: HashMap<String, (bool, String, Instant)>,
     /// Library changes Spotify hasn't confirmed yet; one request per URI at a time.
     saving: HashSet<String>,
+    /// Items taken out of the library before Spotify confirmed it, and where they were, to
+    /// put them back should it fail.
+    unsaved: HashMap<String, (usize, library::LibraryItem)>,
+    /// Library lists to load again after confirmed changes, and when.
+    library_reloads: HashMap<library::LibraryPart, Instant>,
     pub focus: Focus,
     pub nav: ListCursor,
     pub view: View,
     history: Vec<View>,
+    /// When the page last changed.
+    last_nav: Option<Instant>,
     next_view_id: u64,
     pub status: Option<Status>,
     pub overlay: Option<Overlay>,
@@ -338,7 +446,11 @@ pub struct App {
     pub zen_cover: Option<LargeCover>,
     /// Cover size the Now Playing layout asked for at the last draw.
     pub zen_cover_want: Option<Size>,
+    /// The size asked for, and since when; a resize passes through many sizes.
+    zen_cover_want_since: Option<(Size, Instant)>,
     zen_cover_pending: Option<(String, Size)>,
+    /// The last cover that failed to load, and when.
+    zen_cover_failed: Option<(String, Size, Instant)>,
     pub lyrics: Option<LyricsState>,
     /// Smoothly animated lyric line position.
     pub lyrics_scroll: f32,
@@ -355,6 +467,8 @@ pub struct App {
     /// F12 was pressed; the next frame gets written as a PNG.
     pub snapshot_requested: bool,
     last_click: Option<(Instant, Hit)>,
+    /// The target clicked last, where it was and when, so it can light up for a moment.
+    pressed: Option<(Hit, Rect, Instant)>,
     pub effects: EffectManager<Fx>,
     pub last_draw: Instant,
     pub content_area: Rect,
@@ -369,10 +483,10 @@ pub struct App {
 impl App {
     pub fn new(
         loader: Loader,
-        session_tx: watch::Sender<Option<Session>>,
+        session_tx: watch::Sender<SessionState>,
         crossfade: u64,
         state: crate::state::State,
-        state_path: std::path::PathBuf,
+        paths: Paths,
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
     ) -> Self {
@@ -382,18 +496,28 @@ impl App {
         loader.home(0);
         let mut app = Self {
             loader,
-            state_path,
+            state_path: paths.state_file(),
             last_save: Instant::now(),
             resume: None,
             last_context: None,
             restored_volume: None,
+            volume_sync: VolumeSync::default(),
             controller: None,
             device_id: None,
+            local_active: false,
             remote_active: false,
+            remote_intent: RemoteIntent::default(),
+            last_command: Instant::now(),
+            devices_cache: None,
+            devices_wanted: false,
+            transfer: None,
             crossfade,
             next_poll: Instant::now(),
             polling: false,
+            poll_started: Instant::now(),
+            last_push: None,
             session_tx,
+            paths,
             player_error: None,
             now: NowPlaying::new(),
             media: media.map(MediaSync::new),
@@ -411,18 +535,32 @@ impl App {
             shows: Vec::new(),
             liked_total: None,
             library_loading: true,
+            library_pending: LIBRARY_PARTS,
             library_filter: LibraryFilter::All,
             home_cache: None,
+            home_fetched_at: None,
+            data_dirty: false,
+            last_cache_save: Instant::now(),
+            cached_tracks: None,
+            cached_tracks_version: None,
             images: HashMap::new(),
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
+            trim_due: None,
+            draws: 0,
+            frame_started: Instant::now(),
+            terminal_out: Vec::new(),
+            prefetch: Vec::new(),
             saved: HashMap::new(),
             pending_saves: HashMap::new(),
             saving: HashSet::new(),
+            unsaved: HashMap::new(),
+            library_reloads: HashMap::new(),
             focus: Focus::Content,
             nav: ListCursor::default(),
             view: View::Home(HomeView::new(0, None)),
             history: Vec::new(),
+            last_nav: None,
             next_view_id: 1,
             status: None,
             overlay: None,
@@ -430,7 +568,9 @@ impl App {
             zen: false,
             zen_cover: None,
             zen_cover_want: None,
+            zen_cover_want_since: None,
             zen_cover_pending: None,
+            zen_cover_failed: None,
             lyrics: None,
             lyrics_scroll: 0.0,
             hits: Vec::new(),
@@ -441,6 +581,7 @@ impl App {
             dragging: None,
             seek_preview: None,
             last_click: None,
+            pressed: None,
             effects: EffectManager::default(),
             last_draw: Instant::now(),
             content_area: Rect::default(),
@@ -450,7 +591,9 @@ impl App {
             last_frame: 0,
             quit: false,
         };
+        app.load_cache();
         app.restore(state);
+        app.cached_tracks = None;
         app
     }
 
@@ -478,8 +621,17 @@ impl App {
         self.saved.get(uri).copied().unwrap_or(false)
     }
 
+    /// The target that was just clicked and its area, while it should still look pressed.
+    pub fn pressed(&self) -> Option<(Hit, Rect)> {
+        self.pressed.filter(|(_, _, at)| at.elapsed() < PRESS_FLASH).map(|(hit, area, _)| (hit, area))
+    }
+
     pub fn shutdown(&mut self) {
         self.save_state();
+        if self.data_dirty {
+            self.save_library(false);
+        }
+        self.save_open_tracks(false);
         if let Some(controller) = &self.controller {
             controller.shutdown();
         }
@@ -504,29 +656,37 @@ impl App {
         }
     }
 
-    pub fn on_event(&mut self, event: AppEvent) {
+    /// Returns whether the screen needs a redraw.
+    pub fn on_event(&mut self, event: AppEvent) -> bool {
         match event {
-            AppEvent::Player(event) => self.on_player(event),
+            AppEvent::Player(event) => return self.on_player(event),
+            AppEvent::Pushed(push) => {
+                // A push only brings the next poll forward; nothing on screen changes yet.
+                self.on_push(push);
+                return false;
+            }
             AppEvent::PlayerReady(controller) => {
                 self.player_error = None;
-                let _ = self.session_tx.send(Some(controller.session.clone()));
+                let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
                 self.device_id = Some(controller.session.device_id().to_owned());
                 controller.set_crossfade(Duration::from_secs(self.crossfade));
                 self.controller = Some(*controller);
+                self.reload_failed_view();
             }
-            AppEvent::PlayerFailed(err) => self.player_error = Some(err),
+            AppEvent::PlayerFailed(err) => self.on_player_failed(err),
             AppEvent::PlayerLost => self.on_player_lost(),
             AppEvent::Power(event) => self.on_power(event),
             AppEvent::Media(command) => self.on_media(command),
             AppEvent::OutputLost(name) => self.on_output_lost(name),
-            AppEvent::Data(data) => self.on_data(data),
+            AppEvent::Data(data) => return self.on_data(data),
         }
+        true
     }
 
     /// The new connection starts out idle; what played gets ready to continue, as after a restart.
     fn on_player_lost(&mut self) {
         self.controller = None;
-        let _ = self.session_tx.send(None);
+        let _ = self.session_tx.send(SessionState::Connecting);
         if !self.remote_active
             && self.resume.is_none()
             && let Some(last) = self.snapshot().last_track
@@ -602,9 +762,56 @@ impl App {
         media.sync(&self.now, !self.remote_active);
     }
 
-    fn on_player(&mut self, event: PlayerEvent) {
+    /// Lets requests waiting for the session fail. `playback::spawn` keeps trying to connect
+    /// and reports back with `PlayerReady`.
+    fn on_player_failed(&mut self, err: String) {
+        tracing::warn!("player: {err}");
+        let _ = self.session_tx.send(SessionState::Failed(err.clone()));
+        self.player_error = Some(err);
+    }
+
+    /// Loads the open page again once the session is up, if it failed without one.
+    fn reload_failed_view(&mut self) {
+        match &mut self.view {
+            View::Home(v) if v.error.is_some() => {
+                v.error = None;
+                v.loading = true;
+                self.loader.home(v.id);
+            }
+            View::Artist(v) if v.error.is_some() => {
+                v.error = None;
+                self.loader.artist(v.id, v.uri.clone());
+            }
+            View::Tracks(v) if v.error.is_some() => {
+                self.next_view_id += 1;
+                v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
+            }
+            _ => {}
+        }
+    }
+
+    fn on_player(&mut self, event: PlayerEvent) -> bool {
+        match &event {
+            PlayerEvent::SessionConnected { .. } => {
+                self.local_active = true;
+                // A volume set while inactive was ignored; Spirc takes it now.
+                if let Some(volume) = self.volume_sync.next() {
+                    self.control(|c| c.set_volume(volume));
+                }
+            }
+            PlayerEvent::SessionDisconnected { .. } => {
+                self.local_active = false;
+                // Usually another device took over; find out which before the next command.
+                self.next_poll = Instant::now();
+            }
+            _ => {}
+        }
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
             self.resume = None;
+            // Playback moved here.
+            if self.transfer.as_ref().is_some_and(|t| Some(&t.device_id) == self.device_id.as_ref()) {
+                self.transfer = None;
+            }
         }
         if self.remote_active {
             match event {
@@ -614,19 +821,62 @@ impl App {
                     self.now.device = None;
                 }
                 // The local player idles while another device plays.
-                _ => return,
+                _ => return false,
             }
+        }
+        if let PlayerEvent::VolumeChanged { volume } = event {
+            let (show, send) = self.volume_sync.reported(volume);
+            if let Some(next) = send {
+                self.control(|c| c.set_volume(next));
+            }
+            if !show {
+                return false;
+            }
+            self.restored_volume = Some(volume);
         }
         let before = self.now.track.as_ref().map(|t| t.uri.clone());
         if let Some(url) = self.now.apply(event) {
             self.loader.cover(url, COVER_SIZE);
         }
         self.after_track_change(before);
+        true
     }
 
-    fn on_playback(&mut self, playback: Option<Playback>) {
+    /// Spotify pushed a change of what plays where; a poll brings the details.
+    fn on_push(&mut self, push: ConnectPush) {
+        if push.worth_polling(self.device_id.as_deref(), self.remote_active, self.last_context.as_deref()) {
+            self.next_poll = self.next_poll.min(Instant::now() + PUSH_DELAY);
+        }
+        self.last_push = Some((push, Instant::now()));
+    }
+
+    /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
+    /// mostly confirms what is on screen.
+    fn on_playback(&mut self, playback: Option<Playback>) -> bool {
+        if let (Some(transfer), Some(p)) = (&self.transfer, &playback)
+            && transfer.device_id == p.device.id
+        {
+            self.transfer = None;
+        }
+        if let Some(p) = &playback
+            && Some(p.device.id.as_str()) != self.device_id.as_deref()
+        {
+            // While cloofy starts a track itself, Spotify may still name the device that
+            // played before; another device starting a track may still show the old one.
+            // Either would undo the early switch.
+            let stale = if self.remote_active {
+                self.now.awaits_remote(p, self.remote_intent.is_waiting())
+            } else {
+                self.now.pending.is_some()
+            };
+            if stale {
+                self.next_poll = self.next_poll.min(Instant::now() + QUICK_POLL);
+                return false;
+            }
+        }
         match playback {
             Some(p) if Some(p.device.id.as_str()) == self.device_id.as_deref() => {
+                let changed = self.remote_active || (p.context.is_some() && p.context != self.last_context);
                 // Playback started from another app on cloofy's device: learn what it plays.
                 if p.context.is_some() {
                     self.last_context = p.context.clone();
@@ -635,6 +885,7 @@ impl App {
                     self.remote_active = false;
                     self.now.device = None;
                 }
+                changed
             }
             Some(p) => {
                 self.remote_active = true;
@@ -643,17 +894,42 @@ impl App {
                     self.last_context = p.context.clone();
                 }
                 let before = self.now.track.as_ref().map(|t| t.uri.clone());
-                if let Some(url) = self.now.apply_remote(&p) {
+                let dragged_volume = matches!(self.dragging, Some(Hit::Volume { .. })).then_some(self.now.volume);
+                let (cover, unconfirmed) = self.now.apply_remote(&p, &mut self.remote_intent);
+                if let Some(url) = cover {
                     self.loader.cover(url, COVER_SIZE);
                 }
+                // The Web API may lag behind a push; look again until it catches up.
+                let behind =
+                    self.last_push.as_ref().is_some_and(|(push, at)| at.elapsed() < PUSH_LEAD && push.is_ahead_of(&p));
+                if unconfirmed || behind {
+                    self.next_poll = self.next_poll.min(Instant::now() + QUICK_POLL);
+                }
+                // Catch the next track as soon as this one ends.
+                if self.now.playing
+                    && let Some(track) = &self.now.track
+                {
+                    let left = track.duration_ms.saturating_sub(self.now.position_ms());
+                    if left > 0 {
+                        let end = Instant::now() + Duration::from_millis(left.into()) + TRACK_END_SLACK;
+                        self.next_poll = self.next_poll.min(end);
+                    }
+                }
+                // The slider follows the mouse while it holds it, not the device.
+                if let Some(volume) = dragged_volume {
+                    self.now.volume = volume;
+                }
                 self.after_track_change(before);
+                true
             }
             None if self.remote_active => {
                 self.remote_active = false;
                 self.now.device = None;
-                self.now.playing = false;
+                self.now.pending = None;
+                self.now.set_playing(false);
+                true
             }
-            None => {}
+            None => false,
         }
     }
 
@@ -681,51 +957,78 @@ impl App {
         }
     }
 
-    fn on_data(&mut self, event: DataEvent) {
+    /// Returns whether the screen needs a redraw.
+    fn on_data(&mut self, event: DataEvent) -> bool {
+        // Decoding covers and pages allocates a lot for a moment. Each such load pushes the
+        // trim back, so a burst ends in one.
+        if matches!(
+            event,
+            DataEvent::Image { .. }
+                | DataEvent::Cover { .. }
+                | DataEvent::LargeCover { .. }
+                | DataEvent::Home { .. }
+                | DataEvent::Artist { .. }
+                | DataEvent::Tracks { .. }
+        ) {
+            self.trim_due = Some(Instant::now() + TRIM_DELAY);
+        }
         match event {
             DataEvent::Me(result) => match result {
-                Ok(user) => self.me = Some(user),
+                Ok(user) => {
+                    // The data cache belongs to whoever was logged in last time.
+                    if self.me.as_ref().is_some_and(|me| me.id != user.id) {
+                        self.forget_library();
+                    }
+                    self.me = Some(user);
+                    self.data_dirty = true;
+                }
                 Err(err) => self.error(err),
             },
             DataEvent::Playlists(result) => {
                 self.playlists_loading = false;
                 match result {
-                    Ok(playlists) => {
-                        self.saved.extend(playlists.iter().map(|p| (p.uri.clone(), true)));
-                        self.playlists = playlists;
-                    }
+                    Ok(playlists) => self.set_playlists(playlists),
                     Err(err) => self.error(err),
                 }
             }
-            DataEvent::Library { liked, albums, artists, shows } => {
-                self.library_loading = false;
-                self.liked_total = liked.ok();
-                match albums {
-                    Ok(list) => {
-                        self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
-                        self.albums = list;
+            DataEvent::LikedCount(result) => {
+                self.library_part_done();
+                match result {
+                    Ok(total) => {
+                        self.liked_total = Some(total);
+                        self.data_dirty = true;
                     }
+                    Err(err) => tracing::warn!("liked songs: {err}"),
+                }
+            }
+            DataEvent::Albums(result) => {
+                self.library_part_done();
+                match result {
+                    Ok(list) => self.set_albums(list),
                     Err(err) => tracing::warn!("albums: {err}"),
                 }
-                match artists {
-                    Ok(list) => {
-                        self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
-                        self.artists = list;
-                    }
+            }
+            DataEvent::Artists(result) => {
+                self.library_part_done();
+                match result {
+                    Ok(list) => self.set_artists(list),
                     Err(err) => tracing::warn!("artists: {err}"),
                 }
-                match shows {
-                    Ok(list) => self.shows = list,
+            }
+            DataEvent::Shows(result) => {
+                self.library_part_done();
+                match result {
+                    Ok(list) => self.set_shows(list),
                     Err(err) => tracing::warn!("shows: {err}"),
                 }
             }
             DataEvent::Artist { view, result } => {
-                let Some(View::Artist(v)) = self.view_mut(view) else { return };
+                let Some(View::Artist(v)) = self.view_mut(view) else { return false };
                 let page = match result {
                     Ok(page) => page,
                     Err(err) => {
                         v.error = Some(err);
-                        return;
+                        return true;
                     }
                 };
                 let uris = page.top_tracks.iter().map(|t| t.track.uri.clone()).collect();
@@ -737,8 +1040,10 @@ impl App {
             DataEvent::Home { view, result } => {
                 if let Ok(home) = &result {
                     self.home_cache = Some(home.clone());
+                    self.home_fetched_at = Some(Instant::now());
+                    self.data_dirty = true;
                 }
-                let Some(View::Home(v)) = self.view_mut(view) else { return };
+                let Some(View::Home(v)) = self.view_mut(view) else { return false };
                 match result {
                     Ok(home) => v.set_home(home),
                     Err(err) => {
@@ -752,16 +1057,22 @@ impl App {
                     Ok(picture) => ImageSlot::Ready(picture),
                     Err(err) => {
                         tracing::warn!("image {key}: {err}");
-                        ImageSlot::Failed
+                        ImageSlot::Failed(Instant::now())
                     }
                 };
                 self.images.insert(key, slot);
             }
+            DataEvent::ImageSkipped { key } => {
+                if matches!(self.images.get(&key), Some(ImageSlot::Loading(_))) {
+                    self.images.remove(&key);
+                    self.image_used.remove(&key);
+                }
+            }
             DataEvent::Tracks { view, page } => self.on_tracks(view, page),
             DataEvent::Search { view, query, result } => {
-                let Some(View::Search(v)) = self.view_mut(view) else { return };
+                let Some(View::Search(v)) = self.view_mut(view) else { return false };
                 if v.query.trim() != query {
-                    return;
+                    return false;
                 }
                 v.loading = false;
                 let uris = match result {
@@ -781,11 +1092,13 @@ impl App {
             DataEvent::Cover { url, result } => {
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url.as_deref());
                 if current != Some(url.as_str()) {
-                    return;
+                    return false;
                 }
                 match result {
                     Ok((picture, accent)) => {
-                        self.now.cover = Some(Cover { url, picture });
+                        if let Some(old) = self.now.cover.replace(Cover { url, picture }) {
+                            self.terminal_out.extend(old.picture.terminal_delete());
+                        }
                         if self.settings.low_power {
                             self.accent.jump(accent);
                         } else {
@@ -796,7 +1109,7 @@ impl App {
                 }
             }
             DataEvent::Artwork { url, result } => {
-                let Some(media) = &mut self.media else { return };
+                let Some(media) = &mut self.media else { return false };
                 match result {
                     Ok(bytes) => media.set_artwork(url, bytes),
                     Err(err) => {
@@ -806,10 +1119,24 @@ impl App {
                 }
             }
             DataEvent::LargeCover { url, size, result } => {
-                self.zen_cover_pending = None;
+                if self.zen_cover_pending.as_ref().is_some_and(|(u, s)| *u == url && *s == size) {
+                    self.zen_cover_pending = None;
+                }
+                let current = self.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
+                let wanted = self.zen && self.zen_cover_want == Some(size) && current == Some(url.as_str());
                 match result {
-                    Ok(picture) => self.zen_cover = Some(LargeCover { url, size, picture }),
-                    Err(err) => tracing::warn!("large cover {url}: {err}"),
+                    Ok(picture) if wanted => {
+                        if let Some(old) = self.zen_cover.replace(LargeCover { url, size, picture }) {
+                            self.terminal_out.extend(old.picture.terminal_delete());
+                        }
+                    }
+                    // For a size or track no longer shown: dropped before it is ever sent to the
+                    // terminal, which would cost megabytes for nothing.
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!("large cover {url}: {err}");
+                        self.zen_cover_failed = Some((url, size, Instant::now()));
+                    }
                 }
             }
             DataEvent::Lyrics { uri, result } => {
@@ -822,52 +1149,151 @@ impl App {
             DataEvent::Saved(flags) => {
                 // A fresher local toggle wins over a check that was already under way.
                 let fresh: Vec<_> = flags.into_iter().filter(|(uri, _)| !self.save_in_progress(uri)).collect();
+                // Most checks only confirm what is already known.
+                let changed = fresh.iter().any(|(uri, saved)| self.saved.get(uri) != Some(saved));
                 self.saved.extend(fresh);
+                return changed;
             }
             DataEvent::SaveDone { uri, notice } => {
                 self.saving.remove(&uri);
                 if !self.pending_saves.contains_key(&uri) {
+                    self.unsaved.remove(&uri);
+                    self.schedule_reload(&uri);
                     self.notice(notice);
                 }
             }
             DataEvent::SaveFailed { uri, saved, error } => {
                 self.saving.remove(&uri);
                 if !self.pending_saves.contains_key(&uri) {
-                    self.saved.insert(uri, saved);
+                    self.saved.insert(uri.clone(), saved);
+                    self.show_library_change(&uri, saved);
                     self.error(error);
                 }
             }
+            DataEvent::AddFailed { playlist_id, count, error } => {
+                if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                    playlist.total = playlist.total.saturating_sub(count);
+                }
+                self.error(error);
+            }
             DataEvent::Playback(result) => {
                 self.polling = false;
+                // Started before the last remote command, it shows the state from before it.
+                if self.poll_started < self.last_command {
+                    return false;
+                }
                 match result {
-                    Ok(playback) => self.on_playback(playback),
-                    Err(err) => tracing::warn!("playback state: {err}"),
+                    Ok(playback) => return self.on_playback(playback),
+                    Err(err) => {
+                        tracing::warn!("playback state: {err}");
+                        return false;
+                    }
                 }
             }
-            DataEvent::Devices(result) => match result {
-                Ok(devices) => self.open_devices(devices),
-                Err(err) => self.error(format!("Devices: {err}")),
+            DataEvent::RemoteDone { commands, result } => {
+                self.remote_intent.answered(commands, result.is_ok());
+                match result {
+                    // Look again once the device has had a moment to apply it.
+                    Ok(()) => self.next_poll = self.next_poll.min(Instant::now() + CONFIRM_DELAY),
+                    Err(err) => {
+                        self.cancel_start();
+                        self.next_poll = Instant::now();
+                        self.error(format!("Remote control: {err}"));
+                    }
+                }
+            }
+            DataEvent::Devices(result) => {
+                let wanted = std::mem::take(&mut self.devices_wanted);
+                match result {
+                    Ok(devices) => {
+                        self.devices_cache = Some(devices.clone());
+                        if matches!(self.overlay, Some(Overlay::Devices { .. })) {
+                            self.refresh_devices(devices);
+                        } else if wanted {
+                            self.open_devices(devices, false);
+                        }
+                    }
+                    Err(err) => {
+                        if let Some(Overlay::Devices { refreshing, .. }) = &mut self.overlay {
+                            *refreshing = false;
+                        }
+                        self.error(format!("Devices: {err}"));
+                    }
+                }
+            }
+            DataEvent::Transferred { name, result } => match result {
+                Ok(()) => {
+                    self.notice(format!("Playing on {name}"));
+                    self.next_poll = self.next_poll.min(Instant::now() + CONFIRM_DELAY);
+                }
+                Err(err) => {
+                    self.transfer = None;
+                    self.error(format!("Transfer: {err}"));
+                }
             },
             DataEvent::Notice(text) => self.notice(text),
             DataEvent::Failed(text) => self.error(text),
         }
+        true
+    }
+
+    /// Counts down the library parts loading at startup; later reloads don't show a spinner.
+    fn library_part_done(&mut self) {
+        self.library_pending = self.library_pending.saturating_sub(1);
+        self.library_loading = self.library_pending > 0;
     }
 
     fn on_tracks(&mut self, view: u64, page: Result<Page<Track>, String>) {
+        // A page may predate a like or unlike that Spotify has not confirmed yet.
+        let unconfirmed: HashMap<String, bool> =
+            self.pending_saves.keys().chain(&self.saving).map(|uri| (uri.clone(), self.is_saved(uri))).collect();
         let Some(View::Tracks(v)) = self.view_mut(view) else { return };
         let page = match page {
             Ok(page) => page,
             Err(err) => {
                 v.loading = false;
-                v.error = Some(err);
+                v.fetch = None;
+                // A failed refresh leaves the songs on screen as they were.
+                match v.incoming.take() {
+                    Some(_) => tracing::warn!("refreshing a track list: {err}"),
+                    None => v.error = Some(err),
+                }
                 return;
             }
         };
-        let uris: Vec<String> = page.items.iter().map(|t| t.uri.clone()).collect();
         let liked = matches!(v.source, TrackSource::Liked);
-        v.tracks.extend(page.items);
-        v.total = Some(page.total);
-        v.loading = page.next_offset.is_some();
+        let mut items = page.items;
+        if liked {
+            items.retain(|t| unconfirmed.get(&t.uri) != Some(&false));
+        }
+        let uris: Vec<String> = items.iter().map(|t| t.uri.clone()).collect();
+        let done = page.next_offset.is_none();
+        match &mut v.incoming {
+            Some(incoming) => incoming.extend(items),
+            None => {
+                v.tracks.extend(items);
+                v.total = Some(page.total);
+                v.loading = !done;
+            }
+        }
+        if done {
+            if let Some(mut fresh) = v.incoming.take() {
+                if liked {
+                    // Songs liked meanwhile may be missing from the fresh copy.
+                    let missing: Vec<Track> = v
+                        .tracks
+                        .iter()
+                        .filter(|t| unconfirmed.get(&t.uri) == Some(&true) && !fresh.iter().any(|f| f.uri == t.uri))
+                        .cloned()
+                        .collect();
+                    fresh.splice(0..0, missing);
+                }
+                v.total = Some(page.total.max(fresh.len() as u32));
+                v.replace_tracks(fresh);
+            }
+            v.fetched_at = Some(Instant::now());
+            v.fetch = None;
+        }
         if liked {
             self.saved.extend(uris.into_iter().map(|uri| (uri, true)));
         } else {
@@ -902,11 +1328,28 @@ impl App {
         }
 
         self.flush_saves();
+        self.reload_library();
         if self.last_save.elapsed() >= STATE_SAVE_INTERVAL {
             self.save_state();
+            self.save_open_tracks(true);
+        }
+        if self.data_dirty && self.last_cache_save.elapsed() >= CACHE_SAVE_DELAY {
+            self.save_library(true);
         }
         if self.last_eviction.elapsed() >= EVICTION_INTERVAL {
             self.evict_images();
+        }
+        if self.trim_due.is_some_and(|due| Instant::now() >= due) {
+            self.trim_due = None;
+            crate::release_freed_memory();
+        }
+
+        if let Some((_, _, at)) = self.pressed {
+            if at.elapsed() >= PRESS_FLASH {
+                self.pressed = None;
+            }
+            // One more frame after the flash ends clears it.
+            redraw = true;
         }
 
         if self.status.as_ref().is_some_and(|s| s.since.elapsed() >= STATUS_TTL) {
@@ -914,9 +1357,28 @@ impl App {
             redraw = true;
         }
 
+        if let Some(volume) = self.volume_sync.expire() {
+            self.control(|c| c.set_volume(volume));
+        }
+        if self.transfer.as_ref().is_some_and(|t| t.since.elapsed() >= TRANSFER_TIMEOUT) {
+            self.transfer = None;
+            redraw = true;
+        }
+        if self.now.start_failed() {
+            // Spirc only logs a failed load; another device's state comes with the next poll.
+            let failed_here = self.now.pending.as_ref().is_some_and(|p| !p.skip) && !self.remote_active;
+            self.cancel_start();
+            if failed_here {
+                self.error("Playback didn't start.".into());
+            }
+            redraw = true;
+        }
+
         if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
             self.polling = true;
-            self.next_poll = Instant::now() + POLL_INTERVAL;
+            self.poll_started = Instant::now();
+            let interval = if self.last_push.is_some() { PUSHED_POLL_INTERVAL } else { POLL_INTERVAL };
+            self.next_poll = Instant::now() + interval;
             self.loader.playback();
         }
 
@@ -943,23 +1405,40 @@ impl App {
         };
         let lyrics_loading = self.zen && self.lyrics.as_ref().is_some_and(|l| l.result.is_none());
         self.now.playing
+            || self.now.pending.is_some()
+            || self.transfer.is_some()
+            || matches!(self.overlay, Some(Overlay::Devices { refreshing: true, .. }))
             || loading
             || lyrics_loading
             || self.playlists_loading
             || self.library_loading
-            || self.controller.is_none()
+            || (self.controller.is_none() && self.player_error.is_none())
     }
 
     /// Requests the big cover once the Now Playing layout knows its size.
     fn request_zen_cover(&mut self) {
         let (Some(size), Some(track)) = (self.zen_cover_want, &self.now.track) else { return };
         let Some(url) = track.cover_url_large.clone() else { return };
-        let loaded = self.zen_cover.as_ref().is_some_and(|c| c.url == url && c.size == size);
-        let pending = self.zen_cover_pending.as_ref().is_some_and(|(u, s)| *u == url && *s == size);
-        if !loaded && !pending {
-            self.zen_cover_pending = Some((url.clone(), size));
-            self.loader.large_cover(url, size);
+        if self.zen_cover_want_since.is_none_or(|(wanted, _)| wanted != size) {
+            self.zen_cover_want_since = Some((size, Instant::now()));
         }
+        let shown = self.zen_cover.as_ref().is_some_and(|c| c.url == url);
+        let loaded = shown && self.zen_cover.as_ref().is_some_and(|c| c.size == size);
+        // One cover per track at a time: while a resize goes on, a request for an older size is
+        // let finish (and dropped) rather than joined by one for every size passed through.
+        let pending = self.zen_cover_pending.as_ref().is_some_and(|(u, _)| *u == url);
+        let failed = self
+            .zen_cover_failed
+            .as_ref()
+            .is_some_and(|(u, s, at)| *u == url && *s == size && at.elapsed() < ZEN_COVER_RETRY);
+        // A new track or a first look loads at once; after a resize, the cover at the old size
+        // stays until the window settles.
+        let settled = self.zen_cover_want_since.is_some_and(|(_, since)| since.elapsed() >= ZEN_COVER_SETTLE);
+        if loaded || pending || failed || (shown && !settled) {
+            return;
+        }
+        self.zen_cover_pending = Some((url.clone(), size));
+        self.loader.large_cover(url, size);
     }
 
     /// Eases the lyrics towards the current line. Returns whether they moved.
@@ -1149,7 +1628,11 @@ impl App {
     fn scroll_content(&mut self, delta: isize) {
         match &mut self.view {
             View::Tracks(v) => v.list.scroll(delta),
-            View::Search(v) => v.list.scroll(delta),
+            View::Search(v) => {
+                // Results with thumbnails are three rows tall; scroll by about as many rows.
+                let rows = v.entry_rows.max(1) as usize;
+                v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
+            }
             View::Home(v) => v.scroll_by(delta),
             View::Artist(v) => v.scroll_by(delta),
             View::Library(v) => {
@@ -1287,14 +1770,37 @@ impl App {
                     self.dragging = Some(hit);
                     self.drag(hit, mouse.column, false);
                 } else if let Some(hit) = hit {
+                    // Lit at once, even where the result takes a moment (another device, a
+                    // track that still loads).
+                    if hit.is_interactive()
+                        && let Some(&(area, _)) = self.hits.iter().rev().find(|(area, _)| area.contains(position))
+                    {
+                        self.pressed = Some((hit, area, Instant::now()));
+                    }
                     self.click(hit, mouse.column);
                 }
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 self.overlay = None;
-                if let Some(hit @ (Hit::Row(_) | Hit::Card { .. } | Hit::Nav(_))) = hit {
-                    self.select(hit);
-                    self.open_menu((mouse.column, mouse.row));
+                // Names and play buttons lie on top of their row or card; the menu is theirs.
+                let hit = hit.map(|hit| match hit {
+                    Hit::Link(Link::TrackArtist { row, .. } | Link::TrackAlbum(row)) => Hit::Row(row),
+                    Hit::CardPlay { shelf, item } => Hit::Card { shelf, item },
+                    Hit::RowPlay(index) => Hit::Row(index),
+                    hit => hit,
+                });
+                let anchor = (mouse.column, mouse.row);
+                match hit {
+                    Some(hit @ (Hit::Row(_) | Hit::Card { .. } | Hit::Nav(_))) => {
+                        self.select(hit);
+                        self.open_menu(anchor);
+                    }
+                    Some(
+                        Hit::Cover
+                        | Hit::LikePlaying
+                        | Hit::Link(Link::PlayingArtist(_) | Link::PlayingAlbum | Link::PlayingContext),
+                    ) => self.open_playing_menu(anchor),
+                    _ => {}
                 }
             }
             MouseEventKind::ScrollDown if sideways => self.scroll_sideways(hit, 1),
@@ -1358,6 +1864,13 @@ impl App {
     /// The topmost click target under `position` from the last frame.
     pub fn hit_at(&self, position: Position) -> Option<Hit> {
         self.hits.iter().rev().find(|(area, _)| area.contains(position)).map(|(_, hit)| *hit)
+    }
+
+    /// Notes what the mouse is over in the frame just drawn. Scrolling, keys and loaded data
+    /// move things under a resting mouse; without this, moving it onto the target it was over
+    /// before would look like no change and leave the highlight behind.
+    pub fn sync_hover(&mut self) {
+        self.hovered = self.mouse.and_then(|position| self.hit_at(position)).filter(Hit::is_interactive);
     }
 
     /// Moves the cursor to a clicked row, card or sidebar entry.
@@ -1459,8 +1972,9 @@ impl App {
                 HintAction::ToggleFocus => {
                     self.focus = if self.focus == Focus::Nav { Focus::Content } else { Focus::Nav };
                 }
+                HintAction::Key(code) => self.on_key(KeyEvent::new(code, KeyModifiers::NONE)),
             },
-            Hit::Header(button) => self.header_button(button, column),
+            Hit::Header(button) => self.header_button(button),
             Hit::LikePlaying => {
                 if let Some(track) = &self.now.track {
                     let (uri, name) = (track.uri.clone(), track.name.clone());
@@ -1549,22 +2063,30 @@ impl App {
             Command::Quit => self.quit = true,
             Command::PlayPause if self.remote_active => {
                 let playing = !self.now.playing;
-                self.now.playing = playing;
+                self.now.set_playing(playing);
+                self.remote_intent.playing = Some(playing);
                 self.remote(if playing { connect::Command::Play } else { connect::Command::Pause });
             }
             Command::PlayPause if self.resume.is_some() && self.controller.is_some() => {
                 if let Some(last) = self.resume.take() {
-                    self.control(|c| c.resume(last.context, last.uri, last.position_ms));
+                    let uri = last.uri.clone();
+                    if self.control(|c| c.resume(last.context, last.uri, last.position_ms)) {
+                        self.now.start(Some(uri));
+                    }
                 }
             }
+            Command::PlayPause if self.idle() && self.controller.is_some() => self.play_shown(),
             Command::PlayPause => {
                 let has_track = self.now.track.is_some();
                 self.control(|c| c.toggle(has_track));
             }
-            Command::Next if self.remote_active => self.remote(connect::Command::Next),
-            Command::Next => self.control(|c| c.next()),
-            Command::Previous if self.remote_active => self.remote(connect::Command::Previous),
-            Command::Previous => self.control(|c| c.previous()),
+            Command::Next | Command::Previous | Command::Shuffle | Command::Repeat
+                if self.idle() && self.controller.is_some() =>
+            {
+                self.notice("Nothing is playing here yet · press space to start".into());
+            }
+            Command::Next => self.skip(true),
+            Command::Previous => self.skip(false),
             Command::SeekBack => self.seek_by(-SEEK_STEP_MS),
             Command::SeekForward => self.seek_by(SEEK_STEP_MS),
             Command::VolumeUp => self.change_volume(1),
@@ -1573,6 +2095,7 @@ impl App {
                 let on = !self.now.shuffle;
                 if self.remote_active {
                     self.now.shuffle = on;
+                    self.remote_intent.shuffle = Some(on);
                     self.remote(connect::Command::Shuffle(on));
                 } else {
                     self.control(|c| c.shuffle(on));
@@ -1586,12 +2109,8 @@ impl App {
                 };
                 if self.remote_active {
                     self.now.repeat = next;
-                    let mode = match next {
-                        Repeat::Off => "off",
-                        Repeat::Context => "context",
-                        Repeat::Track => "track",
-                    };
-                    self.remote(connect::Command::Repeat(mode));
+                    self.remote_intent.repeat = Some(next);
+                    self.remote(connect::Command::Repeat(next.remote_name()));
                 } else {
                     self.control(|c| c.repeat(next));
                 }
@@ -1605,7 +2124,7 @@ impl App {
             Command::NowPlaying => self.toggle_zen(),
             Command::Like => self.toggle_saved(),
             Command::Queue => match self.target() {
-                Some(target) if target.is_track => self.loader.queue(target.uri, target.name),
+                Some(target) if target.is_track => self.queue(target.uri, target.name),
                 Some(_) => self.error("Only songs can be added to the queue.".into()),
                 None => self.error("No song selected.".into()),
             },
@@ -1628,8 +2147,15 @@ impl App {
                 self.notice(text);
             }
             Command::Devices => {
-                self.notice("Finding devices…".into());
                 self.loader.devices();
+                match self.devices_cache.clone().filter(|d| !d.is_empty()) {
+                    // The last list opens at once and updates when the fresh one arrives.
+                    Some(devices) => self.open_devices(devices, true),
+                    None => {
+                        self.devices_wanted = true;
+                        self.notice("Finding devices…".into());
+                    }
+                }
             }
             Command::Palette => self.open_palette(),
             Command::Help => self.open_overlay(Overlay::Help),
@@ -1718,8 +2244,16 @@ impl App {
         let Some(Overlay::AddToPlaylist { uris, .. }) = self.overlay.take() else { return };
         if let Some(playlist) = self.playlists.get_mut(index) {
             playlist.total += uris.len() as u32;
-            self.loader.add_to_playlist(playlist.clone(), uris);
+            let text = format!("Added to “{}”", playlist.name);
+            self.loader.add_to_playlist(playlist.id.clone(), uris);
+            self.notice(text);
         }
+    }
+
+    /// Confirms at once; the request takes a moment and only reports back when it fails.
+    pub(super) fn queue(&mut self, uri: String, name: String) {
+        self.loader.queue(uri);
+        self.notice(format!("“{name}” added to queue"));
     }
 
     fn open_overlay(&mut self, overlay: Overlay) {
@@ -1749,6 +2283,7 @@ impl App {
     pub(super) fn toggle_library(&mut self, uri: String, name: String) {
         let saved = !self.is_saved(&uri);
         self.saved.insert(uri.clone(), saved);
+        self.show_library_change(&uri, saved);
         self.pending_saves.insert(uri, (saved, name, Instant::now()));
     }
 
@@ -1893,21 +2428,32 @@ impl App {
         self.last_context.as_deref()
     }
 
+    /// Track `row` of the open track list or search results.
+    fn listed_track(&self, row: usize) -> Option<&Track> {
+        match &self.view {
+            View::Tracks(v) => v.tracks.get(row),
+            View::Search(v) => match v.entries.get(row) {
+                Some(SearchEntry::Track(track)) => Some(track),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn follow_link(&mut self, link: Link) {
         let (uri, name) = match link {
             Link::TrackArtist { row, artist } => {
-                let View::Tracks(v) = &self.view else { return };
-                let Some(track) = v.tracks.get(row) else { return };
+                let Some(track) = self.listed_track(row) else { return };
                 match (track.artist_uris.get(artist), track.artists.get(artist)) {
                     (Some(uri), Some(name)) => (uri.clone(), name.clone()),
                     _ => return,
                 }
             }
             Link::TrackAlbum(row) => {
-                let View::Tracks(v) = &self.view else { return };
-                let Some(track) = v.tracks.get(row).filter(|t| !t.album_uri.is_empty()) else { return };
-                let (uri, name, artists) = (track.album_uri.clone(), track.album.clone(), track.artists.clone());
-                return self.open_album(uri, name, artists, None);
+                let Some(track) = self.listed_track(row).filter(|t| !t.album_uri.is_empty()) else { return };
+                let (uri, name) = (track.album_uri.clone(), track.album.clone());
+                let (artists, cover) = (track.artists.clone(), track.image_url.clone());
+                return self.open_album(uri, name, artists, cover);
             }
             Link::PlayingArtist(artist) => {
                 let Some(track) = &self.now.track else { return };
@@ -1998,8 +2544,13 @@ impl App {
 
     fn open_home(&mut self) {
         let id = self.next_id();
-        self.loader.home(id);
-        self.push_view(View::Home(HomeView::new(id, self.home_cache.clone())));
+        let mut view = HomeView::new(id, self.home_cache.clone());
+        if self.home_fetched_at.is_some_and(|at| at.elapsed() < HOME_FRESH) {
+            view.loading = false;
+        } else {
+            self.loader.home(id);
+        }
+        self.push_view(View::Home(view));
         self.focus = Focus::Content;
     }
 
@@ -2008,13 +2559,50 @@ impl App {
         self.image(url.unwrap_or(crate::art::PLACEHOLDER_COVER), size, round)
     }
 
+    /// Starts drawing a frame.
+    pub fn begin_frame(&mut self) {
+        self.draws += 1;
+        self.frame_started = Instant::now();
+    }
+
+    /// Finishes drawing a frame.
+    pub fn end_frame(&mut self) {
+        self.loader.frame_drawn(self.draws);
+        // Covers on screen were requested while drawing, so the ones near them queue up after.
+        let mut queue = std::mem::take(&mut self.prefetch);
+        for (url, size, round) in queue.drain(..) {
+            let key = image_key(&url, size);
+            if self.images.contains_key(&key) {
+                continue;
+            }
+            self.images.insert(key.clone(), ImageSlot::Loading(Arc::new(AtomicU64::new(self.draws))));
+            // Counts as used once, so the cover is dropped again if it is never shown.
+            self.image_used.insert(key.clone(), Instant::now());
+            self.loader.prefetch_image(key, url, size, round);
+        }
+        self.prefetch = queue;
+    }
+
+    /// Asks for a cover that is likely shown soon, such as the next page of a shelf, so it is
+    /// there when it scrolls into view. Loaded after the frame's visible covers.
+    pub fn prefetch(&mut self, url: Option<&str>, size: Size, round: bool) {
+        let url = url.unwrap_or(crate::art::PLACEHOLDER_COVER);
+        self.prefetch.push((url.to_owned(), size, round));
+    }
+
     /// The cover for `url` at `size`, loading it on first use.
     pub fn image(&mut self, url: &str, size: Size, round: bool) -> Option<&Picture> {
-        let key = format!("{}x{}:{url}", size.width, size.height);
+        let key = image_key(url, size);
         self.image_used.insert(key.clone(), Instant::now());
-        if !self.images.contains_key(&key) {
-            self.images.insert(key.clone(), ImageSlot::Loading);
-            self.loader.image(key.clone(), url.to_owned(), size, round);
+        match self.images.get(&key) {
+            Some(ImageSlot::Loading(drawn)) => drawn.store(self.draws, Ordering::Relaxed),
+            Some(ImageSlot::Ready(_)) => {}
+            Some(ImageSlot::Failed(at)) if at.elapsed() < IMAGE_RETRY => {}
+            None | Some(ImageSlot::Failed(_)) => {
+                let drawn = Arc::new(AtomicU64::new(self.draws));
+                self.images.insert(key.clone(), ImageSlot::Loading(drawn.clone()));
+                self.loader.image(key.clone(), url.to_owned(), size, round, drawn);
+            }
         }
         match self.images.get(&key) {
             Some(ImageSlot::Ready(picture)) => Some(picture),
@@ -2022,23 +2610,46 @@ impl App {
         }
     }
 
-    /// Drops images that have not been on screen for a while. Each one holds its encoded
-    /// pixels for the terminal; they come back quickly from the disk cache when needed.
+    /// Drops images that have not been on screen for a while. Until drawn, each one holds its
+    /// encoded pixels for the terminal, and they come back quickly from the disk cache.
+    ///
+    /// A drawn kitty image is different: cloofy keeps next to nothing of it, but kitty keeps
+    /// its pixels until told to delete it, and drawing it again would mean another upload.
+    /// Those stay until they take more than [`TERMINAL_IMAGE_BUDGET`] together; then the least
+    /// recently drawn ones that are off screen are deleted from the terminal.
     fn evict_images(&mut self) {
         self.last_eviction = Instant::now();
-        let stale: Vec<String> = self
-            .image_used
-            .iter()
-            .filter(|(key, used)| {
-                used.elapsed() >= IMAGE_TTL && matches!(self.images.get(*key), Some(ImageSlot::Ready(_)))
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
+        let mut stale = Vec::new();
+        let mut held = 0;
+        let mut off_screen = Vec::new();
+        for (key, used) in &self.image_used {
+            let Some(ImageSlot::Ready(picture)) = self.images.get(key) else { continue };
+            if !picture.in_terminal() {
+                if used.elapsed() >= IMAGE_TTL {
+                    stale.push(key.clone());
+                }
+                continue;
+            }
+            held += picture.terminal_bytes;
+            if *used < self.frame_started {
+                off_screen.push((*used, key.clone(), picture.terminal_bytes));
+            }
+        }
+        off_screen.sort_unstable_by_key(|(used, _, _)| *used);
+        for (_, key, bytes) in off_screen {
+            if held <= TERMINAL_IMAGE_BUDGET {
+                break;
+            }
+            held -= bytes;
+            stale.push(key);
+        }
         if stale.is_empty() {
             return;
         }
         for key in &stale {
-            self.images.remove(key);
+            if let Some(ImageSlot::Ready(picture)) = self.images.remove(key) {
+                self.terminal_out.extend(picture.terminal_delete());
+            }
             self.image_used.remove(key);
         }
         crate::release_freed_memory();
@@ -2087,11 +2698,18 @@ impl App {
             error: None,
             typed_at: None,
             list: ListCursor::default(),
+            entry_rows: 1,
         }));
         self.focus = Focus::SearchInput;
     }
 
     fn open_tracks(&mut self, source: TrackSource) {
+        if let View::Tracks(v) = &self.view
+            && v.source.same(&source)
+        {
+            self.focus = Focus::Content;
+            return;
+        }
         let page_uri = match &source {
             TrackSource::Liked => None,
             TrackSource::Playlist(p) => Some(p.uri.clone()),
@@ -2100,18 +2718,50 @@ impl App {
         if let Some(uri) = page_uri.filter(|uri| !self.saved.contains_key(uri)) {
             self.loader.check_saved(vec![uri]);
         }
-        let id = self.next_id();
-        self.loader.tracks(id, source.clone(), self.me.as_ref().map(|u| u.id.clone()));
-        self.push_view(View::Tracks(TrackView {
-            id,
-            source,
-            tracks: Vec::new(),
-            total: None,
-            loading: true,
-            error: None,
-            list: ListCursor::default(),
-        }));
+        let loaded = self.take_loaded_copy(&source).or_else(|| self.cached_copy(&source));
+        self.retire_copies(&source);
+        let view = match loaded {
+            Some(view) if view.loading || view.fetched_at.is_some_and(|at| at.elapsed() < PAGE_FRESH) => view,
+            Some(mut view) => {
+                view.refresh(self.next_id(), |id, source| self.loader.tracks(id, source));
+                view
+            }
+            None => {
+                let mut view = TrackView::new(source);
+                view.load(self.next_id(), |id, source| self.loader.tracks(id, source));
+                view
+            }
+        };
+        self.push_view(View::Tracks(view));
         self.focus = Focus::Content;
+    }
+
+    /// Takes the newest loaded copy of a list out of the history, to show it again at once.
+    /// An emptied stand-in keeps its place, so Back still leads there.
+    fn take_loaded_copy(&mut self, source: &TrackSource) -> Option<TrackView> {
+        let index = self.history.iter().rposition(
+            |view| matches!(view, View::Tracks(v) if v.source.same(source) && !v.stale && v.error.is_none()),
+        )?;
+        let View::Tracks(v) = &mut self.history[index] else { return None };
+        let stand_in = TrackView { list: v.list.clone(), ..TrackView::new(v.source.clone()) };
+        let loaded = std::mem::replace(v, stand_in);
+        self.next_view_id += 1;
+        v.retire(self.next_view_id);
+        Some(loaded)
+    }
+
+    /// Empties earlier copies of a list in the history, so each list is held once however
+    /// often it was opened. Back loads them again.
+    fn retire_copies(&mut self, source: &TrackSource) {
+        for view in &mut self.history {
+            if let View::Tracks(v) = view
+                && v.source.same(source)
+                && !v.stale
+            {
+                self.next_view_id += 1;
+                v.retire(self.next_view_id);
+            }
+        }
     }
 
     fn push_view(&mut self, view: View) {
@@ -2120,28 +2770,37 @@ impl App {
         if self.history.len() > HISTORY_LIMIT {
             self.history.remove(0);
         }
-        self.animate_content();
+        let quick = self.last_nav.is_some_and(|at| at.elapsed() < QUICK_NAV);
+        self.last_nav = Some(Instant::now());
+        if !quick {
+            self.animate_content();
+        }
     }
 
     fn back(&mut self) {
         match self.history.pop() {
             Some(view) => {
                 self.view = view;
+                if let View::Tracks(v) = &mut self.view
+                    && v.stale
+                {
+                    self.next_view_id += 1;
+                    v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
+                }
                 self.focus = Focus::Content;
-                self.animate_content();
+                // A page seen before comes back at once, without the rest of a transition.
+                self.last_nav = Some(Instant::now());
+                self.effects.cancel_unique_effect(Fx::Content);
             }
             None => self.focus = Focus::Nav,
         }
     }
 
+    /// A new page's text fades in briefly, while its backgrounds and covers are there at once.
     fn animate_content(&mut self) {
         let area = self.content_area;
-        let effect = if self.settings.reduce_motion {
-            fx::fade_from_fg(BG, (200, Interpolation::QuadOut))
-        } else {
-            fx::sweep_in(Motion::LeftToRight, 20, 0, BG, (240, Interpolation::QuadOut))
-        };
-        self.animate(Fx::Content, effect.with_area(area));
+        let effect = fx::fade_from_fg(BG, (120, Interpolation::QuadOut)).with_area(area);
+        self.animate(Fx::Content, effect);
     }
 
     fn next_id(&mut self) -> u64 {
@@ -2170,8 +2829,9 @@ impl App {
             }
             View::Artist(v) => match v.selected() {
                 Some(ArtistSelection::Track(t)) => {
-                    let (context, track) = (v.uri.clone(), t.track.uri.clone());
-                    self.play(context, Some(track));
+                    let (context, track) = (v.uri.clone(), t.track.clone());
+                    self.play(context, Some(track.uri.clone()));
+                    self.show_early(&track, None);
                 }
                 Some(ArtistSelection::Item(item)) => {
                     let item = item.clone();
@@ -2180,20 +2840,23 @@ impl App {
                 None => {}
             },
             View::Tracks(v) => {
-                let Some(track) = v.tracks.get(v.list.selected) else { return };
-                let context = match &v.source {
+                let Some(track) = v.tracks.get(v.list.selected).cloned() else { return };
+                let (context, cover_url) = match &v.source {
                     TrackSource::Liked => match &self.controller {
-                        Some(c) => format!("spotify:user:{}:collection", c.session.username()),
+                        Some(c) => (format!("spotify:user:{}:collection", c.session.username()), None),
                         None => return self.not_connected(),
                     },
-                    TrackSource::Playlist(p) => p.uri.clone(),
-                    TrackSource::Album(a) => a.uri.clone(),
+                    TrackSource::Playlist(p) => (p.uri.clone(), None),
+                    TrackSource::Album(a) => (a.uri.clone(), a.image_url.clone()),
                 };
-                let track = track.uri.clone();
-                self.play(context, Some(track));
+                self.play(context, Some(track.uri.clone()));
+                self.show_early(&track, cover_url);
             }
             View::Search(v) => match v.selected().cloned() {
-                Some(SearchEntry::Track(t)) => self.play(t.album_uri, Some(t.uri)),
+                Some(SearchEntry::Track(t)) => {
+                    self.play(t.album_uri.clone(), Some(t.uri.clone()));
+                    self.show_early(&t, None);
+                }
                 Some(SearchEntry::Artist(a)) => self.open_artist(a.uri, a.name),
                 Some(SearchEntry::Album(a)) => self.open_tracks(TrackSource::Album(a)),
                 Some(SearchEntry::Playlist(p)) => self.open_tracks(TrackSource::Playlist(p)),
@@ -2234,9 +2897,31 @@ impl App {
     }
 
     fn open_artist(&mut self, uri: String, name: String) {
+        if let View::Artist(v) = &self.view
+            && v.uri == uri
+        {
+            self.focus = Focus::Content;
+            return;
+        }
         let id = self.next_id();
-        self.loader.artist(id, uri.clone());
-        self.push_view(View::Artist(ArtistView::new(id, uri, name)));
+        // Artist pages are small, so a loaded one is copied rather than moved.
+        let loaded = self.history.iter().rev().find_map(|view| match view {
+            View::Artist(v) if v.uri == uri && v.page.is_some() => Some(v.clone()),
+            _ => None,
+        });
+        let view = match loaded {
+            Some(view) => {
+                if !view.fetched_at.is_some_and(|at| at.elapsed() < PAGE_FRESH) {
+                    self.loader.artist(id, uri);
+                }
+                ArtistView { id, ..view }
+            }
+            None => {
+                self.loader.artist(id, uri.clone());
+                ArtistView::new(id, uri, name)
+            }
+        };
+        self.push_view(View::Artist(view));
         self.focus = Focus::Content;
     }
 
@@ -2260,42 +2945,133 @@ impl App {
     fn play(&mut self, context: String, track: Option<String>) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        if self.remote_active {
-            self.remote(connect::Command::PlayContext { context, track, shuffle: false });
+        let sent = if self.remote_active {
+            self.remote(connect::Command::PlayContext { context, track: track.clone(), shuffle: false });
+            true
         } else {
-            self.control(|c| c.play(context, track));
+            self.control(|c| c.play(context, track.clone()))
+        };
+        if sent {
+            self.now.start(track);
+        }
+    }
+
+    /// A track is shown but nothing plays it: cloofy's own device is inactive and would
+    /// ignore play, skip and seek commands. A start on its way activates it.
+    fn idle(&self) -> bool {
+        !self.local_active && !self.remote_active && self.now.track.is_some() && self.now.pending.is_none()
+    }
+
+    /// Plays the shown track on cloofy from where it stands, e.g. after another device stopped.
+    fn play_shown(&mut self) {
+        let Some(track) = &self.now.track else { return };
+        let (context, uri, position_ms) = (self.last_context.clone(), track.uri.clone(), self.now.position_ms());
+        if self.control(|c| c.resume(context, uri.clone(), position_ms)) {
+            self.now.start(Some(uri));
         }
     }
 
     fn play_shuffled(&mut self, context: String) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        if self.remote_active {
+        let sent = if self.remote_active {
             self.remote(connect::Command::PlayContext { context, track: None, shuffle: true });
+            true
         } else {
-            self.control(|c| c.play_shuffled(context));
+            self.control(|c| c.play_shuffled(context))
+        };
+        if sent {
+            self.now.start(None);
         }
     }
 
+    /// Skips to the next or previous track; the play button spins until it plays. Like
+    /// Spotify, previous restarts the track instead once it has played a few seconds.
+    fn skip(&mut self, forward: bool) {
+        let restart = !forward && self.now.position_ms() >= RESTART_AFTER_MS;
+        let sent = match (self.remote_active, forward) {
+            (true, true) => {
+                self.remote(connect::Command::Next);
+                true
+            }
+            (true, false) => {
+                if restart {
+                    self.remote_intent.seek = Some((0, Instant::now()));
+                }
+                self.remote(connect::Command::Previous);
+                true
+            }
+            (false, true) => self.control(|c| c.next()),
+            (false, false) => self.control(|c| c.previous()),
+        };
+        // An inactive player drops skips; with nothing shown there is nothing to wait for.
+        if !sent || !(self.remote_active || self.local_active) {
+            return;
+        }
+        if !restart {
+            self.now.skip();
+        } else if self.remote_active {
+            self.now.set_position(0);
+        } else {
+            self.now.seek(0);
+        }
+    }
+
+    /// Shows a picked track in the player bar right away, as the official client does,
+    /// instead of only once its audio has loaded. `cover_url` is its album's cover, if known.
+    fn show_early(&mut self, track: &Track, cover_url: Option<String>) {
+        let before = self.now.track.as_ref().map(|t| t.uri.clone());
+        self.now.show_early(CurrentTrack {
+            uri: track.uri.clone(),
+            name: track.name.clone(),
+            artists: track.artists.clone(),
+            artist_uris: track.artist_uris.clone(),
+            album: track.album.clone(),
+            album_uri: Some(track.album_uri.clone()).filter(|uri| !uri.is_empty()),
+            duration_ms: track.duration_ms,
+            cover_url: cover_url.clone(),
+            cover_url_large: cover_url.clone(),
+        });
+        if self.now.track.as_ref().map(|t| &t.uri) == before.as_ref() {
+            return;
+        }
+        if let Some(url) = cover_url {
+            self.loader.cover(url, COVER_SIZE);
+        }
+        // Lyrics and the like state load alongside the audio.
+        self.after_track_change(before);
+    }
+
+    /// Gives up on a track start, showing again what played before it.
+    fn cancel_start(&mut self) {
+        let before = self.now.track.as_ref().map(|t| t.uri.clone());
+        self.now.cancel_start();
+        self.after_track_change(before);
+    }
+
     /// The play, shuffle, save and more buttons in page headers.
-    fn header_button(&mut self, button: HeaderButton, column: u16) {
+    fn header_button(&mut self, button: HeaderButton) {
         let Some(target) = self.page_target() else { return };
         match button {
             HeaderButton::Play => self.play(target.uri, None),
             HeaderButton::Shuffle => self.play_shuffled(target.uri),
             HeaderButton::Save => self.run_menu(crate::overlay::MenuAction::Save, target),
             HeaderButton::More => {
+                // Right below the button, wherever the header puts it or has scrolled it to.
+                let Some(&(area, _)) = self.hits.iter().find(|(_, hit)| *hit == Hit::Header(button)) else { return };
                 let items = menu::page_menu_items(&target, self.is_saved(&target.uri));
-                let anchor = (column, self.content_area.y + 8);
+                let anchor = (area.x, area.bottom());
                 self.overlay = Some(Overlay::Menu(crate::overlay::Menu { target, anchor, items, cursor: 0 }));
                 self.overlay_fx_pending = true;
             }
         }
     }
 
+    /// Sends a command to the other device. Its answer schedules the poll that confirms it.
     fn remote(&mut self, command: connect::Command) {
+        self.remote_intent.sent();
+        self.last_command = Instant::now();
         self.loader.remote(command);
-        self.next_poll = Instant::now() + QUICK_POLL;
     }
 
     fn change_volume(&mut self, steps: i32) {
@@ -2304,12 +3080,21 @@ impl App {
         self.set_volume(volume);
     }
 
+    /// Moves the slider at once, so repeated steps add up; the device follows.
     fn set_volume(&mut self, volume: u16) {
+        self.now.volume = volume;
         if self.remote_active {
-            self.now.volume = volume;
+            self.remote_intent.volume = Some(volume);
             self.remote(connect::Command::Volume((volume as u32 * 100 / u16::MAX as u32) as u8));
+            return;
+        }
+        self.restored_volume = Some(volume);
+        if self.local_active {
+            if let Some(volume) = self.volume_sync.request(volume) {
+                self.control(|c| c.set_volume(volume));
+            }
         } else {
-            self.control(|c| c.set_volume(volume));
+            self.volume_sync.defer(volume);
         }
     }
 
@@ -2319,54 +3104,76 @@ impl App {
         self.seek_to(target as u32);
     }
 
+    /// Moves the bar at once; repeated seeks add up instead of all starting from the same spot.
     fn seek_to(&mut self, position_ms: u32) {
+        let Some(track) = &self.now.track else { return };
+        // Spirc refuses positions past the end.
+        let position_ms = if track.duration_ms > 0 { position_ms.min(track.duration_ms) } else { position_ms };
         if self.remote_active {
+            self.now.set_position(position_ms);
+            self.remote_intent.seek = Some((position_ms, Instant::now()));
             self.remote(connect::Command::Seek(position_ms));
-        } else {
+        } else if self.local_active {
+            self.now.seek(position_ms);
             self.control(|c| c.seek(position_ms));
+        } else {
+            // cloofy's inactive device ignores seeks; space starts from the new spot instead.
+            self.now.set_position(position_ms);
+            if let Some(last) = &mut self.resume {
+                last.position_ms = position_ms;
+            }
         }
     }
 
-    fn open_devices(&mut self, devices: Vec<Device>) {
-        if devices.is_empty() {
+    fn open_devices(&mut self, devices: Vec<Device>, refreshing: bool) {
+        if devices.is_empty() && !refreshing {
             return self.error("No Spotify devices found.".into());
         }
-        let own = self.device_id.clone();
-        let items = devices
-            .iter()
-            .enumerate()
-            .map(|(index, device)| {
-                let icon = crate::icons::device(&device.kind);
-                let this = if Some(&device.id) == own.as_ref() { " (this device)" } else { "" };
-                let state = if device.active { "● playing" } else { device.kind.as_str() };
-                PickItem {
-                    label: format!("{icon}  {}{this}", device.name),
-                    detail: state.to_owned(),
-                    image_url: None,
-                    value: index,
-                }
-            })
-            .collect();
+        let items = device_items(&devices, self.device_id.as_deref());
         self.status = None;
-        self.open_overlay(Overlay::Devices { devices, picker: Picker::new(items) });
+        self.open_overlay(Overlay::Devices { devices, picker: Picker::new(items), refreshing });
+    }
+
+    /// Updates the open device picker with a fresh list, keeping the selected device.
+    fn refresh_devices(&mut self, devices: Vec<Device>) {
+        if devices.is_empty() {
+            self.overlay = None;
+            return self.error("No Spotify devices found.".into());
+        }
+        let items = device_items(&devices, self.device_id.as_deref());
+        let Some(Overlay::Devices { devices: shown, picker, refreshing }) = &mut self.overlay else { return };
+        let selected = picker.selected().and_then(|&index| shown.get(index)).map(|d| d.id.clone());
+        picker.set_items(items, |&index| devices.get(index).map(|d| &d.id) == selected.as_ref());
+        *shown = devices;
+        *refreshing = false;
     }
 
     fn transfer_to(&mut self, index: usize) {
         let Some(Overlay::Devices { devices, .. }) = self.overlay.take() else { return };
         let Some(device) = devices.into_iter().nth(index) else { return };
+        // The device label shows the move until the device turns up playing.
+        self.transfer =
+            Some(Transfer { device_id: device.id.clone(), name: device.name.clone(), since: Instant::now() });
         self.loader.transfer(device);
-        self.next_poll = Instant::now() + QUICK_POLL;
+        self.last_command = Instant::now();
     }
 
-    fn control(&mut self, command: impl FnOnce(&Controller) -> anyhow::Result<()>) {
-        match &self.controller {
-            Some(controller) => {
-                if let Err(err) = command(controller) {
-                    self.error(format!("{err:#}"));
-                }
-            }
-            None => self.not_connected(),
+    /// The device playback is moving to, while it does.
+    pub fn transferring_to(&self) -> Option<&str> {
+        self.transfer.as_ref().map(|t| t.name.as_str())
+    }
+
+    /// Sends a command to cloofy's own player. Returns whether it went out.
+    fn control(&mut self, command: impl FnOnce(&Controller) -> anyhow::Result<()>) -> bool {
+        let Some(controller) = &self.controller else {
+            self.not_connected();
+            return false;
+        };
+        if let Err(err) = command(controller) {
+            self.error(format!("{err:#}"));
+            return false;
         }
+        true
     }
 
     fn not_connected(&mut self) {
@@ -2384,6 +3191,30 @@ impl App {
     fn error(&mut self, text: String) {
         self.status = Some(Status { text, error: true, since: Instant::now() });
     }
+}
+
+/// Images are kept per URL and cell size.
+fn image_key(url: &str, size: Size) -> String {
+    format!("{}x{}:{url}", size.width, size.height)
+}
+
+/// Picker rows for Spotify Connect devices; `own` is cloofy's device ID.
+fn device_items(devices: &[Device], own: Option<&str>) -> Vec<PickItem<usize>> {
+    devices
+        .iter()
+        .enumerate()
+        .map(|(index, device)| {
+            let icon = crate::icons::device(&device.kind);
+            let this = if Some(device.id.as_str()) == own { " (this device)" } else { "" };
+            let state = if device.active { "● playing" } else { device.kind.as_str() };
+            PickItem {
+                label: format!("{icon}  {}{this}", device.name),
+                detail: state.to_owned(),
+                image_url: None,
+                value: index,
+            }
+        })
+        .collect()
 }
 
 /// A picked overlay entry, unified across the different pickers.

@@ -12,6 +12,7 @@ use super::{App, Focus, LibraryEntry, NavItem};
 use crate::{
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
+    playback::CurrentTrack,
     views::{ArtistSelection, SearchEntry, TrackSource, View},
 };
 
@@ -19,6 +20,17 @@ impl App {
     /// Opens the menu for the current selection at `anchor`.
     pub(super) fn open_menu(&mut self, anchor: (u16, u16)) {
         let Some(target) = self.context_target() else { return };
+        self.show_menu(target, anchor);
+    }
+
+    /// Opens the menu for the playing track at `anchor`, as a right-click on the player does.
+    pub(super) fn open_playing_menu(&mut self, anchor: (u16, u16)) {
+        let Some(track) = &self.now.track else { return };
+        let target = current_track_target(track, self.playing_context().map(str::to_owned));
+        self.show_menu(target, anchor);
+    }
+
+    fn show_menu(&mut self, target: ContextTarget, anchor: (u16, u16)) {
         let items = menu_items(&target, self.is_saved(&target.uri));
         self.overlay = Some(Overlay::Menu(Menu { target, anchor, items, cursor: 0 }));
         self.overlay_fx_pending = true;
@@ -142,7 +154,7 @@ impl App {
                 _ => self.play(target.uri, None),
             },
             MenuAction::Shuffle => self.play_shuffled(target.uri),
-            MenuAction::Queue => self.loader.queue(target.uri, target.name),
+            MenuAction::Queue => self.queue(target.uri, target.name),
             MenuAction::Save => self.toggle_library(target.uri, target.name),
             MenuAction::AddToPlaylist => self.open_playlist_picker_for(target.uri),
             MenuAction::GoToAlbum => {
@@ -276,17 +288,29 @@ fn target(uri: &str, name: &str, kind: TargetKind, image_url: Option<String>) ->
 }
 
 fn track_target(track: &Track, context: Option<String>) -> ContextTarget {
-    let artist = track
-        .artist_uris
-        .first()
-        .filter(|uri| !uri.is_empty())
-        .map(|uri| (uri.clone(), track.artists.first().cloned().unwrap_or_default()));
     ContextTarget {
         context,
         album: (!track.album_uri.is_empty()).then(|| (track.album_uri.clone(), track.album.clone())),
-        artist,
+        artist: first_artist(&track.artist_uris, &track.artists),
         ..target(&track.uri, &track.name, TargetKind::Track, None)
     }
+}
+
+/// The playing track or episode; `context` is what it plays from.
+fn current_track_target(track: &CurrentTrack, context: Option<String>) -> ContextTarget {
+    let kind = if track.uri.starts_with("spotify:episode:") { TargetKind::Episode } else { TargetKind::Track };
+    ContextTarget {
+        context,
+        album: track.album_uri.clone().map(|uri| (uri, track.album.clone())),
+        artist: first_artist(&track.artist_uris, &track.artists),
+        ..target(&track.uri, &track.name, kind, track.cover_url.clone())
+    }
+}
+
+/// The first artist's URI and name, where Spotify named one.
+fn first_artist(uris: &[String], names: &[String]) -> Option<(String, String)> {
+    let uri = uris.first().filter(|uri| !uri.is_empty())?;
+    Some((uri.clone(), names.first().cloned().unwrap_or_default()))
 }
 
 fn album_target(album: &AlbumInfo) -> ContextTarget {
@@ -384,6 +408,7 @@ mod tests {
             album: "Discovery".into(),
             album_uri: "spotify:album:1".into(),
             duration_ms: 1,
+            image_url: None,
         };
         let actions: Vec<_> = menu_items(&track_target(&track, None), true).into_iter().map(|(a, _)| a).collect();
         assert!(actions.contains(&MenuAction::GoToArtist) && actions.contains(&MenuAction::GoToAlbum));

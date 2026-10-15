@@ -1,10 +1,12 @@
-use std::{ops::Range, time::Instant};
+use std::{collections::HashMap, ops::Range, time::Instant};
 
 use cloofy_spotify::{
     artist::{ArtistPage, TopTrack},
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, SearchResults, Track},
     home::{Home, HomeItem},
 };
+
+use crate::loader::Fetch;
 
 /// Cursor and scroll position of a list.
 #[derive(Debug, Default, Clone)]
@@ -55,6 +57,22 @@ pub enum TrackSource {
     Album(AlbumInfo),
 }
 
+impl TrackSource {
+    /// Names the list: Liked Songs, or the playlist or album URI.
+    pub fn key(&self) -> &str {
+        match self {
+            TrackSource::Liked => "liked",
+            TrackSource::Playlist(p) => &p.uri,
+            TrackSource::Album(a) => &a.uri,
+        }
+    }
+
+    /// Whether both show the same list, however they describe it.
+    pub fn same(&self, other: &TrackSource) -> bool {
+        self.key() == other.key()
+    }
+}
+
 pub struct TrackView {
     pub id: u64,
     pub source: TrackSource,
@@ -63,6 +81,104 @@ pub struct TrackView {
     pub loading: bool,
     pub error: Option<String>,
     pub list: ListCursor,
+    /// Emptied to save memory because the list was opened again later; it loads again when
+    /// Back returns to it.
+    pub stale: bool,
+    /// The load filling the list; dropping it stops the load.
+    pub fetch: Option<Fetch>,
+    /// When the list was last loaded completely.
+    pub fetched_at: Option<Instant>,
+    /// A fresh copy on its way while the songs on screen stay; it replaces them once complete.
+    pub incoming: Option<Vec<Track>>,
+}
+
+impl TrackView {
+    /// An empty list; [`Self::load`] fills it.
+    pub fn new(source: TrackSource) -> Self {
+        Self {
+            id: 0,
+            source,
+            tracks: Vec::new(),
+            total: None,
+            loading: false,
+            error: None,
+            list: ListCursor::default(),
+            stale: false,
+            fetch: None,
+            fetched_at: None,
+            incoming: None,
+        }
+    }
+
+    /// Loads the list from scratch under a new `id`, so pages of an earlier load can't land.
+    pub fn load(&mut self, id: u64, fetch: impl FnOnce(u64, TrackSource) -> Fetch) {
+        self.id = id;
+        self.tracks = Vec::new();
+        self.total = None;
+        self.loading = true;
+        self.error = None;
+        self.stale = false;
+        self.incoming = None;
+        self.fetch = Some(fetch(id, self.source.clone()));
+    }
+
+    /// Loads a fresh copy under a new `id` while the songs on screen stay.
+    pub fn refresh(&mut self, id: u64, fetch: impl FnOnce(u64, TrackSource) -> Fetch) {
+        self.id = id;
+        self.incoming = Some(Vec::new());
+        self.fetch = Some(fetch(id, self.source.clone()));
+    }
+
+    /// Swaps in a fresh copy of the list, keeping the cursor and the view on the same song.
+    pub fn replace_tracks(&mut self, tracks: Vec<Track>) {
+        let selected = self.tracks.get(self.list.selected).map(|t| t.uri.clone());
+        self.tracks = tracks;
+        if let Some(index) = selected.and_then(|uri| self.tracks.iter().position(|t| t.uri == uri)) {
+            self.list.offset = (self.list.offset + index).saturating_sub(self.list.selected);
+            self.list.selected = index;
+        }
+        self.list.selected = self.list.selected.min(self.tracks.len().saturating_sub(1));
+    }
+
+    /// Drops the songs and stops loading them; the cursor stays for when the list comes
+    /// back. The new `id` turns away pages that are already on their way.
+    pub fn retire(&mut self, id: u64) {
+        self.id = id;
+        self.tracks = Vec::new();
+        self.total = None;
+        self.loading = false;
+        self.error = None;
+        self.stale = true;
+        self.fetch = None;
+        self.fetched_at = None;
+        self.incoming = None;
+    }
+
+    /// Takes a song out of the list, keeping the cursor on the song it was on. Returns where
+    /// it was.
+    pub fn remove_track(&mut self, uri: &str) -> Option<(usize, Track)> {
+        let index = self.tracks.iter().position(|t| t.uri == uri)?;
+        let track = self.tracks.remove(index);
+        if index < self.list.selected {
+            self.list.selected -= 1;
+        }
+        self.list.selected = self.list.selected.min(self.tracks.len().saturating_sub(1));
+        self.total = self.total.map(|total| total.saturating_sub(1));
+        Some((index, track))
+    }
+
+    /// Adds a song unless it is listed already, keeping the cursor on the song it was on.
+    pub fn insert_track(&mut self, index: usize, track: Track) {
+        if self.tracks.iter().any(|t| t.uri == track.uri) {
+            return;
+        }
+        let index = index.min(self.tracks.len());
+        if index <= self.list.selected && !self.tracks.is_empty() {
+            self.list.selected += 1;
+        }
+        self.tracks.insert(index, track);
+        self.total = self.total.map(|total| total + 1);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +201,8 @@ pub struct SearchView {
     /// Set while typing; the search starts once the input rests for a moment.
     pub typed_at: Option<Instant>,
     pub list: ListCursor,
+    /// Screen rows per result at the last draw, so the mouse wheel scrolls by rows.
+    pub entry_rows: u16,
 }
 
 impl SearchView {
@@ -96,10 +214,10 @@ impl SearchView {
                 entries.extend(items);
             }
         };
-        section("SONGS", results.tracks.into_iter().map(SearchEntry::Track).collect());
-        section("ARTISTS", results.artists.into_iter().map(SearchEntry::Artist).collect());
-        section("ALBUMS", results.albums.into_iter().map(SearchEntry::Album).collect());
-        section("PLAYLISTS", results.playlists.into_iter().map(SearchEntry::Playlist).collect());
+        section("Songs", results.tracks.into_iter().map(SearchEntry::Track).collect());
+        section("Artists", results.artists.into_iter().map(SearchEntry::Artist).collect());
+        section("Albums", results.albums.into_iter().map(SearchEntry::Album).collect());
+        section("Playlists", results.playlists.into_iter().map(SearchEntry::Playlist).collect());
         self.entries = entries;
         self.searched = query;
         self.list = ListCursor::default();
@@ -185,8 +303,26 @@ impl HomeView {
         page_shelf(offset, len, self.cards, delta, (self.shelf == shelf).then_some(&mut self.item));
     }
 
+    /// Shows a newer Home. Shelves and cards are found again by URI, so the selection and
+    /// how far each shelf was paged survive the update.
     pub fn set_home(&mut self, home: Home) {
-        self.offsets = vec![0; home.shelves.len()];
+        let old = self.home.take();
+        let shelves = old.as_ref().map_or(&[][..], |h| &h.shelves[..]);
+        let offsets: HashMap<&str, usize> = shelves
+            .iter()
+            .zip(&self.offsets)
+            .filter(|(shelf, _)| !shelf.uri.is_empty())
+            .map(|(shelf, offset)| (shelf.uri.as_str(), *offset))
+            .collect();
+        self.offsets = home.shelves.iter().map(|s| offsets.get(s.uri.as_str()).copied().unwrap_or(0)).collect();
+        if let Some(selected) = shelves.get(self.shelf).filter(|s| !s.uri.is_empty())
+            && let Some(shelf) = home.shelves.iter().position(|s| s.uri == selected.uri)
+        {
+            let card = selected.items.get(self.item).map(|i| i.uri.as_str());
+            self.item =
+                home.shelves[shelf].items.iter().position(|i| Some(i.uri.as_str()) == card).unwrap_or(self.item);
+            self.shelf = shelf;
+        }
         self.home = Some(home);
         self.loading = false;
         self.error = None;
@@ -227,6 +363,7 @@ impl HomeView {
 }
 
 /// An artist page: popular tracks first, then one row per shelf.
+#[derive(Clone)]
 pub struct ArtistView {
     pub id: u64,
     pub uri: String,
@@ -243,6 +380,8 @@ pub struct ArtistView {
     pub scroll: u16,
     /// Scrolled with the mouse: the view stays put instead of following the selection.
     pub detached: bool,
+    /// When the page last arrived.
+    pub fetched_at: Option<Instant>,
 }
 
 pub enum ArtistSelection<'a> {
@@ -264,6 +403,7 @@ impl ArtistView {
             cards: 1,
             scroll: 0,
             detached: false,
+            fetched_at: None,
         }
     }
 
@@ -282,9 +422,18 @@ impl ArtistView {
     }
 
     pub fn set_page(&mut self, page: ArtistPage) {
-        self.offsets = vec![0; page.shelves.len()];
+        // A refreshed page keeps its place unless its shelves changed.
+        let refresh = self.page.as_ref().is_some_and(|old| old.shelves.len() == page.shelves.len());
+        if !refresh {
+            self.offsets = vec![0; page.shelves.len()];
+        }
         self.name = page.name.clone();
         self.page = Some(page);
+        self.fetched_at = Some(Instant::now());
+        if refresh {
+            self.row = self.row.min(self.rows().saturating_sub(1));
+            self.clamp_item();
+        }
     }
 
     pub fn track_count(&self) -> usize {
@@ -363,5 +512,89 @@ impl View {
             View::Tracks(v) => v.id,
             View::Search(v) => v.id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(n: u32) -> Track {
+        Track {
+            uri: format!("spotify:track:{n}"),
+            name: format!("Song {n}"),
+            artists: Vec::new(),
+            artist_uris: Vec::new(),
+            album: String::new(),
+            album_uri: String::new(),
+            duration_ms: 1,
+            image_url: None,
+        }
+    }
+
+    fn liked(count: u32, selected: usize) -> TrackView {
+        TrackView {
+            tracks: (0..count).map(track).collect(),
+            total: Some(count),
+            list: ListCursor { selected, ..ListCursor::default() },
+            ..TrackView::new(TrackSource::Liked)
+        }
+    }
+
+    #[test]
+    fn removing_a_song_keeps_the_cursor_on_its_song() {
+        let mut view = liked(4, 2);
+        assert_eq!(view.remove_track("spotify:track:0").map(|(index, _)| index), Some(0));
+        assert_eq!(view.tracks[view.list.selected].uri, "spotify:track:2");
+        assert_eq!(view.total, Some(3));
+        assert!(view.remove_track("spotify:track:9").is_none());
+    }
+
+    #[test]
+    fn a_fresh_copy_keeps_the_cursor_on_its_song() {
+        let mut view = liked(5, 3);
+        view.list.offset = 2;
+        view.replace_tracks([9, 8, 0, 1, 2, 3, 4].map(track).to_vec());
+        assert_eq!(view.list.selected, 5);
+        assert_eq!(view.list.offset, 4);
+    }
+
+    fn shelf(uri: &str, items: &[&str]) -> cloofy_spotify::home::Shelf {
+        let item = |uri: &&str| HomeItem {
+            uri: uri.to_string(),
+            kind: cloofy_spotify::home::ItemKind::Playlist,
+            title: uri.to_string(),
+            subtitle: String::new(),
+            image_url: None,
+            owner_id: String::new(),
+            owner_name: String::new(),
+            context_uri: uri.to_string(),
+        };
+        cloofy_spotify::home::Shelf {
+            uri: uri.into(),
+            title: uri.into(),
+            shortcuts: false,
+            items: items.iter().map(item).collect(),
+        }
+    }
+
+    #[test]
+    fn a_newer_home_keeps_the_selected_card_and_paging() {
+        let home = |shelves| Home { greeting: String::new(), shelves };
+        let mut view = HomeView::new(1, Some(home(vec![shelf("a", &["1", "2"]), shelf("b", &["3", "4", "5"])])));
+        (view.shelf, view.item, view.offsets) = (1, 2, vec![0, 1]);
+        view.set_home(home(vec![shelf("new", &["0"]), shelf("b", &["6", "3", "4", "5"]), shelf("a", &["1"])]));
+        assert_eq!((view.shelf, view.item), (1, 3));
+        assert_eq!(view.offsets, [0, 1, 0]);
+    }
+
+    #[test]
+    fn adding_a_song_keeps_the_cursor_and_skips_duplicates() {
+        let mut view = liked(3, 1);
+        view.insert_track(0, track(7));
+        view.insert_track(0, track(7));
+        assert_eq!(view.tracks.len(), 4);
+        assert_eq!(view.tracks[view.list.selected].uri, "spotify:track:1");
+        assert_eq!(view.total, Some(4));
     }
 }
