@@ -11,13 +11,20 @@ mod theme;
 mod ui;
 mod views;
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    io::{BufWriter, Stdout},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Result, bail};
 use cloofy_spotify::{config::Config, paths::Paths, session, webapi::WebApi};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, EventStream};
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture, EventStream},
+    terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
+};
 use futures::{FutureExt, StreamExt};
-use ratatui::DefaultTerminal;
+use ratatui::{Terminal, backend::CrosstermBackend, buffer::Buffer};
 use ratatui_image::picker::Picker;
 use tokio::{
     sync::{mpsc, watch},
@@ -29,6 +36,10 @@ use crate::{app::App, loader::Loader};
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);
 
+/// Frames are collected in a buffer and written in one go, instead of in the 1 KiB pieces
+/// stdout's own buffer would send.
+type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
+
 pub async fn run(paths: &Paths) -> Result<()> {
     let config = Config::load(paths)?;
     let api = Arc::new(WebApi::new(config.client_id(paths)?, paths.webapi_token())?);
@@ -39,7 +50,9 @@ pub async fn run(paths: &Paths) -> Result<()> {
     #[cfg(unix)]
     let _stderr = StderrToLog::redirect(&paths.log_file());
     icons::init(config.icons.as_deref());
-    let mut terminal = ratatui::init();
+    // Raw mode, the alternate screen and the panic hook; frames go through `terminal` below.
+    let _ = ratatui::init();
+    let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(64 * 1024, std::io::stdout())))?;
     // Must run after entering the alternate screen and before reading input events.
     let picker = image_picker();
     crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
@@ -50,13 +63,7 @@ pub async fn run(paths: &Paths) -> Result<()> {
     result
 }
 
-async fn run_app(
-    terminal: &mut DefaultTerminal,
-    paths: &Paths,
-    api: Arc<WebApi>,
-    picker: Picker,
-    crossfade: u64,
-) -> Result<()> {
+async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: Picker, crossfade: u64) -> Result<()> {
     let (tx, mut events) = mpsc::unbounded_channel();
     let (session_tx, session_rx) = watch::channel(None);
     let snapshotter = snapshot::Snapshotter::from_env().map(Arc::new);
@@ -79,7 +86,7 @@ async fn run_app(
     let mut ticker = tokio::time::interval(TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    terminal.draw(|frame| ui::draw(frame, &mut app))?;
+    draw(terminal, &mut app, false)?;
     while !app.quit {
         let redraw = tokio::select! {
             event = input.next() => match event {
@@ -101,11 +108,11 @@ async fn run_app(
             _ = closed.recv() => break,
         };
         if redraw || app.snapshot_requested {
-            let frame = terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            if std::mem::take(&mut app.snapshot_requested)
+            let snapshot = std::mem::take(&mut app.snapshot_requested) && snapshotter.is_some();
+            if let Some(buffer) = draw(terminal, &mut app, snapshot)?
                 && let Some(snapshotter) = &snapshotter
             {
-                let (buffer, placements) = (frame.buffer.clone(), app.placements.clone());
+                let placements = app.placements.clone();
                 let (snapshotter, notices) = (snapshotter.clone(), notices.clone());
                 tokio::task::spawn_blocking(move || {
                     let text = match snapshotter.save(&buffer, &placements) {
@@ -119,6 +126,16 @@ async fn run_app(
     }
     app.shutdown();
     Ok(())
+}
+
+/// Draws a frame as one synchronized update, so the terminal shows it whole rather than half
+/// painted. Returns the frame when `snapshot` asks for it.
+fn draw(terminal: &mut Term, app: &mut App, snapshot: bool) -> Result<Option<Buffer>> {
+    crossterm::queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
+    let frame = terminal.draw(|frame| ui::draw(frame, app))?;
+    let buffer = snapshot.then(|| frame.buffer.clone());
+    crossterm::execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+    Ok(buffer)
 }
 
 /// Fires when the terminal window is closed (SIGHUP) or cloofy is asked to stop (SIGTERM),
