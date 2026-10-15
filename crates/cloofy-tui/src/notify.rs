@@ -112,7 +112,8 @@ fn clean(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).map(|c| if c == ';' { ',' } else { c }).collect()
 }
 
-/// tmux passes a sequence on to the terminal when wrapped like this, with `allow-passthrough on`.
+/// tmux passes a sequence on to the terminal when wrapped like this. It needs
+/// `allow-passthrough all`: with `on`, tmux drops it for panes out of view, the usual case.
 fn passthrough(sequence: &str) -> String {
     format!("\x1bPtmux;{}\x1b\\", sequence.replace('\x1b', "\x1b\x1b"))
 }
