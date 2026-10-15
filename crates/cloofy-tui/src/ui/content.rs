@@ -34,6 +34,8 @@ struct RowStyle<'a> {
     focused: bool,
     playing_uri: Option<String>,
     playing: bool,
+    /// The track on its way to the player.
+    loading_uri: Option<String>,
     frame: u64,
     saved: &'a HashMap<String, bool>,
 }
@@ -94,6 +96,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         focused: app.focus == Focus::Content,
         playing_uri: app.now.track.as_ref().map(|t| t.uri.clone()),
         playing: app.now.playing,
+        loading_uri: app.now.pending.as_ref().and_then(|p| p.uri.clone()),
         frame: app.frame(),
         saved: &app.saved,
     };
@@ -382,7 +385,9 @@ impl Columns {
 
     fn row(&self, index: usize, track: &Track, style: &RowStyle) -> Line<'static> {
         let is_current = style.playing_uri.as_deref() == Some(track.uri.as_str());
-        let number = if !is_current {
+        let number = if style.loading_uri.as_deref() == Some(track.uri.as_str()) {
+            Span::styled(fit(&right(text::spinner(style.frame), 3), Self::INDEX), style.accent)
+        } else if !is_current {
             Span::styled(fit(&right(&(index + 1).to_string(), 3), Self::INDEX), FAINT)
         } else if style.playing {
             Span::styled(fit(&format!(" {}", text::equalizer(style.frame)), Self::INDEX), style.accent)

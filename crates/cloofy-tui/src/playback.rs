@@ -27,6 +27,8 @@ const REMOTE_GRACE: Duration = Duration::from_secs(2);
 const REMOTE_SEEK_TOLERANCE_MS: u32 = 2000;
 /// Devices round volumes to their own steps.
 const REMOTE_VOLUME_TOLERANCE: u32 = 3;
+/// A track start that hasn't begun loading after this long has failed.
+pub const START_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -74,6 +76,29 @@ pub struct Cover {
     pub picture: crate::loader::Picture,
 }
 
+/// A track start that was asked for, or that the player announced, and hasn't begun playing.
+pub struct Pending {
+    /// The track that will play, once known.
+    pub uri: Option<String>,
+    /// The track shown when the start was asked for; a skip is through once another one shows.
+    from: Option<String>,
+    /// Next or previous rather than a new track or context.
+    pub skip: bool,
+    pub since: Instant,
+    /// The local player is loading it.
+    loading: bool,
+    /// What was shown before the track was switched early, to put back if the start fails.
+    previous: Option<Shown>,
+}
+
+struct Shown {
+    track: CurrentTrack,
+    cover: Option<Cover>,
+    playing: bool,
+    position_ms: u32,
+    position_at: Instant,
+}
+
 /// What the local player is doing, as reported by librespot's player events.
 pub struct NowPlaying {
     pub track: Option<CurrentTrack>,
@@ -88,6 +113,8 @@ pub struct NowPlaying {
     pub device: Option<String>,
     /// A seek sent to the local player that it hasn't confirmed yet: target and when.
     seeking: Option<(u32, Instant)>,
+    /// A track on its way; the play button spins meanwhile.
+    pub pending: Option<Pending>,
 }
 
 impl NowPlaying {
@@ -103,7 +130,83 @@ impl NowPlaying {
             cover: None,
             device: None,
             seeking: None,
+            pending: None,
         }
+    }
+
+    /// Notes a track start sent to a player, until it plays. `uri` is the track that will
+    /// play, if known.
+    pub fn start(&mut self, uri: Option<String>) {
+        let from = self.track.as_ref().map(|t| t.uri.clone());
+        self.pending = Some(Pending { uri, from, skip: false, since: Instant::now(), loading: false, previous: None });
+    }
+
+    /// Notes a skip to the next or previous track sent to a player, until it plays.
+    pub fn skip(&mut self) {
+        self.start(None);
+        if let Some(pending) = &mut self.pending {
+            pending.skip = true;
+        }
+    }
+
+    /// Shows the track just asked for at once, before its audio has loaded. The one shown
+    /// before comes back if the start fails.
+    pub fn show_early(&mut self, track: CurrentTrack) {
+        let Some(pending) = &mut self.pending else { return };
+        if pending.uri.as_deref() != Some(track.uri.as_str()) || self.track.as_ref().is_some_and(|t| t.uri == track.uri)
+        {
+            return;
+        }
+        if pending.previous.is_none()
+            && let Some(old) = self.track.take()
+        {
+            pending.previous = Some(Shown {
+                track: old,
+                cover: self.cover.take(),
+                playing: self.playing,
+                position_ms: self.position_ms,
+                position_at: self.position_at,
+            });
+        }
+        // The old cover would sit next to the new title; the placeholder shows until the new one loads.
+        self.cover = None;
+        self.track = Some(track);
+        self.seeking = None;
+        self.playing = false;
+        self.set_position(0);
+    }
+
+    /// Whether a start went nowhere: the local player never began loading it.
+    pub fn start_failed(&self) -> bool {
+        self.pending.as_ref().is_some_and(|p| !p.loading && p.since.elapsed() >= START_TIMEOUT)
+    }
+
+    /// Gives up on a start, putting back what was shown before it.
+    pub fn cancel_start(&mut self) {
+        let Some(shown) = self.pending.take().and_then(|p| p.previous) else { return };
+        self.track = Some(shown.track);
+        self.cover = shown.cover;
+        self.playing = shown.playing;
+        self.position_ms = shown.position_ms;
+        self.position_at = shown.position_at;
+    }
+
+    /// Whether a poll of another device predates the pending start, still showing the track
+    /// from before it. `waiting` says Spotify may still lag behind the commands sent. Ends the
+    /// start once a poll shows it through.
+    pub fn awaits_remote(&mut self, playback: &Playback, waiting: bool) -> bool {
+        let Some(pending) = &self.pending else { return false };
+        let shown = playback.track.as_ref().map(|t| t.uri.as_str());
+        let through = shown != pending.from.as_deref() || (pending.uri.is_some() && shown == pending.uri.as_deref());
+        // A device may take a while to load a picked track. Skips and contexts may not change
+        // the track at all (the end of a playlist, a context starting with the track already
+        // playing), so they wait only as long as Spotify may lag behind.
+        let gave_up = if pending.uri.is_some() { pending.since.elapsed() >= START_TIMEOUT } else { !waiting };
+        if through || gave_up {
+            self.pending = None;
+            return false;
+        }
+        true
     }
 
     pub fn position_ms(&self) -> u32 {
@@ -133,6 +236,10 @@ impl NowPlaying {
     /// Takes a position the local player reported, unless it predates the last seek: the
     /// player reports positions it had before the seek, which would make the bar jump back.
     fn report_position(&mut self, position_ms: u32) {
+        // Until the player loads a track shown early, its reports are about the old one.
+        if self.pending.as_ref().is_some_and(|p| p.previous.is_some() && !p.loading) {
+            return;
+        }
         if let Some((target, at)) = self.seeking {
             if position_ms.abs_diff(target) > SEEK_TOLERANCE_MS && at.elapsed() < ECHO_WINDOW {
                 return;
@@ -183,7 +290,8 @@ impl NowPlaying {
             self.track = None;
             return None;
         };
-        if self.track.as_ref().is_some_and(|t| t.uri == remote.uri) {
+        // A track shown early lacks the details only the device's state has, like its cover.
+        if self.track.as_ref().is_some_and(|t| t.uri == remote.uri && t.cover_url == remote.cover_url) {
             return None;
         }
         self.track = Some(CurrentTrack {
@@ -204,10 +312,27 @@ impl NowPlaying {
     /// Applies a player event. Returns a cover URL when the new track needs its art loaded.
     pub fn apply(&mut self, event: PlayerEvent) -> Option<String> {
         match event {
+            PlayerEvent::Loading { track_id, position_ms, .. } => {
+                let uri = track_id.to_uri();
+                // Also covers skips from the phone and next tracks that weren't preloaded.
+                if self.pending.is_none() {
+                    self.start(None);
+                }
+                if let Some(pending) = &mut self.pending {
+                    pending.uri = Some(uri.clone());
+                    pending.loading = true;
+                }
+                // The old track's audio has stopped, so its clock does too.
+                self.set_playing(false);
+                if self.track.as_ref().is_some_and(|t| t.uri == uri) {
+                    self.report_position(position_ms);
+                }
+            }
             PlayerEvent::TrackChanged { audio_item } => {
                 let track = current_track(&audio_item);
                 let cover_url = track.cover_url.clone();
                 self.track = Some(track);
+                self.pending = None;
                 self.seeking = None;
                 self.set_position(0);
                 if self.cover.as_ref().map(|c| &c.url) != cover_url.as_ref() {
@@ -215,19 +340,31 @@ impl NowPlaying {
                 }
             }
             PlayerEvent::Playing { position_ms, .. } => {
+                self.pending = None;
                 // Freeze first, so a report from before a seek leaves the shown position put.
                 self.set_playing(false);
                 self.report_position(position_ms);
                 self.playing = true;
             }
             PlayerEvent::Paused { position_ms, .. } => {
+                self.pending = None;
                 self.set_playing(false);
                 self.report_position(position_ms);
             }
-            PlayerEvent::Stopped { .. } => self.playing = false,
-            PlayerEvent::PositionCorrection { position_ms, .. }
-            | PlayerEvent::PositionChanged { position_ms, .. }
-            | PlayerEvent::Seeked { position_ms, .. } => self.report_position(position_ms),
+            PlayerEvent::Stopped { .. } => {
+                self.pending = None;
+                self.playing = false;
+            }
+            PlayerEvent::Seeked { position_ms, .. } => {
+                // "Previous" restarts the track instead when it has played for a while.
+                if self.pending.as_ref().is_some_and(|p| p.skip && !p.loading) {
+                    self.pending = None;
+                }
+                self.report_position(position_ms);
+            }
+            PlayerEvent::PositionCorrection { position_ms, .. } | PlayerEvent::PositionChanged { position_ms, .. } => {
+                self.report_position(position_ms)
+            }
             PlayerEvent::ShuffleChanged { shuffle } => self.shuffle = shuffle,
             PlayerEvent::RepeatChanged { context, track } => {
                 self.repeat = match (context, track) {
@@ -800,6 +937,101 @@ mod tests {
         rounded.device.volume_percent = Some(98);
         assert!(!now.apply_remote(&rounded, &mut intent).1);
         assert_eq!(now.volume, (98 * u16::MAX as u32 / 100) as u16);
+    }
+
+    const OTHER: &str = "spotify:track:0000000000000000000000";
+
+    fn playing(position_ms: u32) -> PlayerEvent {
+        PlayerEvent::Playing { play_request_id: 1, track_id: id(), position_ms }
+    }
+
+    fn loading(uri: &str) -> PlayerEvent {
+        PlayerEvent::Loading { play_request_id: 1, track_id: SpotifyUri::from_uri(uri).unwrap(), position_ms: 0 }
+    }
+
+    #[test]
+    fn a_picked_track_shows_at_once_and_comes_back_if_it_fails() {
+        let mut now = paused_track();
+        now.playing = true;
+        now.position_ms = 42_000;
+        now.start(Some(OTHER.into()));
+        now.show_early(track(OTHER));
+        assert_eq!(now.track.as_ref().unwrap().uri, OTHER);
+        assert!(!now.playing);
+        assert_eq!(now.position_ms(), 0);
+        assert!(!now.start_failed());
+        now.pending.as_mut().unwrap().since = Instant::now() - START_TIMEOUT;
+        assert!(now.start_failed());
+        now.cancel_start();
+        assert_eq!(now.track.as_ref().unwrap().uri, URI);
+        assert!(now.playing);
+        assert!(now.position_ms() >= 42_000);
+        assert!(now.pending.is_none());
+    }
+
+    #[test]
+    fn the_old_track_doesnt_move_one_shown_early() {
+        let mut now = paused_track();
+        now.start(Some(OTHER.into()));
+        now.show_early(track(OTHER));
+        now.apply(position_changed(50_000));
+        assert_eq!(now.position_ms(), 0);
+    }
+
+    #[test]
+    fn a_loading_track_waits_as_long_as_it_takes() {
+        let mut now = paused_track();
+        now.playing = true;
+        now.start(Some(OTHER.into()));
+        now.show_early(track(OTHER));
+        now.apply(loading(OTHER));
+        now.pending.as_mut().unwrap().since = Instant::now() - START_TIMEOUT;
+        assert!(!now.start_failed());
+        now.apply(playing(0));
+        assert!(now.pending.is_none());
+        assert!(now.playing);
+    }
+
+    #[test]
+    fn loading_announced_by_the_player_spins_too() {
+        let mut now = paused_track();
+        now.playing = true;
+        now.apply(loading(OTHER));
+        assert_eq!(now.pending.as_ref().and_then(|p| p.uri.as_deref()), Some(OTHER));
+        assert!(!now.playing);
+    }
+
+    #[test]
+    fn previous_that_restarts_the_track_ends_the_skip() {
+        let mut now = paused_track();
+        now.skip();
+        now.apply(seeked(0));
+        assert!(now.pending.is_none());
+    }
+
+    #[test]
+    fn a_remote_start_ignores_polls_until_the_device_switches() {
+        let (mut now, _) = remote_track(10_000);
+        now.start(Some(OTHER.into()));
+        now.show_early(track(OTHER));
+        assert!(now.awaits_remote(&poll(URI, true, 11_000), true));
+        assert!(now.awaits_remote(&poll(URI, true, 12_000), false));
+        assert!(!now.awaits_remote(&poll(OTHER, true, 300), false));
+        assert!(now.pending.is_none());
+        // The device's state fills in what the early track lacked.
+        let mut full = poll(OTHER, true, 300);
+        full.track.as_mut().unwrap().cover_url = Some("https://i.scdn.co/image/cover".into());
+        let (cover, _) = now.apply_remote(&full, &mut RemoteIntent::default());
+        assert_eq!(cover.as_deref(), Some("https://i.scdn.co/image/cover"));
+    }
+
+    #[test]
+    fn a_remote_skip_waits_only_while_spotify_may_lag() {
+        let (mut now, _) = remote_track(10_000);
+        now.skip();
+        assert!(now.awaits_remote(&poll(URI, true, 11_000), true));
+        assert!(!now.awaits_remote(&poll(URI, true, 12_000), false));
+        assert!(now.pending.is_none());
     }
 
     #[test]
