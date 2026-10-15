@@ -265,7 +265,7 @@ pub(super) fn draw_shelf(
                 && let Some(y) = row(area, button_y)
             {
                 let hit = Hit::CardPlay { shelf: layout.index, item: index };
-                super::play_button(frame.buffer_mut(), app, x + COVER.width, y, hit);
+                super::play_button(frame.buffer_mut(), app, x + COVER.width, y, hit, true);
             }
         }
     }
@@ -292,17 +292,18 @@ fn draw_shortcuts(
         frame.buffer_mut().set_style(tile, Style::new().bg(if is_selected { selection } else { RAISED }));
         draw_cover(frame, app, (x, tile_y), area, item, TILE_COVER);
         let style = if is_selected { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
-        let name = text::truncate(&item.title, tile_width.saturating_sub(TILE_COVER.width + 3) as usize);
+        let hovered = super::hovered(app, tile);
+        // A hovered tile shows its play button at the right end; the name stops short of it.
+        let reserved = TILE_COVER.width + 3 + if hovered { super::PLAY_BUTTON_WIDTH + 1 } else { 0 };
+        let name = text::truncate(&item.title, tile_width.saturating_sub(reserved) as usize);
         // Vertically centered next to the cover.
         if let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32) {
             frame.buffer_mut().set_string(x + TILE_COVER.width + 2, y, name, style);
         }
         app.hits.push((tile, Hit::Card { shelf: layout.index, item: index }));
-        if super::hovered(app, tile)
-            && let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32)
-        {
+        if hovered && let Some(y) = row(area, tile_y + (TILE_COVER.height / 2) as i32) {
             let hit = Hit::CardPlay { shelf: layout.index, item: index };
-            super::play_button(frame.buffer_mut(), app, x + tile_width - 1, y, hit);
+            super::play_button(frame.buffer_mut(), app, x + tile_width - 1, y, hit, false);
         }
     }
 }

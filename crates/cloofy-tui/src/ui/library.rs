@@ -130,7 +130,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             if super::hovered(app, card)
                 && let Some(row) = home::row(grid, y + COVER.height as i32 - 1)
             {
-                super::play_button(frame.buffer_mut(), app, x + COVER.width, row, Hit::RowPlay(index));
+                super::play_button(frame.buffer_mut(), app, x + COVER.width, row, Hit::RowPlay(index), true);
             }
         }
     }
