@@ -1,0 +1,8 @@
+[submodule "vendor/librespot"]
+	path = vendor/librespot
+	url = https://github.com/parda21/librespot.git
+	branch = cloofy
+[submodule "vendor/ratatui-image"]
+	path = vendor/ratatui-image
+	url = https://github.com/parda21/ratatui-image.git
+	branch = cloofy

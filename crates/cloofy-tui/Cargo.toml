@@ -1,0 +1,32 @@
+[package]
+name = "cloofy-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The terminal interface of cloofy"
+
+[dependencies]
+cloofy-spotify.workspace = true
+cloofy-player.workspace = true
+librespot.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+crossterm.workspace = true
+fontdue.workspace = true
+futures.workspace = true
+image.workspace = true
+nucleo-matcher.workspace = true
+ratatui.workspace = true
+ratatui-image.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tachyonfx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+unicode-width.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

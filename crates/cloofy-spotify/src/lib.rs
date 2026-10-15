@@ -1,0 +1,11 @@
+pub mod artist;
+pub mod catalog;
+pub mod config;
+pub mod connect;
+pub mod doctor;
+pub mod home;
+pub mod lyrics;
+pub mod pathfinder;
+pub mod paths;
+pub mod session;
+pub mod webapi;

@@ -1,0 +1,131 @@
+//! The top bar: wordmark, home button and the search field, like the official client.
+
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Style},
+    text::{Line, Span},
+};
+use unicode_width::UnicodeWidthStr;
+
+use super::{text, wordmark};
+use crate::{
+    app::{App, Focus, HintAction, Hit, NavItem},
+    commands::Command,
+    icons::icons,
+    theme::{BG, FAINT, MUTED, RAISED, TEXT},
+    views::View,
+};
+
+pub const HEIGHT: u16 = 5;
+/// A square-ish button with its icon in the middle cell.
+const BUTTON_WIDTH: u16 = 5;
+const DISABLED: Color = Color::Rgb(58, 58, 68);
+
+pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
+    buf.set_style(area, Style::new().bg(BG));
+    if area.height < HEIGHT {
+        return compact(buf, app, area);
+    }
+    let wide = area.width >= 100;
+    if wide {
+        wordmark::draw(buf, area.x + 3, area.y + 1, app.accent.rgb());
+    }
+
+    // Back and home buttons and the search field, centered in the window like Spotify's.
+    let search_width = (area.width / 2).clamp(28, 64);
+    let cluster = 2 * (BUTTON_WIDTH + 1) + search_width;
+    let left_limit = if wide { area.x + 3 + wordmark::WIDTH + 3 } else { area.x + 2 };
+    let x = (area.x + area.width.saturating_sub(cluster) / 2).max(left_limit);
+    let row = area.y + 2;
+
+    let back = button(buf, app, x, row, 2, icons().chevron_left, Hit::Hint(HintAction::Back), app.can_go_back());
+    let home = button(buf, app, back.right() + 1, row, 2, icons().home, Hit::Command(Command::Home), true);
+    let width = search_width.min(area.right().saturating_sub(home.right() + 3));
+    let search = Rect::new(home.right() + 1, row, width, 1);
+    search_field(buf, app, search, 2);
+
+    if let Some(me) = &app.me
+        && wide
+    {
+        let name = format!("{}  {}", icons().artist, me.name);
+        let width = name.width() as u16;
+        if area.right().saturating_sub(width + 3) > search.right() + 2 {
+            buf.set_string(area.right().saturating_sub(width + 3), row, name, Style::new().fg(MUTED));
+        }
+    }
+}
+
+/// One row with slimmer buttons, for small windows.
+fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
+    let back =
+        button(buf, app, area.x + 1, area.y, 1, icons().chevron_left, Hit::Hint(HintAction::Back), app.can_go_back());
+    let home = button(buf, app, back.right() + 1, area.y, 1, icons().home, Hit::Command(Command::Home), true);
+    let search = Rect::new(home.right() + 1, area.y, area.right().saturating_sub(home.right() + 2), 1);
+    search_field(buf, app, search, 1);
+}
+
+/// A filled button with `icon` centered, `padding` cells either side; dimmed and inert unless
+/// `enabled`. The home icon lights up while Home is open.
+#[allow(clippy::too_many_arguments)]
+fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &str, hit: Hit, enabled: bool) -> Rect {
+    let area = Rect::new(x, y, 2 * padding + 1, 1).intersection(buf.area);
+    buf.set_style(area, Style::new().bg(RAISED));
+    let color = match hit {
+        _ if !enabled => DISABLED,
+        Hit::Command(Command::Home) if app.is_open(NavItem::Home) => app.accent.color(),
+        _ => TEXT,
+    };
+    buf.set_string(x + padding, y, icon, Style::new().fg(color));
+    if enabled {
+        app.hits.push((area, hit));
+    }
+    area
+}
+
+/// The search field: icon, then the query or a prompt, and a spinner while results load.
+fn search_field(buf: &mut Buffer, app: &mut App, area: Rect, padding: u16) {
+    let accent = app.accent.color();
+    let typing = app.focus == Focus::SearchInput && !app.zen;
+    buf.set_style(area, Style::new().bg(if typing { app.accent.selection() } else { RAISED }));
+    let (query, loading) = match &app.view {
+        View::Search(v) => (v.query.clone(), v.loading),
+        _ => (String::new(), false),
+    };
+    let icon_style = Style::new().fg(if typing { accent } else { MUTED });
+    let mut spans = vec![Span::styled(format!("{}  ", icons().search), icon_style)];
+    let room = area.width.saturating_sub(2 * padding + 6) as usize;
+    if query.is_empty() && !typing {
+        spans.push(Span::styled(text::truncate("What do you want to play?", room), FAINT));
+    } else {
+        spans.push(Span::styled(tail(&query, room), Style::new().fg(TEXT).bold()));
+        if typing {
+            spans.push(Span::styled("▏", accent));
+        }
+    }
+    buf.set_line(area.x + padding, area.y, &Line::from(spans), area.width.saturating_sub(2 * padding));
+    if loading {
+        buf.set_string(
+            area.right().saturating_sub(padding + 1),
+            area.y,
+            text::spinner(app.frame()),
+            Style::new().fg(FAINT),
+        );
+    }
+    app.hits.push((area, Hit::SearchInput));
+}
+
+/// The end of `text` that fits into `width` columns, so the cursor stays visible.
+fn tail(text: &str, width: usize) -> String {
+    let mut out: Vec<char> = Vec::new();
+    let mut used = 0;
+    for c in text.chars().rev() {
+        let w = c.to_string().width();
+        if used + w > width {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out.into_iter().rev().collect()
+}
