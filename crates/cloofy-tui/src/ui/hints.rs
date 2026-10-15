@@ -1,5 +1,6 @@
 //! The bottom line: context hints (clickable), status messages and the playing device.
 
+use crossterm::event::KeyCode;
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
@@ -52,7 +53,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
 
 fn hints(app: &App) -> &'static [Hint] {
     use Command::*;
-    use HintAction::{Activate, Back, Run, ToggleFocus};
+    use HintAction::{Activate, Back, Key, Run, ToggleFocus};
     match (app.focus, &app.view) {
         _ if app.zen => &[
             ("z", "close", Some(Back)),
@@ -63,10 +64,13 @@ fn hints(app: &App) -> &'static [Hint] {
             ("a", "add to playlist", Some(Run(AddToPlaylist))),
             ("^K", "commands", Some(Run(Palette))),
         ],
-        (Focus::SearchInput, _) => &[("enter", "to results", Some(ToggleFocus)), ("esc", "back", Some(Back))],
+        // Enter and esc mean something else while typing; a click does the same.
+        (Focus::SearchInput, _) => {
+            &[("enter", "to results", Some(Key(KeyCode::Enter))), ("esc", "back", Some(Key(KeyCode::Esc)))]
+        }
         (Focus::Nav, _) => &[
             ("enter", "open", Some(Activate)),
-            ("← →", "filter", None),
+            ("← →", "filter", Some(Key(KeyCode::Right))),
             ("tab", "to content", Some(ToggleFocus)),
             (".", "actions", Some(Run(Menu))),
             ("/", "search", Some(Run(Search))),
@@ -75,7 +79,7 @@ fn hints(app: &App) -> &'static [Hint] {
         ],
         (Focus::Content, View::Artist(_)) => &[
             ("enter", "play/open", Some(Activate)),
-            ("F", "follow", None),
+            ("F", "follow", Some(Key(KeyCode::Char('F')))),
             (".", "actions", Some(Run(Menu))),
             ("esc", "back", Some(Back)),
             ("^K", "commands", Some(Run(Palette))),
@@ -83,7 +87,7 @@ fn hints(app: &App) -> &'static [Hint] {
         ],
         (Focus::Content, View::Library(_)) => &[
             ("enter", "open", Some(Activate)),
-            ("< >", "filter", None),
+            ("< >", "filter", Some(Key(KeyCode::Char('>')))),
             (".", "actions", Some(Run(Menu))),
             ("esc", "back", Some(Back)),
             ("^K", "commands", Some(Run(Palette))),
@@ -91,7 +95,7 @@ fn hints(app: &App) -> &'static [Hint] {
         ],
         (Focus::Content, View::Home(_)) => &[
             ("enter", "open", Some(Activate)),
-            ("p", "play", None),
+            ("p", "play", Some(Key(KeyCode::Char('p')))),
             (".", "actions", Some(Run(Menu))),
             ("D", "DJ", Some(Run(Dj))),
             ("/", "search", Some(Run(Search))),
