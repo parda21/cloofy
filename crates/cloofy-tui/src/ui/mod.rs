@@ -255,10 +255,11 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
 /// Lightens whatever clickable thing the mouse is over; links get underlined instead.
 fn hover(buf: &mut Buffer, app: &App) {
     let Some(position) = app.mouse else { return };
-    let Some((area, hit)) = app.hits.iter().rev().find(|(area, hit)| hit.is_interactive() && area.contains(position))
-    else {
+    // Only the topmost target counts: an overlay's body hides the rows and cards under it.
+    let Some((area, hit)) = app.hits.iter().rev().find(|(area, _)| area.contains(position)) else { return };
+    if !hit.is_interactive() {
         return;
-    };
+    }
     let area = area.intersection(buf.area);
     if let Hit::Link(_) = hit {
         buf.set_style(area, Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
