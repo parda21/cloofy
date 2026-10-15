@@ -105,6 +105,8 @@ const LIBRARY_PARTS: u8 = 4;
 /// failure in a row.
 const PLAYER_RETRY: [Duration; 4] =
     [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(60)];
+/// How long a clicked target stays lit.
+const PRESS_FLASH: Duration = Duration::from_millis(150);
 
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
@@ -445,6 +447,8 @@ pub struct App {
     /// F12 was pressed; the next frame gets written as a PNG.
     pub snapshot_requested: bool,
     last_click: Option<(Instant, Hit)>,
+    /// The target clicked last, where it was and when, so it can light up for a moment.
+    pressed: Option<(Hit, Rect, Instant)>,
     pub effects: EffectManager<Fx>,
     pub last_draw: Instant,
     pub content_area: Rect,
@@ -553,6 +557,7 @@ impl App {
             dragging: None,
             seek_preview: None,
             last_click: None,
+            pressed: None,
             effects: EffectManager::default(),
             last_draw: Instant::now(),
             content_area: Rect::default(),
@@ -584,6 +589,11 @@ impl App {
 
     pub fn is_saved(&self, uri: &str) -> bool {
         self.saved.get(uri).copied().unwrap_or(false)
+    }
+
+    /// The target that was just clicked and its area, while it should still look pressed.
+    pub fn pressed(&self) -> Option<(Hit, Rect)> {
+        self.pressed.filter(|(_, _, at)| at.elapsed() < PRESS_FLASH).map(|(hit, area, _)| (hit, area))
     }
 
     pub fn shutdown(&mut self) {
@@ -1206,6 +1216,14 @@ impl App {
             crate::release_freed_memory();
         }
 
+        if let Some((_, _, at)) = self.pressed {
+            if at.elapsed() >= PRESS_FLASH {
+                self.pressed = None;
+            }
+            // One more frame after the flash ends clears it.
+            redraw = true;
+        }
+
         if self.status.as_ref().is_some_and(|s| s.since.elapsed() >= STATUS_TTL) {
             self.status = None;
             redraw = true;
@@ -1620,6 +1638,13 @@ impl App {
                     self.dragging = Some(hit);
                     self.drag(hit, mouse.column, false);
                 } else if let Some(hit) = hit {
+                    // Lit at once, even where the result takes a moment (another device, a
+                    // track that still loads).
+                    if hit.is_interactive()
+                        && let Some(&(area, _)) = self.hits.iter().rev().find(|(area, _)| area.contains(position))
+                    {
+                        self.pressed = Some((hit, area, Instant::now()));
+                    }
                     self.click(hit, mouse.column);
                 }
             }

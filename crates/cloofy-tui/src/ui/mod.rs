@@ -259,19 +259,30 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
     }
 }
 
-/// Lightens whatever clickable thing the mouse is over; links get underlined instead.
+/// Lightens whatever clickable thing the mouse is over, and more so what was just clicked;
+/// links get underlined instead.
 fn hover(buf: &mut Buffer, app: &App) {
+    // Only while the target is still there: a click that opened another page leaves none.
+    let pressed = app.pressed().map(|(hit, area)| (area, hit)).filter(|pressed| app.hits.contains(pressed));
+    if let Some((area, _)) = pressed {
+        tint(buf, app, area, 0.18);
+    }
     let Some(position) = app.mouse else { return };
     // Only the topmost target counts: an overlay's body hides the rows and cards under it.
     let Some((area, hit)) = app.hits.iter().rev().find(|(area, _)| area.contains(position)) else { return };
     if !hit.is_interactive() {
         return;
     }
-    let area = area.intersection(buf.area);
     if let Hit::Link(_) = hit {
-        buf.set_style(area, Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
-        return;
+        buf.set_style(area.intersection(buf.area), Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
+    } else if pressed.is_none_or(|(pressed, _)| pressed != *area) {
+        tint(buf, app, *area, 0.06);
     }
+}
+
+/// Mixes some white into the background of `area`.
+fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
+    let area = area.intersection(buf.area);
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
             let cell = &mut buf[(x, y)];
@@ -285,7 +296,7 @@ fn hover(buf: &mut Buffer, app: &App) {
                 Color::Rgb(r, g, b) => crate::theme::Rgb(r, g, b),
                 _ => crate::theme::Rgb(13, 13, 16),
             };
-            cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), 0.06).into();
+            cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), amount).into();
         }
     }
 }
