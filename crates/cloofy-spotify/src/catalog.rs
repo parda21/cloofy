@@ -50,6 +50,8 @@ pub struct Track {
     pub album: String,
     pub album_uri: String,
     pub duration_ms: u32,
+    /// The album cover, where Spotify sends one along.
+    pub image_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,7 +202,12 @@ pub async fn album_tracks(api: &WebApi, album: &AlbumInfo, offset: u32) -> Resul
         items: page
             .items
             .into_iter()
-            .map(|raw| Track { album: album.name.clone(), album_uri: album.uri.clone(), ..Track::from(raw) })
+            .map(|raw| Track {
+                album: album.name.clone(),
+                album_uri: album.uri.clone(),
+                image_url: album.image_url.clone(),
+                ..Track::from(raw)
+            })
             .collect(),
         total: page.total,
         next_offset,
@@ -328,7 +335,8 @@ fn items<T>(page: Option<RawPage<Option<T>>>) -> impl Iterator<Item = T> {
 
 impl From<RawTrack> for Track {
     fn from(raw: RawTrack) -> Self {
-        let (album, album_uri) = raw.album.map(|a| (a.name, a.uri)).unwrap_or_default();
+        let (album, album_uri, image_url) =
+            raw.album.map(|a| (a.name, a.uri, pick_image(&a.images))).unwrap_or_default();
         Self {
             uri: raw.uri,
             name: raw.name,
@@ -337,6 +345,7 @@ impl From<RawTrack> for Track {
             album,
             album_uri,
             duration_ms: raw.duration_ms,
+            image_url,
         }
     }
 }
@@ -351,6 +360,12 @@ impl From<meta::Track> for Track {
             album: track.album.name.clone(),
             album_uri: track.album.id.to_uri(),
             duration_ms: track.duration.max(0) as u32,
+            image_url: track
+                .album
+                .covers
+                .iter()
+                .min_by_key(|cover| cover.width.unsigned_abs().abs_diff(IMAGE_WIDTH))
+                .map(|cover| format!("https://i.scdn.co/image/{}", cover.id)),
         }
     }
 }
@@ -437,6 +452,8 @@ struct RawNamed {
 struct RawAlbumRef {
     name: String,
     uri: String,
+    #[serde(default, deserialize_with = "nullable")]
+    images: Vec<RawImage>,
 }
 
 #[derive(Deserialize)]

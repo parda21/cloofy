@@ -526,6 +526,7 @@ mod tests {
             album: String::new(),
             album_uri: String::new(),
             duration_ms: 1,
+            image_url: None,
         }
     }
 
