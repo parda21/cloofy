@@ -48,7 +48,13 @@ USAGE
 done
 
 tmp=$(mktemp -d)
+# The terminal's settings while a list reads single keys, to restore on any exit.
+tty_state=""
+
 cleanup() {
+	if [ -n "$tty_state" ]; then
+		stty "$tty_state" <&3 2>/dev/null || true
+	fi
 	if [ -t 2 ]; then
 		printf '\033[?25h' >&2
 	fi
@@ -181,6 +187,10 @@ choose() {
 	question=$(fit "$question" "$width")
 	printf '    %s%s%s\n' "$bold" "$question" "$reset"
 	hide_cursor
+	# Keys arrive one at a time and unechoed. bash's read -n would set this up only for
+	# stdin, which is the script itself when piped from curl.
+	tty_state=$(stty -g <&3)
+	stty -icanon -echo min 1 time 0 <&3
 	while true; do
 		for ((i = 0; i < count; i++)); do
 			label=$(fit "${options[i]%%|*}" "$width")
@@ -192,10 +202,10 @@ choose() {
 				printf '\033[2K      %s%s%s  %s%s%s\n' "$text" "$label" "$reset" "$faint" "$hint" "$reset"
 			fi
 		done
-		IFS= read -rsn1 -u 3 key || key=""
+		IFS= read -rn1 -u 3 key || key=""
 		case "$key" in
 		$'\033')
-			IFS= read -rsn2 -u 3 rest || rest=""
+			IFS= read -rn2 -u 3 rest || rest=""
 			case "$rest" in
 			"[A" | "OA") choice=$(((choice + count - 1) % count)) ;;
 			"[B" | "OB") choice=$(((choice + 1) % count)) ;;
@@ -208,6 +218,8 @@ choose() {
 		esac
 		printf '\033[%dA' "$count"
 	done
+	stty "$tty_state" <&3
+	tty_state=""
 	# Collapse the list into one line with the answer.
 	printf '\033[%dA' $((count + 1))
 	for ((i = 0; i <= count; i++)); do
