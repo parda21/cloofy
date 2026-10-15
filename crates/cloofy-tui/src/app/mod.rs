@@ -50,6 +50,10 @@ const IMAGE_TTL: Duration = Duration::from_secs(120);
 /// A cover that failed to load, e.g. while offline, is tried again when drawn after this long.
 const IMAGE_RETRY: Duration = Duration::from_secs(30);
 const EVICTION_INTERVAL: Duration = Duration::from_secs(30);
+/// Now Playing loads its cover for a new size once the window has kept that size this long.
+const ZEN_COVER_SETTLE: Duration = Duration::from_millis(150);
+/// A Now Playing cover that failed to load is tried again after this long.
+const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
 /// Spotify's DJ; loading it without a track asks for a fresh set.
 const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
@@ -326,7 +330,11 @@ pub struct App {
     pub zen_cover: Option<LargeCover>,
     /// Cover size the Now Playing layout asked for at the last draw.
     pub zen_cover_want: Option<Size>,
+    /// The size asked for, and since when; a resize passes through many sizes.
+    zen_cover_want_since: Option<(Size, Instant)>,
     zen_cover_pending: Option<(String, Size)>,
+    /// The last cover that failed to load, and when.
+    zen_cover_failed: Option<(String, Size, Instant)>,
     pub lyrics: Option<LyricsState>,
     /// Smoothly animated lyric line position.
     pub lyrics_scroll: f32,
@@ -413,7 +421,9 @@ impl App {
             zen: false,
             zen_cover: None,
             zen_cover_want: None,
+            zen_cover_want_since: None,
             zen_cover_pending: None,
+            zen_cover_failed: None,
             lyrics: None,
             lyrics_scroll: 0.0,
             hits: Vec::new(),
@@ -700,10 +710,20 @@ impl App {
                 }
             }
             DataEvent::LargeCover { url, size, result } => {
-                self.zen_cover_pending = None;
+                if self.zen_cover_pending.as_ref().is_some_and(|(u, s)| *u == url && *s == size) {
+                    self.zen_cover_pending = None;
+                }
+                let current = self.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
+                let wanted = self.zen && self.zen_cover_want == Some(size) && current == Some(url.as_str());
                 match result {
-                    Ok(picture) => self.zen_cover = Some(LargeCover { url, size, picture }),
-                    Err(err) => tracing::warn!("large cover {url}: {err}"),
+                    Ok(picture) if wanted => self.zen_cover = Some(LargeCover { url, size, picture }),
+                    // For a size or track no longer shown: dropped before it is ever sent to the
+                    // terminal, which would cost megabytes for nothing.
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::warn!("large cover {url}: {err}");
+                        self.zen_cover_failed = Some((url, size, Instant::now()));
+                    }
                 }
             }
             DataEvent::Lyrics { uri, result } => {
@@ -848,12 +868,26 @@ impl App {
     fn request_zen_cover(&mut self) {
         let (Some(size), Some(track)) = (self.zen_cover_want, &self.now.track) else { return };
         let Some(url) = track.cover_url_large.clone() else { return };
-        let loaded = self.zen_cover.as_ref().is_some_and(|c| c.url == url && c.size == size);
-        let pending = self.zen_cover_pending.as_ref().is_some_and(|(u, s)| *u == url && *s == size);
-        if !loaded && !pending {
-            self.zen_cover_pending = Some((url.clone(), size));
-            self.loader.large_cover(url, size);
+        if self.zen_cover_want_since.is_none_or(|(wanted, _)| wanted != size) {
+            self.zen_cover_want_since = Some((size, Instant::now()));
         }
+        let shown = self.zen_cover.as_ref().is_some_and(|c| c.url == url);
+        let loaded = shown && self.zen_cover.as_ref().is_some_and(|c| c.size == size);
+        // One cover per track at a time: while a resize goes on, a request for an older size is
+        // let finish (and dropped) rather than joined by one for every size passed through.
+        let pending = self.zen_cover_pending.as_ref().is_some_and(|(u, _)| *u == url);
+        let failed = self
+            .zen_cover_failed
+            .as_ref()
+            .is_some_and(|(u, s, at)| *u == url && *s == size && at.elapsed() < ZEN_COVER_RETRY);
+        // A new track or a first look loads at once; after a resize, the cover at the old size
+        // stays until the window settles.
+        let settled = self.zen_cover_want_since.is_some_and(|(_, since)| since.elapsed() >= ZEN_COVER_SETTLE);
+        if loaded || pending || failed || (shown && !settled) {
+            return;
+        }
+        self.zen_cover_pending = Some((url.clone(), size));
+        self.loader.large_cover(url, size);
     }
 
     /// Eases the lyrics towards the current line. Returns whether they moved.
