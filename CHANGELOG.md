@@ -4,4 +4,22 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
-First release in preparation.
+## [0.1.0] - 2026-10-15
+
+The first release.
+
+### Added
+
+- **Playback.** cloofy plays music itself through librespot and shows up as a Spotify Connect device. It can also control your other devices.
+- **Home.** Your shelves and Made For You, the DJ with its voice between tracks, and crossfade.
+- **Library.** Playlists, albums, artists and podcasts, in the sidebar and as a full page.
+- **Pages and search.** Playlist, album and artist pages, and search.
+- **Lyrics.** Synced lyrics in a now-playing view with a large cover.
+- **Cover art.** Shown through the Kitty graphics protocol, as half blocks elsewhere.
+- **Mouse.** Clicks, hover, the wheel, context menus, and dragging the seek and volume bars.
+- **Keyboard.** Shortcuts for everything, plus a command palette.
+- **Session restore.** The page, the selection and the last track come back after a restart.
+- **Installer.** It sets everything up step by step.
+
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/parda21/cloofy/releases/tag/v0.1.0
