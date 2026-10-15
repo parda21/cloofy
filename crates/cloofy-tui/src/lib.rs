@@ -82,6 +82,7 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
         paths.cache.join("images"),
         snapshotter.is_some(),
     );
+    loader.prune_image_cache();
     let notices = tx.clone();
     playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx);
     let saved = state::load(&paths.state_file());
