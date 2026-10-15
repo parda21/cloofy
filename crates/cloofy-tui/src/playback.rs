@@ -19,6 +19,8 @@ const DEVICE_NAME: &str = "cloofy";
 const ECHO_WINDOW: Duration = Duration::from_millis(1500);
 /// A reported position this close to a seek target confirms the seek.
 const SEEK_TOLERANCE_MS: u32 = 1000;
+/// Spirc reports nothing for a volume it already has, so a change counts as done after this.
+const VOLUME_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -210,6 +212,71 @@ impl NowPlaying {
     }
 }
 
+/// Volume changes for cloofy's own device. Spirc follows every command with a network round
+/// trip, so a drag or a held key would queue dozens of changes and report each one back
+/// afterwards, dragging the slider through old values. Only one change is on its way at a
+/// time, newer ones replace the waiting one, and reports of values in between are hidden.
+#[derive(Default)]
+pub struct VolumeSync {
+    /// The volume asked for last, until the player reports it.
+    target: Option<u16>,
+    /// The volume sent to the player and not reported back yet, and when it was sent.
+    sent: Option<(u16, Instant)>,
+}
+
+impl VolumeSync {
+    /// Asks for `volume`. Returns it when it should be sent to the player now.
+    pub fn request(&mut self, volume: u16) -> Option<u16> {
+        self.target = Some(volume);
+        self.next()
+    }
+
+    /// Keeps `volume` for when cloofy's device becomes active; Spirc ignores it until then.
+    pub fn defer(&mut self, volume: u16) {
+        self.target = Some(volume);
+    }
+
+    /// The volume to send now: the wanted one, unless another one is still on its way.
+    pub fn next(&mut self) -> Option<u16> {
+        if self.sent.is_some() {
+            return None;
+        }
+        let target = self.target?;
+        self.sent = Some((target, Instant::now()));
+        Some(target)
+    }
+
+    /// Handles the player reporting `volume`. Returns whether the slider should show it, and
+    /// a volume to send next.
+    pub fn reported(&mut self, volume: u16) -> (bool, Option<u16>) {
+        if self.sent.is_some_and(|(sent, at)| sent == volume || at.elapsed() >= VOLUME_TIMEOUT) {
+            self.sent = None;
+        }
+        match self.target {
+            // Changed elsewhere, e.g. from the phone.
+            None => (true, None),
+            Some(target) if target == volume && self.sent.is_none() => {
+                self.target = None;
+                (true, None)
+            }
+            Some(_) => (false, self.next()),
+        }
+    }
+
+    /// Gives up waiting for a report that doesn't come. Returns a volume to send next.
+    pub fn expire(&mut self) -> Option<u16> {
+        let (sent, at) = self.sent?;
+        if at.elapsed() < VOLUME_TIMEOUT {
+            return None;
+        }
+        self.sent = None;
+        if self.target == Some(sent) {
+            self.target = None;
+        }
+        self.next()
+    }
+}
+
 fn current_track(item: &AudioItem) -> CurrentTrack {
     let (artists, artist_uris, album) = match &item.unique_fields {
         UniqueFields::Track { artists, album, .. } => (
@@ -336,14 +403,14 @@ impl Controller {
 }
 
 /// Connects the player in the background so the UI shows up instantly.
-pub fn spawn(paths: Paths, crossfade: Duration, tx: UnboundedSender<AppEvent>) {
+pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, tx: UnboundedSender<AppEvent>) {
     tokio::spawn(async move {
         let result = async {
             let pending = session::prepare(&paths)?;
             let session = pending.session.clone();
             let engine = Engine::new(&session, crossfade)?;
             let mut events = engine.player.get_player_event_channel();
-            let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into()).await?;
+            let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), volume).await?;
             tokio::spawn(task);
 
             let player_tx = tx.clone();
@@ -447,6 +514,50 @@ mod tests {
         now.apply(PlayerEvent::Paused { play_request_id: 1, track_id: id(), position_ms: 30_000 });
         assert!(!now.playing);
         assert!((90_000..90_500).contains(&now.position_ms()));
+    }
+
+    #[test]
+    fn volume_changes_wait_for_each_other_and_collapse() {
+        let mut sync = VolumeSync::default();
+        assert_eq!(sync.request(100), Some(100));
+        assert_eq!(sync.request(200), None);
+        assert_eq!(sync.request(300), None);
+        // The first one arrives: hide it and send the newest wish.
+        assert_eq!(sync.reported(100), (false, Some(300)));
+        assert_eq!(sync.reported(300), (true, None));
+        // Nothing pending: changes from elsewhere show.
+        assert_eq!(sync.reported(5_000), (true, None));
+    }
+
+    #[test]
+    fn stale_volume_reports_stay_hidden() {
+        let mut sync = VolumeSync::default();
+        assert_eq!(sync.request(1_000), Some(1_000));
+        assert_eq!(sync.reported(400), (false, None));
+        assert_eq!(sync.reported(1_000), (true, None));
+    }
+
+    #[test]
+    fn a_volume_without_report_gives_way_to_the_next() {
+        let mut sync = VolumeSync::default();
+        sync.request(100);
+        sync.request(200);
+        assert_eq!(sync.expire(), None);
+        sync.sent = Some((100, Instant::now() - VOLUME_TIMEOUT));
+        assert_eq!(sync.expire(), Some(200));
+        sync.sent = Some((200, Instant::now() - VOLUME_TIMEOUT));
+        assert_eq!(sync.expire(), None);
+        assert_eq!(sync.reported(700), (true, None));
+    }
+
+    #[test]
+    fn a_deferred_volume_goes_out_on_activation() {
+        let mut sync = VolumeSync::default();
+        sync.defer(900);
+        assert_eq!(sync.next(), Some(900));
+        // Activation reports the old volume first.
+        assert_eq!(sync.reported(500), (false, None));
+        assert_eq!(sync.reported(900), (true, None));
     }
 
     #[test]

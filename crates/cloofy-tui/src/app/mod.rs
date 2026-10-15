@@ -29,7 +29,7 @@ use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture, SessionState},
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{self, Controller, Cover, NowPlaying, Repeat},
+    playback::{self, Controller, Cover, NowPlaying, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -296,7 +296,10 @@ pub struct App {
     resume: Option<crate::state::LastTrack>,
     /// What the current track plays in, so a restart can continue there.
     last_context: Option<String>,
+    /// cloofy's own volume, saved while the slider shows another device's.
     restored_volume: Option<u16>,
+    /// Local volume changes on their way to the player.
+    volume_sync: VolumeSync,
     controller: Option<Controller>,
     /// cloofy's own Spotify Connect device ID.
     device_id: Option<String>,
@@ -434,6 +437,7 @@ impl App {
             resume: None,
             last_context: None,
             restored_volume: None,
+            volume_sync: VolumeSync::default(),
             controller: None,
             device_id: None,
             local_active: false,
@@ -570,9 +574,6 @@ impl App {
                 let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
                 self.player_failures = 0;
                 self.device_id = Some(controller.session.device_id().to_owned());
-                if let Some(volume) = self.restored_volume {
-                    let _ = controller.set_volume(volume);
-                }
                 controller.set_crossfade(Duration::from_secs(self.crossfade));
                 self.controller = Some(*controller);
                 self.reload_failed_view();
@@ -600,7 +601,7 @@ impl App {
         self.player_retry_at = None;
         self.player_error = None;
         let _ = self.session_tx.send(SessionState::Connecting);
-        playback::spawn(self.paths.clone(), Duration::from_secs(self.crossfade), self.events.clone());
+        playback::spawn(self.paths.clone(), Duration::from_secs(self.crossfade), self.now.volume, self.events.clone());
     }
 
     /// Loads the open page again once the session is up, if it failed without one.
@@ -625,7 +626,13 @@ impl App {
 
     fn on_player(&mut self, event: PlayerEvent) -> bool {
         match &event {
-            PlayerEvent::SessionConnected { .. } => self.local_active = true,
+            PlayerEvent::SessionConnected { .. } => {
+                self.local_active = true;
+                // A volume set while inactive was ignored; Spirc takes it now.
+                if let Some(volume) = self.volume_sync.next() {
+                    self.control(|c| c.set_volume(volume));
+                }
+            }
             PlayerEvent::SessionDisconnected { .. } => {
                 self.local_active = false;
                 // Usually another device took over; find out which before the next command.
@@ -646,6 +653,16 @@ impl App {
                 // The local player idles while another device plays.
                 _ => return false,
             }
+        }
+        if let PlayerEvent::VolumeChanged { volume } = event {
+            let (show, send) = self.volume_sync.reported(volume);
+            if let Some(next) = send {
+                self.control(|c| c.set_volume(next));
+            }
+            if !show {
+                return false;
+            }
+            self.restored_volume = Some(volume);
         }
         let before = self.now.track.as_ref().map(|t| t.uri.clone());
         if let Some(url) = self.now.apply(event) {
@@ -1044,6 +1061,10 @@ impl App {
         if self.status.as_ref().is_some_and(|s| s.since.elapsed() >= STATUS_TTL) {
             self.status = None;
             redraw = true;
+        }
+
+        if let Some(volume) = self.volume_sync.expire() {
+            self.control(|c| c.set_volume(volume));
         }
 
         if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
@@ -2604,12 +2625,20 @@ impl App {
         self.set_volume(volume);
     }
 
+    /// Moves the slider at once, so repeated steps add up; the device follows.
     fn set_volume(&mut self, volume: u16) {
+        self.now.volume = volume;
         if self.remote_active {
-            self.now.volume = volume;
             self.remote(connect::Command::Volume((volume as u32 * 100 / u16::MAX as u32) as u8));
+            return;
+        }
+        self.restored_volume = Some(volume);
+        if self.local_active {
+            if let Some(volume) = self.volume_sync.request(volume) {
+                self.control(|c| c.set_volume(volume));
+            }
         } else {
-            self.control(|c| c.set_volume(volume));
+            self.volume_sync.defer(volume);
         }
     }
 
