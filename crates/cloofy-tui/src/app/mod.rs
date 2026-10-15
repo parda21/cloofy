@@ -77,6 +77,11 @@ const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// Track lists and artist pages opened again within this time are shown as they were; older
+/// ones are shown too, and refreshed behind the scenes.
+const PAGE_FRESH: Duration = Duration::from_secs(60);
+/// Home fetched within this time is shown again without asking Spotify.
+const HOME_FRESH: Duration = Duration::from_secs(5 * 60);
 /// Parts of the library besides playlists, each loaded on its own.
 const LIBRARY_PARTS: u8 = 4;
 /// Waits before starting the player again after it failed to connect, longer after each
@@ -322,6 +327,7 @@ pub struct App {
     pub library_filter: LibraryFilter,
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
+    home_fetched_at: Option<Instant>,
     /// Cover art by cell size and URL.
     pub images: HashMap<String, ImageSlot>,
     /// When each image was last drawn; long-unseen ones are dropped to save memory.
@@ -441,6 +447,7 @@ impl App {
             library_pending: LIBRARY_PARTS,
             library_filter: LibraryFilter::All,
             home_cache: None,
+            home_fetched_at: None,
             images: HashMap::new(),
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
@@ -752,6 +759,7 @@ impl App {
             DataEvent::Home { view, result } => {
                 if let Ok(home) = &result {
                     self.home_cache = Some(home.clone());
+                    self.home_fetched_at = Some(Instant::now());
                 }
                 let Some(View::Home(v)) = self.view_mut(view) else { return false };
                 match result {
@@ -893,27 +901,56 @@ impl App {
     }
 
     fn on_tracks(&mut self, view: u64, page: Result<Page<Track>, String>) {
-        // A page may predate an unlike that Spotify has not confirmed yet.
-        let unliked: Vec<String> =
-            self.pending_saves.keys().chain(&self.saving).filter(|uri| !self.is_saved(uri)).cloned().collect();
+        // A page may predate a like or unlike that Spotify has not confirmed yet.
+        let unconfirmed: HashMap<String, bool> =
+            self.pending_saves.keys().chain(&self.saving).map(|uri| (uri.clone(), self.is_saved(uri))).collect();
         let Some(View::Tracks(v)) = self.view_mut(view) else { return };
         let page = match page {
             Ok(page) => page,
             Err(err) => {
                 v.loading = false;
-                v.error = Some(err);
+                v.fetch = None;
+                // A failed refresh leaves the songs on screen as they were.
+                match v.incoming.take() {
+                    Some(_) => tracing::warn!("refreshing a track list: {err}"),
+                    None => v.error = Some(err),
+                }
                 return;
             }
         };
         let liked = matches!(v.source, TrackSource::Liked);
         let mut items = page.items;
         if liked {
-            items.retain(|t| !unliked.contains(&t.uri));
+            items.retain(|t| unconfirmed.get(&t.uri) != Some(&false));
         }
         let uris: Vec<String> = items.iter().map(|t| t.uri.clone()).collect();
-        v.tracks.extend(items);
-        v.total = Some(page.total);
-        v.loading = page.next_offset.is_some();
+        let done = page.next_offset.is_none();
+        match &mut v.incoming {
+            Some(incoming) => incoming.extend(items),
+            None => {
+                v.tracks.extend(items);
+                v.total = Some(page.total);
+                v.loading = !done;
+            }
+        }
+        if done {
+            if let Some(mut fresh) = v.incoming.take() {
+                if liked {
+                    // Songs liked meanwhile may be missing from the fresh copy.
+                    let missing: Vec<Track> = v
+                        .tracks
+                        .iter()
+                        .filter(|t| unconfirmed.get(&t.uri) == Some(&true) && !fresh.iter().any(|f| f.uri == t.uri))
+                        .cloned()
+                        .collect();
+                    fresh.splice(0..0, missing);
+                }
+                v.total = Some(page.total.max(fresh.len() as u32));
+                v.replace_tracks(fresh);
+            }
+            v.fetched_at = Some(Instant::now());
+            v.fetch = None;
+        }
         if liked {
             self.saved.extend(uris.into_iter().map(|uri| (uri, true)));
         } else {
@@ -2061,8 +2098,13 @@ impl App {
 
     fn open_home(&mut self) {
         let id = self.next_id();
-        self.loader.home(id);
-        self.push_view(View::Home(HomeView::new(id, self.home_cache.clone())));
+        let mut view = HomeView::new(id, self.home_cache.clone());
+        if self.home_fetched_at.is_some_and(|at| at.elapsed() < HOME_FRESH) {
+            view.loading = false;
+        } else {
+            self.loader.home(id);
+        }
+        self.push_view(View::Home(view));
         self.focus = Focus::Content;
     }
 
@@ -2215,6 +2257,12 @@ impl App {
     }
 
     fn open_tracks(&mut self, source: TrackSource) {
+        if let View::Tracks(v) = &self.view
+            && v.source.same(&source)
+        {
+            self.focus = Focus::Content;
+            return;
+        }
         let page_uri = match &source {
             TrackSource::Liked => None,
             TrackSource::Playlist(p) => Some(p.uri.clone()),
@@ -2223,11 +2271,36 @@ impl App {
         if let Some(uri) = page_uri.filter(|uri| !self.saved.contains_key(uri)) {
             self.loader.check_saved(vec![uri]);
         }
+        let loaded = self.take_loaded_copy(&source);
         self.retire_copies(&source);
-        let mut view = TrackView::new(source);
-        view.load(self.next_id(), |id, source| self.loader.tracks(id, source));
+        let view = match loaded {
+            Some(view) if view.loading || view.fetched_at.is_some_and(|at| at.elapsed() < PAGE_FRESH) => view,
+            Some(mut view) => {
+                view.refresh(self.next_id(), |id, source| self.loader.tracks(id, source));
+                view
+            }
+            None => {
+                let mut view = TrackView::new(source);
+                view.load(self.next_id(), |id, source| self.loader.tracks(id, source));
+                view
+            }
+        };
         self.push_view(View::Tracks(view));
         self.focus = Focus::Content;
+    }
+
+    /// Takes the newest loaded copy of a list out of the history, to show it again at once.
+    /// An emptied stand-in keeps its place, so Back still leads there.
+    fn take_loaded_copy(&mut self, source: &TrackSource) -> Option<TrackView> {
+        let index = self.history.iter().rposition(
+            |view| matches!(view, View::Tracks(v) if v.source.same(source) && !v.stale && v.error.is_none()),
+        )?;
+        let View::Tracks(v) = &mut self.history[index] else { return None };
+        let stand_in = TrackView { list: v.list.clone(), ..TrackView::new(v.source.clone()) };
+        let loaded = std::mem::replace(v, stand_in);
+        self.next_view_id += 1;
+        v.retire(self.next_view_id);
+        Some(loaded)
     }
 
     /// Empties earlier copies of a list in the history, so each list is held once however
@@ -2373,9 +2446,31 @@ impl App {
     }
 
     fn open_artist(&mut self, uri: String, name: String) {
+        if let View::Artist(v) = &self.view
+            && v.uri == uri
+        {
+            self.focus = Focus::Content;
+            return;
+        }
         let id = self.next_id();
-        self.loader.artist(id, uri.clone());
-        self.push_view(View::Artist(ArtistView::new(id, uri, name)));
+        // Artist pages are small, so a loaded one is copied rather than moved.
+        let loaded = self.history.iter().rev().find_map(|view| match view {
+            View::Artist(v) if v.uri == uri && v.page.is_some() => Some(v.clone()),
+            _ => None,
+        });
+        let view = match loaded {
+            Some(view) => {
+                if !view.fetched_at.is_some_and(|at| at.elapsed() < PAGE_FRESH) {
+                    self.loader.artist(id, uri);
+                }
+                ArtistView { id, ..view }
+            }
+            None => {
+                self.loader.artist(id, uri.clone());
+                ArtistView::new(id, uri, name)
+            }
+        };
+        self.push_view(View::Artist(view));
         self.focus = Focus::Content;
     }
 
