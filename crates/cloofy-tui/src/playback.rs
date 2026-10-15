@@ -21,6 +21,12 @@ const ECHO_WINDOW: Duration = Duration::from_millis(1500);
 const SEEK_TOLERANCE_MS: u32 = 1000;
 /// Spirc reports nothing for a volume it already has, so a change counts as done after this.
 const VOLUME_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long after Spotify accepted a remote command its state may still show the old values.
+const REMOTE_GRACE: Duration = Duration::from_secs(2);
+/// Both ends extrapolate remote positions, so they agree less closely than local ones.
+const REMOTE_SEEK_TOLERANCE_MS: u32 = 2000;
+/// Devices round volumes to their own steps.
+const REMOTE_VOLUME_TOLERANCE: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -28,6 +34,25 @@ pub enum Repeat {
     Off,
     Context,
     Track,
+}
+
+impl Repeat {
+    /// The Web API's "off", "context" or "track".
+    pub fn from_remote(mode: &str) -> Self {
+        match mode {
+            "track" => Repeat::Track,
+            "context" => Repeat::Context,
+            _ => Repeat::Off,
+        }
+    }
+
+    pub fn remote_name(self) -> &'static str {
+        match self {
+            Repeat::Off => "off",
+            Repeat::Context => "context",
+            Repeat::Track => "track",
+        }
+    }
 }
 
 pub struct CurrentTrack {
@@ -134,17 +159,23 @@ impl NowPlaying {
         self.set_position(last.position_ms);
     }
 
-    /// Mirrors playback on another device. Returns a cover URL when the track changed.
-    pub fn apply_remote(&mut self, playback: &Playback) -> Option<String> {
+    /// Mirrors playback on another device, keeping the changes in `intent` that the poll
+    /// doesn't show yet. Returns a cover URL when the track changed, and whether some change
+    /// is still unconfirmed.
+    pub fn apply_remote(&mut self, playback: &Playback, intent: &mut RemoteIntent) -> (Option<String>, bool) {
+        let same_track = self.track.as_ref().map(|t| t.uri.as_str()) == playback.track.as_ref().map(|t| t.uri.as_str());
+        let shown_ms = self.position_ms();
+        let cover = self.mirror(playback);
+        let unconfirmed = intent.reconcile(self, playback, same_track.then_some(shown_ms));
+        (cover, unconfirmed)
+    }
+
+    fn mirror(&mut self, playback: &Playback) -> Option<String> {
         self.device = Some(playback.device.name.clone());
         self.playing = playback.playing;
         self.set_position(playback.progress_ms);
         self.shuffle = playback.shuffle;
-        self.repeat = match playback.repeat.as_str() {
-            "track" => Repeat::Track,
-            "context" => Repeat::Context,
-            _ => Repeat::Off,
-        };
+        self.repeat = Repeat::from_remote(&playback.repeat);
         if let Some(percent) = playback.device.volume_percent {
             self.volume = (percent.min(100) * u16::MAX as u32 / 100) as u16;
         }
@@ -274,6 +305,104 @@ impl VolumeSync {
             self.target = None;
         }
         self.next()
+    }
+}
+
+/// Controls changed in cloofy for another device. Spotify's state lags behind the commands it
+/// accepts, so until a poll shows a new value, polls that still show the old one don't undo
+/// it on screen.
+#[derive(Default)]
+pub struct RemoteIntent {
+    pub playing: Option<bool>,
+    pub shuffle: Option<bool>,
+    pub repeat: Option<Repeat>,
+    pub volume: Option<u16>,
+    /// Seek target and when it was asked for.
+    pub seek: Option<(u32, Instant)>,
+    /// Commands sent and not answered yet.
+    in_flight: usize,
+    answered_at: Option<Instant>,
+}
+
+impl RemoteIntent {
+    pub fn sent(&mut self) {
+        self.in_flight += 1;
+    }
+
+    /// Spotify answered `commands` commands. After a failure the next poll shows the truth.
+    pub fn answered(&mut self, commands: usize, ok: bool) {
+        self.in_flight = self.in_flight.saturating_sub(commands);
+        self.answered_at = Some(Instant::now());
+        if !ok {
+            self.forget();
+        }
+    }
+
+    /// Whether Spotify's state may still lag behind the commands sent.
+    pub fn is_waiting(&self) -> bool {
+        self.in_flight > 0 || self.answered_at.is_some_and(|at| at.elapsed() < REMOTE_GRACE)
+    }
+
+    fn forget(&mut self) {
+        *self = Self { in_flight: self.in_flight, answered_at: self.answered_at, ..Self::default() };
+    }
+
+    /// Puts back what was asked for where a poll, already applied to `now`, doesn't show it
+    /// yet, and forgets what the poll confirms. `shown_ms` is the position shown before the
+    /// poll, if it is still the same track. Returns whether something is still unconfirmed.
+    fn reconcile(&mut self, now: &mut NowPlaying, playback: &Playback, shown_ms: Option<u32>) -> bool {
+        if !self.is_waiting() {
+            self.forget();
+            return false;
+        }
+        let mut keep_position = false;
+        if let Some(playing) = self.playing {
+            if playback.playing == playing {
+                self.playing = None;
+            } else {
+                now.playing = playing;
+                keep_position = true;
+            }
+        }
+        if let Some((target, at)) = self.seek {
+            let moved = if now.playing { at.elapsed().as_millis() as u32 } else { 0 };
+            if shown_ms.is_none() || playback.progress_ms.abs_diff(target + moved) <= REMOTE_SEEK_TOLERANCE_MS {
+                self.seek = None;
+            } else {
+                keep_position = true;
+            }
+        }
+        // A new track brings its own position.
+        if let Some(position_ms) = shown_ms.filter(|_| keep_position) {
+            now.set_position(position_ms);
+        }
+        if let Some(shuffle) = self.shuffle {
+            if playback.shuffle == shuffle {
+                self.shuffle = None;
+            } else {
+                now.shuffle = shuffle;
+            }
+        }
+        if let Some(repeat) = self.repeat {
+            if Repeat::from_remote(&playback.repeat) == repeat {
+                self.repeat = None;
+            } else {
+                now.repeat = repeat;
+            }
+        }
+        if let Some(volume) = self.volume {
+            let wanted = volume as u32 * 100 / u16::MAX as u32;
+            match playback.device.volume_percent {
+                Some(percent) if percent.abs_diff(wanted) > REMOTE_VOLUME_TOLERANCE => now.volume = volume,
+                // Confirmed, or a device without volume control.
+                _ => self.volume = None,
+            }
+        }
+        self.playing.is_some()
+            || self.seek.is_some()
+            || self.shuffle.is_some()
+            || self.repeat.is_some()
+            || self.volume.is_some()
     }
 }
 
@@ -472,6 +601,43 @@ mod tests {
         PlayerEvent::PositionChanged { play_request_id: 1, track_id: id(), position_ms }
     }
 
+    /// A poll of another device playing `uri`.
+    fn poll(uri: &str, playing: bool, progress_ms: u32) -> Playback {
+        use cloofy_spotify::connect::{Device, PlayingTrack};
+        Playback {
+            device: Device {
+                id: "phone".into(),
+                name: "Phone".into(),
+                kind: "Smartphone".into(),
+                active: true,
+                volume_percent: Some(50),
+            },
+            playing,
+            progress_ms,
+            shuffle: false,
+            repeat: "off".into(),
+            track: Some(PlayingTrack {
+                uri: uri.into(),
+                name: "Song".into(),
+                artists: Vec::new(),
+                artist_uris: Vec::new(),
+                album: String::new(),
+                album_uri: None,
+                duration_ms: 200_000,
+                cover_url: None,
+                cover_url_large: None,
+            }),
+            context: None,
+        }
+    }
+
+    /// Shows another device paused at `progress_ms`.
+    fn remote_track(progress_ms: u32) -> (NowPlaying, RemoteIntent) {
+        let (mut now, mut intent) = (NowPlaying::new(), RemoteIntent::default());
+        now.apply_remote(&poll(URI, false, progress_ms), &mut intent);
+        (now, intent)
+    }
+
     #[test]
     fn seek_moves_at_once_and_ignores_reports_from_before() {
         let mut now = paused_track();
@@ -558,6 +724,82 @@ mod tests {
         // Activation reports the old volume first.
         assert_eq!(sync.reported(500), (false, None));
         assert_eq!(sync.reported(900), (true, None));
+    }
+
+    #[test]
+    fn remote_play_survives_polls_that_lag_behind() {
+        let (mut now, mut intent) = remote_track(10_000);
+        now.set_playing(true);
+        intent.playing = Some(true);
+        intent.sent();
+        // Spotify still shows the device paused, a little further along.
+        assert!(now.apply_remote(&poll(URI, false, 12_000), &mut intent).1);
+        assert!(now.playing);
+        assert!((10_000..10_500).contains(&now.position_ms()));
+        intent.answered(1, true);
+        assert!(!now.apply_remote(&poll(URI, true, 10_100), &mut intent).1);
+        assert!(now.playing);
+        assert!(intent.playing.is_none());
+    }
+
+    #[test]
+    fn polls_win_once_spotify_had_time_to_catch_up() {
+        let (mut now, mut intent) = remote_track(10_000);
+        now.shuffle = true;
+        intent.shuffle = Some(true);
+        intent.sent();
+        intent.answered(1, true);
+        intent.answered_at = Some(Instant::now() - REMOTE_GRACE);
+        assert!(!now.apply_remote(&poll(URI, false, 10_000), &mut intent).1);
+        assert!(!now.shuffle);
+    }
+
+    #[test]
+    fn polls_win_after_a_failed_command() {
+        let (mut now, mut intent) = remote_track(10_000);
+        now.repeat = Repeat::Track;
+        intent.repeat = Some(Repeat::Track);
+        intent.sent();
+        intent.answered(1, false);
+        now.apply_remote(&poll(URI, false, 10_000), &mut intent);
+        assert_eq!(now.repeat, Repeat::Off);
+    }
+
+    #[test]
+    fn remote_seek_holds_until_a_poll_shows_it() {
+        let (mut now, mut intent) = remote_track(10_000);
+        now.set_position(60_000);
+        intent.seek = Some((60_000, Instant::now()));
+        intent.sent();
+        assert!(now.apply_remote(&poll(URI, false, 10_000), &mut intent).1);
+        assert_eq!(now.position_ms(), 60_000);
+        assert!(!now.apply_remote(&poll(URI, false, 60_300), &mut intent).1);
+        assert_eq!(now.position_ms(), 60_300);
+    }
+
+    #[test]
+    fn a_new_remote_track_brings_its_own_position() {
+        let (mut now, mut intent) = remote_track(10_000);
+        now.set_position(60_000);
+        intent.seek = Some((60_000, Instant::now()));
+        intent.sent();
+        now.apply_remote(&poll("spotify:track:0000000000000000000000", false, 1_000), &mut intent);
+        assert_eq!(now.position_ms(), 1_000);
+        assert!(intent.seek.is_none());
+    }
+
+    #[test]
+    fn remote_volume_accepts_the_device_rounding_it() {
+        let (mut now, mut intent) = remote_track(0);
+        now.volume = u16::MAX;
+        intent.volume = Some(u16::MAX);
+        intent.sent();
+        now.apply_remote(&poll(URI, false, 0), &mut intent);
+        assert_eq!(now.volume, u16::MAX);
+        let mut rounded = poll(URI, false, 0);
+        rounded.device.volume_percent = Some(98);
+        assert!(!now.apply_remote(&rounded, &mut intent).1);
+        assert_eq!(now.volume, (98 * u16::MAX as u32 / 100) as u16);
     }
 
     #[test]
