@@ -20,8 +20,8 @@ use crate::{
     views::{SearchEntry, SearchView, TrackSource, TrackView, View},
 };
 
-/// Rows above a track list: label, title, meta line, gap and column header.
-const HEADER_ROWS: u16 = 5;
+/// Rows down to the column header: label, title, meta line, buttons, gap and the header.
+const HEADER_ROWS: u16 = 6;
 /// Cover in the header of playlists and albums, when the window is tall enough for it.
 const HEADER_COVER: Size = Size { width: 14, height: 7 };
 const COVER_HEADER_MIN_HEIGHT: u16 = 22;
@@ -148,7 +148,8 @@ fn tracks(
             ("ALBUM", a.name.clone(), format!("{} · {} · {count} songs · {length}", a.artists.join(", "), a.year))
         }
     };
-    if area.height < 12 {
+    // The header and its divider need seven rows; below six list rows they are not worth it.
+    if area.height < 13 {
         return track_rows(buf, view, area, style, hits);
     }
     // With a cover the text sits beside it, vertically centered.
@@ -175,6 +176,9 @@ fn tracks(
 
     let columns = Columns::new(area.width);
     buf.set_line(area.x, header_y, &columns.header(), area.width);
+    // A thin divider under the column header, as wide as the row highlight, like Spotify's.
+    let divider = "─".repeat(area.width as usize + 2);
+    buf.set_string(area.x.saturating_sub(1), header_y + 1, divider, Style::new().fg(RAISED));
 
     let list = Rect { y: header_y + 2, height: area.bottom().saturating_sub(header_y + 2), ..area };
     if view.tracks.is_empty() {
