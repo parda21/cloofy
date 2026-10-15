@@ -619,6 +619,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-io-kit",
  "objc2-media-player",
+ "security-framework 3.7.0",
  "tracing",
 ]
 
@@ -641,6 +642,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "cloofy-os",
  "etcetera",
  "futures",
  "iana-time-zone",

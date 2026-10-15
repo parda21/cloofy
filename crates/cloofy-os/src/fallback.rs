@@ -35,6 +35,28 @@ pub mod settings {
     }
 }
 
+pub mod secrets {
+    use std::io;
+
+    pub const AVAILABLE: bool = false;
+
+    fn unsupported() -> io::Error {
+        io::Error::new(io::ErrorKind::Unsupported, "no secret store on this system")
+    }
+
+    pub fn get(_name: &str) -> io::Result<Option<Vec<u8>>> {
+        Err(unsupported())
+    }
+
+    pub fn set(_name: &str, _secret: &[u8]) -> io::Result<()> {
+        Err(unsupported())
+    }
+
+    pub fn delete(_name: &str) -> io::Result<()> {
+        Err(unsupported())
+    }
+}
+
 pub mod media {
     use std::sync::Arc;
 

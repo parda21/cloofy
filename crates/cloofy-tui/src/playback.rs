@@ -359,6 +359,9 @@ pub fn spawn(
             let session = pending.session.clone();
             let wait = match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
                 Ok((spirc, task)) => {
+                    if let Err(err) = session::remember(&paths, &session) {
+                        tracing::warn!("saving streaming credentials: {err:#}");
+                    }
                     let stopping = Arc::new(AtomicBool::new(false));
                     let controller = Controller {
                         spirc,
