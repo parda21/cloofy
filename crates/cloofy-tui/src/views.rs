@@ -6,6 +6,8 @@ use cloofy_spotify::{
     home::{Home, HomeItem},
 };
 
+use crate::loader::Fetch;
+
 /// Cursor and scroll position of a list.
 #[derive(Debug, Default, Clone)]
 pub struct ListCursor {
@@ -55,6 +57,18 @@ pub enum TrackSource {
     Album(AlbumInfo),
 }
 
+impl TrackSource {
+    /// Whether both show the same list, however they describe it.
+    pub fn same(&self, other: &TrackSource) -> bool {
+        match (self, other) {
+            (TrackSource::Liked, TrackSource::Liked) => true,
+            (TrackSource::Playlist(a), TrackSource::Playlist(b)) => a.uri == b.uri,
+            (TrackSource::Album(a), TrackSource::Album(b)) => a.uri == b.uri,
+            _ => false,
+        }
+    }
+}
+
 pub struct TrackView {
     pub id: u64,
     pub source: TrackSource,
@@ -63,9 +77,52 @@ pub struct TrackView {
     pub loading: bool,
     pub error: Option<String>,
     pub list: ListCursor,
+    /// Emptied to save memory because the list was opened again later; it loads again when
+    /// Back returns to it.
+    pub stale: bool,
+    /// The load filling the list; dropping it stops the load.
+    pub fetch: Option<Fetch>,
 }
 
 impl TrackView {
+    /// An empty list; [`Self::load`] fills it.
+    pub fn new(source: TrackSource) -> Self {
+        Self {
+            id: 0,
+            source,
+            tracks: Vec::new(),
+            total: None,
+            loading: false,
+            error: None,
+            list: ListCursor::default(),
+            stale: false,
+            fetch: None,
+        }
+    }
+
+    /// Loads the list from scratch under a new `id`, so pages of an earlier load can't land.
+    pub fn load(&mut self, id: u64, fetch: impl FnOnce(u64, TrackSource) -> Fetch) {
+        self.id = id;
+        self.tracks = Vec::new();
+        self.total = None;
+        self.loading = true;
+        self.error = None;
+        self.stale = false;
+        self.fetch = Some(fetch(id, self.source.clone()));
+    }
+
+    /// Drops the songs and stops loading them; the cursor stays for when the list comes
+    /// back. The new `id` turns away pages that are already on their way.
+    pub fn retire(&mut self, id: u64) {
+        self.id = id;
+        self.tracks = Vec::new();
+        self.total = None;
+        self.loading = false;
+        self.error = None;
+        self.stale = true;
+        self.fetch = None;
+    }
+
     /// Takes a song out of the list, keeping the cursor on the song it was on. Returns where
     /// it was.
     pub fn remove_track(&mut self, uri: &str) -> Option<(usize, Track)> {
@@ -412,13 +469,10 @@ mod tests {
 
     fn liked(count: u32, selected: usize) -> TrackView {
         TrackView {
-            id: 1,
-            source: TrackSource::Liked,
             tracks: (0..count).map(track).collect(),
             total: Some(count),
-            loading: false,
-            error: None,
             list: ListCursor { selected, ..ListCursor::default() },
+            ..TrackView::new(TrackSource::Liked)
         }
     }
 
