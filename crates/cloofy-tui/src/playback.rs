@@ -265,6 +265,10 @@ impl Controller {
         Ok(())
     }
 
+    pub fn pause(&self) -> Result<()> {
+        Ok(self.spirc.pause()?)
+    }
+
     pub fn next(&self) -> Result<()> {
         Ok(self.spirc.next()?)
     }
@@ -306,7 +310,7 @@ pub fn spawn(paths: Paths, crossfade: Duration, tx: UnboundedSender<AppEvent>) {
         let result = async {
             let pending = session::prepare(&paths)?;
             let session = pending.session.clone();
-            let engine = Engine::new(&session, crossfade)?;
+            let (engine, mut lost_outputs) = Engine::new(&session, crossfade)?;
             let mut events = engine.player.get_player_event_channel();
             let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into()).await?;
             tokio::spawn(task);
@@ -315,6 +319,14 @@ pub fn spawn(paths: Paths, crossfade: Duration, tx: UnboundedSender<AppEvent>) {
             tokio::spawn(async move {
                 while let Some(event) = events.recv().await {
                     if player_tx.send(AppEvent::Player(event)).is_err() {
+                        break;
+                    }
+                }
+            });
+            let output_tx = tx.clone();
+            tokio::spawn(async move {
+                while let Some(name) = lost_outputs.recv().await {
+                    if output_tx.send(AppEvent::OutputLost(name)).is_err() {
                         break;
                     }
                 }

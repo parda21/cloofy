@@ -614,9 +614,11 @@ dependencies = [
  "dispatch2",
  "objc2",
  "objc2-app-kit",
+ "objc2-core-audio",
  "objc2-core-foundation",
  "objc2-foundation",
  "objc2-media-player",
+ "tracing",
 ]
 
 [[package]]
@@ -624,8 +626,10 @@ name = "cloofy-player"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cloofy-os",
  "cloofy-spotify",
  "librespot",
+ "rodio",
  "tokio",
  "tracing",
 ]

@@ -14,6 +14,7 @@ cloofy plays music itself, with no official client or daemon running in the back
 - **Cover art.** Real images in terminals that speak the Kitty graphics protocol (kitty, Ghostty, WezTerm), and blocks elsewhere.
 - **Mouse.** Click, hover, scroll, and drag the seek and volume bars.
 - **Media keys.** On macOS, the media keys, AirPods and Control Center play, pause, skip and seek, and Control Center shows the track with its cover.
+- **Follows your headphones.** On macOS, playback moves to AirPods or headphones as they connect, and pauses when they disconnect.
 - **Picks up where you left off.** The same page, the same selection, the last track ready to resume.
 
 ## Requirements

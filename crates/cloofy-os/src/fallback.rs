@@ -4,6 +4,19 @@ pub fn run_main<R>(work: impl FnOnce() -> R) -> R {
     work()
 }
 
+pub mod audio {
+    use std::sync::Arc;
+
+    /// Never exists: the output can't be watched here, or follows the default by itself.
+    pub enum OutputWatch {}
+
+    impl OutputWatch {
+        pub fn new(_on_change: Arc<dyn Fn() + Send + Sync>) -> Option<Self> {
+            None
+        }
+    }
+}
+
 pub mod media {
     use std::sync::Arc;
 

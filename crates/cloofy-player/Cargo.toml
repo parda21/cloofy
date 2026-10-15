@@ -14,6 +14,11 @@ anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+# Follows the system's default output; librespot's own rodio output stays on the first one.
+[target.'cfg(target_os = "macos")'.dependencies]
+cloofy-os.workspace = true
+rodio = { version = "0.21", default-features = false, features = ["playback"] }
+
 # PulseAudio talks to PipeWire's pulse server directly; cpal over ALSA keeps erroring while paused.
 [target.'cfg(target_os = "linux")'.dependencies]
 librespot = { workspace = true, features = ["pulseaudio-backend"] }

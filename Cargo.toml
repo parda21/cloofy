@@ -37,6 +37,7 @@ nucleo-matcher = "0.3"
 # macOS frameworks; each crate turns on the parts it uses.
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std"] }
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std"] }
 objc2-media-player = { version = "0.3", default-features = false, features = ["std"] }

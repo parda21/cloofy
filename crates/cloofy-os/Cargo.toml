@@ -7,11 +7,15 @@ license.workspace = true
 repository.workspace = true
 description = "Operating system integration for cloofy: media controls and system events"
 
+[dependencies]
+tracing.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block2.workspace = true
 dispatch2.workspace = true
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSImage"] }
+objc2-core-audio = { workspace = true, features = ["AudioHardware"] }
 objc2-core-foundation = { workspace = true, features = ["CFCGTypes", "CFRunLoop"] }
 objc2-foundation = { workspace = true, features = ["NSData", "NSDictionary", "NSString", "NSValue"] }
 objc2-media-player = { workspace = true, features = [

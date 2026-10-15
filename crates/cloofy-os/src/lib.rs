@@ -3,6 +3,7 @@
 //! Each OS implements it in its own module; on systems without an implementation everything
 //! here does nothing, so callers never need `cfg` attributes of their own.
 
+pub mod audio;
 pub mod media;
 
 #[cfg(target_os = "macos")]

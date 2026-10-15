@@ -26,7 +26,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let uri = parse_uri(input)?;
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
-    let engine = Engine::new(&session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into()).await?;
     tokio::pin!(task);
@@ -57,6 +57,10 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
         tokio::select! {
             () = &mut task => break,
             Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(name) = lost_outputs.recv() => {
+                spirc.pause()?;
+                println!("\r\x1b[2K  {}", style::dim(&format!("❚❚ paused: {name} disconnected")));
+            }
             Some(event) = events.recv() => {
                 media.on_player(&event);
                 match event {
@@ -85,7 +89,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
 /// Remote mode: waits until a Spotify app picks cloofy as its playback device.
 pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
-    let engine = Engine::new(&pending.session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, name.clone()).await?;
     tokio::pin!(task);
@@ -102,6 +106,11 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
         tokio::select! {
             () = &mut task => break,
             Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(name) = lost_outputs.recv() => {
+                spirc.pause()?;
+                paused = true;
+                println!("  {}", style::dim(&format!("❚❚ paused: {name} disconnected")));
+            }
             Some(event) = events.recv() => {
                 media.on_player(&event);
                 match event {
