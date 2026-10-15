@@ -29,7 +29,7 @@ use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture, SessionState},
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{self, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    playback::{self, ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -74,6 +74,14 @@ const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 /// another device doesn't show yet.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const QUICK_POLL: Duration = Duration::from_millis(500);
+/// Once Spotify pushes changes, polls follow the pushes; this is only a safety net.
+const PUSHED_POLL_INTERVAL: Duration = Duration::from_secs(15);
+/// Pushes come in bursts; one poll covers a burst.
+const PUSH_DELAY: Duration = Duration::from_millis(150);
+/// How long a push is newer than what the Web API may still report.
+const PUSH_LEAD: Duration = Duration::from_secs(2);
+/// A remote track that ends is followed by the next one about this much later.
+const TRACK_END_SLACK: Duration = Duration::from_millis(300);
 /// How long after Spotify accepted a remote command to check that the device applied it.
 const CONFIRM_DELAY: Duration = Duration::from_millis(300);
 /// How long the device label shows a transfer that the device hasn't confirmed.
@@ -103,6 +111,7 @@ const PLAYER_RETRY: [Duration; 4] =
 pub enum AppEvent {
     Data(DataEvent),
     Player(PlayerEvent),
+    Pushed(ConnectPush),
     PlayerReady(Box<Controller>),
     PlayerFailed(String),
 }
@@ -337,6 +346,8 @@ pub struct App {
     next_poll: Instant,
     polling: bool,
     poll_started: Instant,
+    /// The last change Spotify pushed, and when.
+    last_push: Option<(ConnectPush, Instant)>,
     session_tx: watch::Sender<SessionState>,
     /// For starting the player again after it failed to connect.
     paths: Paths,
@@ -476,6 +487,7 @@ impl App {
             next_poll: Instant::now(),
             polling: false,
             poll_started: Instant::now(),
+            last_push: None,
             session_tx,
             paths,
             events,
@@ -601,6 +613,11 @@ impl App {
     pub fn on_event(&mut self, event: AppEvent) -> bool {
         match event {
             AppEvent::Player(event) => return self.on_player(event),
+            AppEvent::Pushed(push) => {
+                // A push only brings the next poll forward; nothing on screen changes yet.
+                self.on_push(push);
+                return false;
+            }
             AppEvent::PlayerReady(controller) => {
                 let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
                 self.player_failures = 0;
@@ -707,6 +724,14 @@ impl App {
         true
     }
 
+    /// Spotify pushed a change of what plays where; a poll brings the details.
+    fn on_push(&mut self, push: ConnectPush) {
+        if push.worth_polling(self.device_id.as_deref(), self.remote_active, self.last_context.as_deref()) {
+            self.next_poll = self.next_poll.min(Instant::now() + PUSH_DELAY);
+        }
+        self.last_push = Some((push, Instant::now()));
+    }
+
     /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
     /// mostly confirms what is on screen.
     fn on_playback(&mut self, playback: Option<Playback>) -> bool {
@@ -756,8 +781,21 @@ impl App {
                 if let Some(url) = cover {
                     self.loader.cover(url, COVER_SIZE);
                 }
-                if unconfirmed {
+                // The Web API may lag behind a push; look again until it catches up.
+                let behind =
+                    self.last_push.as_ref().is_some_and(|(push, at)| at.elapsed() < PUSH_LEAD && push.is_ahead_of(&p));
+                if unconfirmed || behind {
                     self.next_poll = self.next_poll.min(Instant::now() + QUICK_POLL);
+                }
+                // Catch the next track as soon as this one ends.
+                if self.now.playing
+                    && let Some(track) = &self.now.track
+                {
+                    let left = track.duration_ms.saturating_sub(self.now.position_ms());
+                    if left > 0 {
+                        let end = Instant::now() + Duration::from_millis(left.into()) + TRACK_END_SLACK;
+                        self.next_poll = self.next_poll.min(end);
+                    }
                 }
                 // The slider follows the mouse while it holds it, not the device.
                 if let Some(volume) = dragged_volume {
@@ -1190,7 +1228,8 @@ impl App {
         if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
             self.polling = true;
             self.poll_started = Instant::now();
-            self.next_poll = Instant::now() + POLL_INTERVAL;
+            let interval = if self.last_push.is_some() { PUSHED_POLL_INTERVAL } else { POLL_INTERVAL };
+            self.next_poll = Instant::now() + interval;
             self.loader.playback();
         }
 

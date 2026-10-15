@@ -4,11 +4,13 @@ use anyhow::Result;
 use cloofy_player::Engine;
 use cloofy_spotify::connect::Playback;
 use cloofy_spotify::{paths::Paths, session};
+use futures::StreamExt;
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
-    core::session::Session,
+    core::{dealer::protocol::Message, session::Session},
     metadata::audio::{AudioItem, UniqueFields},
     playback::player::PlayerEvent,
+    protocol::connect::ClusterUpdate,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -677,6 +679,8 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, tx: UnboundedSender
             let engine = Engine::new(&session, crossfade)?;
             let mut events = engine.player.get_player_event_channel();
             let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), volume).await?;
+            // Before the task starts the dealer: while it starts, it takes no subscriptions.
+            forward_pushes(&session, tx.clone());
             tokio::spawn(task);
 
             let player_tx = tx.clone();
@@ -694,6 +698,67 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, tx: UnboundedSender
             Ok(controller) => AppEvent::PlayerReady(Box::new(controller)),
             Err(err) => AppEvent::PlayerFailed(format!("{err:#}")),
         });
+    });
+}
+
+/// What Spotify pushed about the device that plays.
+#[derive(Debug, Clone)]
+pub struct ConnectPush {
+    /// Empty when no device is active.
+    pub active_device: String,
+    pub track: String,
+    /// The playlist, album or artist it plays from, or empty.
+    pub context: String,
+    pub playing: bool,
+}
+
+impl ConnectPush {
+    /// Whether a poll would learn something new. cloofy's own player reports its changes
+    /// itself, except for what it plays from when another app started it; with nothing
+    /// playing anywhere, there is only news if another device was playing.
+    pub fn worth_polling(&self, own_device: Option<&str>, remote_active: bool, context: Option<&str>) -> bool {
+        let here = own_device == Some(self.active_device.as_str());
+        let elsewhere = !here && !self.active_device.is_empty();
+        let new_context = here && !self.context.is_empty() && context != Some(self.context.as_str());
+        elsewhere || new_context || remote_active
+    }
+
+    /// Whether a poll of the same device still shows the state from before this push.
+    pub fn is_ahead_of(&self, playback: &Playback) -> bool {
+        let other_track = !self.track.is_empty() && playback.track.as_ref().is_some_and(|t| t.uri != self.track);
+        self.active_device == playback.device.id && (self.playing != playback.playing || other_track)
+    }
+}
+
+/// Spotify pushes every change of what plays where to all of the user's devices, cloofy
+/// included. The details still come from a poll; the push says when one is worth it.
+fn forward_pushes(session: &Session, tx: UnboundedSender<AppEvent>) {
+    let pushes = session.dealer().listen_for("hm://connect-state/v1/cluster", Message::from_raw::<ClusterUpdate>);
+    let mut pushes = match pushes {
+        Ok(pushes) => pushes,
+        Err(err) => return tracing::warn!("connect state pushes: {err}"),
+    };
+    tokio::spawn(async move {
+        while let Some(update) = pushes.next().await {
+            let update = match update {
+                Ok(update) if update.cluster.is_some() => update,
+                Ok(_) => continue,
+                Err(err) => {
+                    tracing::warn!("connect state push: {err}");
+                    continue;
+                }
+            };
+            let state = &update.cluster.player_state;
+            let push = ConnectPush {
+                active_device: update.cluster.active_device_id.clone(),
+                track: state.track.uri.clone(),
+                context: state.context_uri.clone(),
+                playing: state.is_playing && !state.is_paused,
+            };
+            if tx.send(AppEvent::Pushed(push)).is_err() {
+                break;
+            }
+        }
     });
 }
 
@@ -1032,6 +1097,41 @@ mod tests {
         assert!(now.awaits_remote(&poll(URI, true, 11_000), true));
         assert!(!now.awaits_remote(&poll(URI, true, 12_000), false));
         assert!(now.pending.is_none());
+    }
+
+    fn push(active_device: &str, track: &str, playing: bool) -> ConnectPush {
+        ConnectPush {
+            active_device: active_device.into(),
+            track: track.into(),
+            context: "spotify:playlist:abc".into(),
+            playing,
+        }
+    }
+
+    #[test]
+    fn pushes_about_other_devices_are_worth_a_poll() {
+        let own = Some("cloofy");
+        let context = Some("spotify:playlist:abc");
+        assert!(push("phone", URI, true).worth_polling(own, false, context));
+        // cloofy's own player reports its own changes…
+        assert!(!push("cloofy", URI, true).worth_polling(own, false, context));
+        // …but not what another app started it on.
+        assert!(push("cloofy", URI, true).worth_polling(own, false, Some("spotify:album:xyz")));
+        // Nothing plays anywhere: news only if another device was playing.
+        assert!(!push("", "", false).worth_polling(own, false, context));
+        assert!(push("", "", false).worth_polling(own, true, context));
+    }
+
+    #[test]
+    fn a_poll_older_than_a_push_is_noticed() {
+        let mut remote = poll(URI, true, 1_000);
+        remote.device.id = "phone".into();
+        assert!(!push("phone", URI, true).is_ahead_of(&remote));
+        assert!(push("phone", URI, false).is_ahead_of(&remote));
+        assert!(push("phone", OTHER, true).is_ahead_of(&remote));
+        // About another device, or without a track: nothing to compare.
+        assert!(!push("speaker", OTHER, false).is_ahead_of(&remote));
+        assert!(!push("phone", "", true).is_ahead_of(&remote));
     }
 
     #[test]
