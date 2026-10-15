@@ -77,14 +77,19 @@ async fn run_app(
             let _ = tx.send(app::AppEvent::Media(command));
         }
     });
+    let retry_now = Arc::new(tokio::sync::Notify::new());
     cloofy_os::power::watch({
-        let tx = tx.clone();
+        let (tx, retry_now) = (tx.clone(), retry_now.clone());
         move |event| {
+            // Whatever kept Spotify out of reach may be gone after sleep.
+            if event == cloofy_os::power::Event::Wake {
+                retry_now.notify_waiters();
+            }
             let _ = tx.send(app::AppEvent::Power(event));
         }
     });
     let saved = state::load(&paths.state_file());
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), saved.volume, tx);
+    playback::spawn(paths.clone(), Duration::from_secs(crossfade), saved.volume, retry_now, tx);
     let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media);
 
     let mut input = EventStream::new();
