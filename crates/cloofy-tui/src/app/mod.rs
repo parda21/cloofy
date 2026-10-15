@@ -3,6 +3,10 @@ mod persist;
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -127,7 +131,9 @@ impl LibraryFilter {
 }
 
 pub enum ImageSlot {
-    Loading,
+    /// Holds the number of the last frame that drew the image, which the loader checks
+    /// before decoding it.
+    Loading(Arc<AtomicU64>),
     Ready(Picture),
     Failed,
 }
@@ -293,6 +299,8 @@ pub struct App {
     /// When each image was last drawn; long-unseen ones are dropped to save memory.
     image_used: HashMap<String, Instant>,
     last_eviction: Instant,
+    /// Frames drawn so far.
+    draws: u64,
     /// Known library state per URI: liked songs, saved albums, followed playlists.
     pub saved: HashMap<String, bool>,
     /// Library changes not sent yet: wanted state, item name, time of the last toggle.
@@ -384,6 +392,7 @@ impl App {
             images: HashMap::new(),
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
+            draws: 0,
             saved: HashMap::new(),
             pending_saves: HashMap::new(),
             saving: HashSet::new(),
@@ -644,6 +653,12 @@ impl App {
                     }
                 };
                 self.images.insert(key, slot);
+            }
+            DataEvent::ImageSkipped { key } => {
+                if matches!(self.images.get(&key), Some(ImageSlot::Loading(_))) {
+                    self.images.remove(&key);
+                    self.image_used.remove(&key);
+                }
             }
             DataEvent::Tracks { view, page } => self.on_tracks(view, page),
             DataEvent::Search { view, query, result } => {
@@ -1882,13 +1897,28 @@ impl App {
         self.image(url.unwrap_or(crate::art::PLACEHOLDER_COVER), size, round)
     }
 
+    /// Starts drawing a frame.
+    pub fn begin_frame(&mut self) {
+        self.draws += 1;
+    }
+
+    /// Finishes drawing a frame.
+    pub fn end_frame(&mut self) {
+        self.loader.frame_drawn(self.draws);
+    }
+
     /// The cover for `url` at `size`, loading it on first use.
     pub fn image(&mut self, url: &str, size: Size, round: bool) -> Option<&Picture> {
         let key = format!("{}x{}:{url}", size.width, size.height);
         self.image_used.insert(key.clone(), Instant::now());
-        if !self.images.contains_key(&key) {
-            self.images.insert(key.clone(), ImageSlot::Loading);
-            self.loader.image(key.clone(), url.to_owned(), size, round);
+        match self.images.get(&key) {
+            Some(ImageSlot::Loading(drawn)) => drawn.store(self.draws, Ordering::Relaxed),
+            Some(_) => {}
+            None => {
+                let drawn = Arc::new(AtomicU64::new(self.draws));
+                self.images.insert(key.clone(), ImageSlot::Loading(drawn.clone()));
+                self.loader.image(key.clone(), url.to_owned(), size, round, drawn);
+            }
         }
         match self.images.get(&key) {
             Some(ImageSlot::Ready(picture)) => Some(picture),
