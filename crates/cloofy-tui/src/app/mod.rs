@@ -300,6 +300,9 @@ pub struct App {
     controller: Option<Controller>,
     /// cloofy's own Spotify Connect device ID.
     device_id: Option<String>,
+    /// cloofy's own device is the active one. Until something activates it, Spirc ignores
+    /// every command but loading a track.
+    local_active: bool,
     /// Playback runs on another device; commands go through Spotify Connect.
     remote_active: bool,
     /// Seconds consecutive tracks overlap.
@@ -433,6 +436,7 @@ impl App {
             restored_volume: None,
             controller: None,
             device_id: None,
+            local_active: false,
             remote_active: false,
             crossfade,
             next_poll: Instant::now(),
@@ -620,6 +624,15 @@ impl App {
     }
 
     fn on_player(&mut self, event: PlayerEvent) -> bool {
+        match &event {
+            PlayerEvent::SessionConnected { .. } => self.local_active = true,
+            PlayerEvent::SessionDisconnected { .. } => {
+                self.local_active = false;
+                // Usually another device took over; find out which before the next command.
+                self.next_poll = Instant::now();
+            }
+            _ => {}
+        }
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
             self.resume = None;
         }
@@ -1697,13 +1710,19 @@ impl App {
                     self.control(|c| c.resume(last.context, last.uri, last.position_ms));
                 }
             }
+            Command::PlayPause if self.idle() && self.controller.is_some() => self.play_shown(),
             Command::PlayPause => {
                 let has_track = self.now.track.is_some();
                 self.control(|c| c.toggle(has_track));
             }
             Command::Next if self.remote_active => self.remote(connect::Command::Next),
-            Command::Next => self.control(|c| c.next()),
             Command::Previous if self.remote_active => self.remote(connect::Command::Previous),
+            Command::Next | Command::Previous | Command::Shuffle | Command::Repeat
+                if self.idle() && self.controller.is_some() =>
+            {
+                self.notice("Nothing is playing here yet · press space to start".into());
+            }
+            Command::Next => self.control(|c| c.next()),
             Command::Previous => self.control(|c| c.previous()),
             Command::SeekBack => self.seek_by(-SEEK_STEP_MS),
             Command::SeekForward => self.seek_by(SEEK_STEP_MS),
@@ -2533,6 +2552,19 @@ impl App {
         } else {
             self.control(|c| c.play(context, track));
         }
+    }
+
+    /// A track is shown but nothing plays it: cloofy's own device is inactive and would
+    /// ignore play, skip and seek commands.
+    fn idle(&self) -> bool {
+        !self.local_active && !self.remote_active && self.now.track.is_some()
+    }
+
+    /// Plays the shown track on cloofy from where it stands, e.g. after another device stopped.
+    fn play_shown(&mut self) {
+        let Some(track) = &self.now.track else { return };
+        let (context, uri, position_ms) = (self.last_context.clone(), track.uri.clone(), self.now.position_ms());
+        self.control(|c| c.resume(context, uri, position_ms));
     }
 
     fn play_shuffled(&mut self, context: String) {
