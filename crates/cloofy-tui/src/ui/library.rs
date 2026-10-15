@@ -100,6 +100,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         return;
     }
+    // The next screenful of covers, so scrolling down finds them loaded.
+    for &entry in entries.iter().take(last + (last - first)).skip(last) {
+        let (_, _, image_url, round) = sidebar::describe(app, entry);
+        app.prefetch(image_url.as_deref(), COVER, round);
+    }
     // The selection reaches one row above the cards, into the gap below the tabs.
     let clip = Rect { y: grid.y - 1, height: grid.height + 1, ..grid };
     for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {

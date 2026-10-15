@@ -109,6 +109,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 total: shelf.items.len(),
                 first,
                 items: shelf.items.iter().skip(first).take(cards).cloned().collect(),
+                nearby: home::nearby(&shelf.items, first, cards),
             })
         })
         .collect();
