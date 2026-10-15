@@ -16,7 +16,7 @@ use librespot::{
     playback::player::PlayerEvent,
 };
 
-use crate::style;
+use crate::{media::Media, style};
 
 const BAR_WIDTH: usize = 40;
 const DEVICE_NAME: &str = "cloofy";
@@ -48,6 +48,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     spirc.activate()?;
     spirc.load(LoadRequest::from_context_uri(context, options))?;
 
+    let (mut media, mut media_events) = Media::new();
     println!();
     let mut clock = Clock::default();
     let mut duration = Duration::ZERO;
@@ -55,16 +56,20 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = events.recv() => match event {
-                PlayerEvent::TrackChanged { audio_item } => {
-                    duration = Duration::from_millis(audio_item.duration_ms.into());
-                    clock = Clock::default();
-                    println!("\r\x1b[2K  ▶  {}", describe(&audio_item));
+            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = events.recv() => {
+                media.on_player(&event);
+                match event {
+                    PlayerEvent::TrackChanged { audio_item } => {
+                        duration = Duration::from_millis(audio_item.duration_ms.into());
+                        clock = Clock::default();
+                        println!("\r\x1b[2K  ▶  {}", describe(&audio_item));
+                    }
+                    PlayerEvent::Playing { position_ms, .. } => clock.resume(position_ms),
+                    PlayerEvent::Paused { position_ms, .. } => clock.pause(position_ms),
+                    _ => {}
                 }
-                PlayerEvent::Playing { position_ms, .. } => clock.resume(position_ms),
-                PlayerEvent::Paused { position_ms, .. } => clock.pause(position_ms),
-                _ => {}
-            },
+            }
             _ = tick.tick(), if !duration.is_zero() => draw_progress(clock.position().min(duration), duration),
             _ = tokio::signal::ctrl_c() => {
                 spirc.shutdown()?;
@@ -91,22 +96,27 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
         style::bold(&name),
         style::dim("Ctrl+C quits")
     );
+    let (mut media, mut media_events) = Media::new();
     let mut paused = false;
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = events.recv() => match event {
-                PlayerEvent::TrackChanged { audio_item } => println!("  ▶  {}", describe(&audio_item)),
-                PlayerEvent::Paused { .. } if !paused => {
-                    paused = true;
-                    println!("  {}", style::dim("❚❚ paused"));
+            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = events.recv() => {
+                media.on_player(&event);
+                match event {
+                    PlayerEvent::TrackChanged { audio_item } => println!("  ▶  {}", describe(&audio_item)),
+                    PlayerEvent::Paused { .. } if !paused => {
+                        paused = true;
+                        println!("  {}", style::dim("❚❚ paused"));
+                    }
+                    PlayerEvent::Playing { .. } if paused => {
+                        paused = false;
+                        println!("  {}", style::dim("▶  resumed"));
+                    }
+                    _ => {}
                 }
-                PlayerEvent::Playing { .. } if paused => {
-                    paused = false;
-                    println!("  {}", style::dim("▶  resumed"));
-                }
-                _ => {}
-            },
+            }
             _ = tokio::signal::ctrl_c() => {
                 spirc.shutdown()?;
                 (&mut task).await;

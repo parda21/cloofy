@@ -21,6 +21,7 @@ use tokio::sync::watch;
 use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture},
+    media::MediaSync,
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
     playback::{Controller, Cover, NowPlaying, Repeat},
     snapshot::Placement,
@@ -64,6 +65,8 @@ pub enum AppEvent {
     Player(PlayerEvent),
     PlayerReady(Box<Controller>),
     PlayerFailed(String),
+    /// A media key, headphone button or Control Center.
+    Media(cloofy_os::media::Command),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,6 +276,8 @@ pub struct App {
     session_tx: watch::Sender<Option<Session>>,
     pub player_error: Option<String>,
     pub now: NowPlaying,
+    /// The system's media controls, where there are any.
+    media: Option<MediaSync>,
     pub accent: Accent,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
@@ -344,6 +349,7 @@ impl App {
         crossfade: u64,
         state: crate::state::State,
         state_path: std::path::PathBuf,
+        media: Option<cloofy_os::media::Controls>,
     ) -> Self {
         loader.me();
         loader.playlists();
@@ -365,6 +371,7 @@ impl App {
             session_tx,
             player_error: None,
             now: NowPlaying::new(),
+            media: media.map(MediaSync::new),
             accent: Accent::new(),
             me: None,
             playlists: Vec::new(),
@@ -470,8 +477,32 @@ impl App {
                 self.controller = Some(*controller);
             }
             AppEvent::PlayerFailed(err) => self.player_error = Some(err),
+            AppEvent::Media(command) => self.on_media(command),
             AppEvent::Data(data) => self.on_data(data),
         }
+    }
+
+    fn on_media(&mut self, command: cloofy_os::media::Command) {
+        use cloofy_os::media::Command as Media;
+        match command {
+            Media::Toggle => self.run(Command::PlayPause),
+            Media::Play if !self.now.playing => self.run(Command::PlayPause),
+            Media::Pause if self.now.playing => self.run(Command::PlayPause),
+            Media::Play | Media::Pause => {}
+            Media::Next => self.run(Command::Next),
+            Media::Previous => self.run(Command::Previous),
+            Media::Seek(position) => self.seek_to(position.as_millis().try_into().unwrap_or(u32::MAX)),
+        }
+    }
+
+    /// Brings the system's media controls up to date; cheap when nothing changed.
+    pub fn sync_media(&mut self) {
+        let Some(media) = &mut self.media else { return };
+        let track = self.now.track.as_ref().filter(|_| !self.remote_active);
+        if let Some(url) = media.missing_artwork(track) {
+            self.loader.artwork(url);
+        }
+        media.sync(&self.now, !self.remote_active);
     }
 
     fn on_player(&mut self, event: PlayerEvent) {
@@ -663,6 +694,11 @@ impl App {
                     Err(err) => tracing::warn!("cover {url}: {err}"),
                 }
             }
+            DataEvent::Artwork { url, result } => match (result, &mut self.media) {
+                (Ok(bytes), Some(media)) => media.set_artwork(url, bytes),
+                (Ok(_), None) => {}
+                (Err(err), _) => tracing::warn!("artwork {url}: {err}"),
+            },
             DataEvent::LargeCover { url, size, result } => {
                 self.zen_cover_pending = None;
                 match result {

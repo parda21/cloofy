@@ -3,6 +3,7 @@ mod art;
 mod commands;
 mod icons;
 mod loader;
+mod media;
 mod overlay;
 mod playback;
 mod snapshot;
@@ -70,9 +71,15 @@ async fn run_app(
         snapshotter.is_some(),
     );
     let notices = tx.clone();
+    let media = cloofy_os::media::Controls::new({
+        let tx = tx.clone();
+        move |command| {
+            let _ = tx.send(app::AppEvent::Media(command));
+        }
+    });
     playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx);
     let saved = state::load(&paths.state_file());
-    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file());
+    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media);
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
@@ -100,6 +107,7 @@ async fn run_app(
             _ = ticker.tick() => app.on_tick(),
             _ = closed.recv() => break,
         };
+        app.sync_media();
         if redraw || app.snapshot_requested {
             let frame = terminal.draw(|frame| ui::draw(frame, &mut app))?;
             if std::mem::take(&mut app.snapshot_requested)

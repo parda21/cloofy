@@ -1,4 +1,5 @@
 mod doctor;
+mod media;
 mod playback;
 mod style;
 
@@ -63,7 +64,8 @@ fn main() -> Result<()> {
         std::env::set_var("PULSE_PROP_media.role", "music");
     }
     limit_malloc_arenas();
-    tokio::runtime::Runtime::new()?.block_on(run())
+    // The main thread belongs to the OS integration; cloofy itself runs on another one.
+    cloofy_os::run_main(|| tokio::runtime::Runtime::new()?.block_on(run()))
 }
 
 /// glibc gives each thread that allocates its own heap arena and holds on to memory freed in
