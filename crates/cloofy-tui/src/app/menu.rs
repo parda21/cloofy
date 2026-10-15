@@ -408,6 +408,7 @@ mod tests {
             album: "Discovery".into(),
             album_uri: "spotify:album:1".into(),
             duration_ms: 1,
+            image_url: None,
         };
         let actions: Vec<_> = menu_items(&track_target(&track, None), true).into_iter().map(|(a, _)| a).collect();
         assert!(actions.contains(&MenuAction::GoToArtist) && actions.contains(&MenuAction::GoToAlbum));

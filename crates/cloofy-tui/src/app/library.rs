@@ -302,6 +302,7 @@ impl App {
                 album: t.album.clone(),
                 album_uri: t.album_uri.clone().unwrap_or_default(),
                 duration_ms: t.duration_ms,
+                image_url: t.cover_url.clone(),
             })
         })
     }
