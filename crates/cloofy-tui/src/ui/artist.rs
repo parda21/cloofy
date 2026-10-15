@@ -57,8 +57,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
 
-    // Virtual layout: header, "Popular" with its tracks, then the shelves.
-    let tracks_top = HEADER_ROWS + 2;
+    // Virtual layout: header, "Popular" with its tracks, then the shelves. The heading has a
+    // blank row before its tracks, like shelf titles before their covers.
+    let tracks_top = HEADER_ROWS + 3;
     let shelves_top = tracks_top + page.top_tracks.len() as u16 + 2;
     let track_count = page.top_tracks.len();
     let (selected_top, selected_bottom) = match view.row.checked_sub(track_count) {
@@ -163,7 +164,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    if let Some(y) = screen_y(tracks_top - 1) {
+    if let Some(y) = screen_y(tracks_top - 2) {
         frame.buffer_mut().set_string(inner.x, y, "Popular", Style::new().fg(TEXT).bold());
     }
     let title_width = (inner.width as usize).saturating_sub(5 + 16 + 9);
