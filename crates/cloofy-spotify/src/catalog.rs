@@ -18,7 +18,7 @@ pub const PAGE: u32 = 50;
 /// Pages of one list fetched at the same time, once the first one tells how many there are.
 pub const PAGE_CONCURRENCY: usize = 4;
 /// Maximum URIs per `/me/library` request.
-const LIBRARY_BATCH: usize = 40;
+pub const LIBRARY_BATCH: usize = 40;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
 const IMAGE_WIDTH: u32 = 300;
 /// Concurrent metadata requests when resolving playlists through librespot.

@@ -42,6 +42,8 @@ use crate::{
 /// Cached cover art unused for this long is deleted at startup.
 const IMAGE_CACHE_AGE: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 
+/// Library checks running at the same time for one list.
+const SAVED_CONCURRENCY: usize = 2;
 /// How long lyrics wait for the session, so a track restored at startup still gets Spotify's
 /// synced lyrics instead of going straight to LRCLIB.
 const LYRICS_SESSION_WAIT: Duration = Duration::from_secs(5);
@@ -528,14 +530,26 @@ impl Loader {
         });
     }
 
+    /// Checks which URIs are in the library. Each batch reports as soon as it is known, so the
+    /// first rows of a long list get their hearts without waiting for the rest.
     pub fn check_saved(&self, uris: Vec<String>) {
         if uris.is_empty() {
             return;
         }
         self.spawn(move |this| async move {
-            match catalog::contains(&this.api, &uris).await {
-                Ok(flags) => this.send(DataEvent::Saved(uris.into_iter().zip(flags).collect())),
-                Err(err) => tracing::warn!("library check failed: {err:#}"),
+            let api = &this.api;
+            let batches: Vec<Vec<String>> = uris.chunks(catalog::LIBRARY_BATCH).map(<[_]>::to_vec).collect();
+            let mut checks = stream::iter(batches)
+                .map(|batch| async move {
+                    let result = catalog::contains(api, &batch).await;
+                    (batch, result)
+                })
+                .buffered(SAVED_CONCURRENCY);
+            while let Some((batch, result)) = checks.next().await {
+                match result {
+                    Ok(flags) => this.send(DataEvent::Saved(batch.into_iter().zip(flags).collect())),
+                    Err(err) => tracing::warn!("library check failed: {err:#}"),
+                }
             }
         });
     }
