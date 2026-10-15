@@ -58,6 +58,20 @@ fn cover_of(item: &HomeItem) -> (Option<String>, bool) {
     (item.image_url.clone(), item.kind == ItemKind::Artist)
 }
 
+/// Left column of the card in slot `column` of a row of `slots` cards across `width`. The
+/// room left over widens the gaps, so a full row ends at the right edge like the shortcut
+/// tiles and the pager above it. Short rows keep the same spacing and stay left.
+pub(super) fn card_x(x: u16, width: u16, slots: usize, column: usize) -> u16 {
+    let (slots, column) = (slots as u16, column as u16);
+    if slots < 2 {
+        return x + column * (COVER.width + CARD_GAP);
+    }
+    let spare = width.saturating_sub(slots * COVER.width);
+    let (gap, rest) = (spare / (slots - 1), spare % (slots - 1));
+    // The first gaps take one column more each until the rest is used up.
+    x + column * (COVER.width + gap) + column.min(rest)
+}
+
 /// Scrolls a shelf horizontally so the selected card stays visible.
 pub(super) fn follow(offset: &mut usize, item: usize, cards: usize) {
     if item < *offset {
@@ -270,8 +284,9 @@ pub(super) fn draw_shelf(
     let cover_y = layout.y + 2;
     // A card's box reaches one column past its cover on both sides, the first card's too.
     let padded = Rect { x: area.x.saturating_sub(1), width: area.width + 2, ..area };
+    let slots = visible_cards(area.width);
     for (column, item) in layout.items.iter().enumerate() {
-        let x = area.x + column as u16 * (COVER.width + CARD_GAP);
+        let x = card_x(area.x, area.width, slots, column);
         let index = layout.first + column;
         let is_selected = selected == Some(index);
         let card = clip(padded, x.saturating_sub(1), COVER.width + 2, cover_y - 1, COVER.height + 4);
@@ -448,5 +463,22 @@ mod tests {
         assert_eq!(urls(nearby(&items(5), 0, 3)), ["3", "4"]);
         assert_eq!(urls(nearby(&items(5), 2, 3)), ["0", "1"]);
         assert!(nearby(&items(2), 0, 3).is_empty());
+    }
+
+    #[test]
+    fn full_rows_reach_the_right_edge() {
+        for width in COVER.width..200 {
+            let slots = visible_cards(width);
+            if slots > 1 {
+                assert_eq!(card_x(0, width, slots, slots - 1) + COVER.width, width);
+            }
+            // Gaps never shrink below the minimum and differ by at most one column.
+            let gaps: Vec<u16> = (1..slots)
+                .map(|column| card_x(0, width, slots, column) - card_x(0, width, slots, column - 1) - COVER.width)
+                .collect();
+            if let (Some(widest), Some(narrowest)) = (gaps.iter().max(), gaps.iter().min()) {
+                assert!(*narrowest >= CARD_GAP && widest - narrowest <= 1);
+            }
+        }
     }
 }

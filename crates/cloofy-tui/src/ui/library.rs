@@ -125,7 +125,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // column past the cover on both sides, the first column's too.
     let clip = Rect { x: grid.x.saturating_sub(1), y: grid.y - 1, width: grid.width + 2, height: grid.height + 1 };
     for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {
-        let x = grid.x + (index % columns) as u16 * (COVER.width + GAP);
+        let x = home::card_x(grid.x, grid.width, columns, index % columns);
         let y = row_y(index);
         let card = home::clip(clip, x.saturating_sub(1), COVER.width + 2, y - 1, COVER.height + 4);
         let selected = index == cursor;
