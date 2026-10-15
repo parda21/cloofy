@@ -6,6 +6,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -22,6 +23,7 @@ use image::imageops::FilterType;
 use librespot::core::session::Session;
 use ratatui::layout::Size;
 use ratatui_image::{Resize, picker::Picker, protocol::Protocol};
+use sha2::{Digest, Sha256};
 use tokio::sync::{OnceCell, Semaphore, mpsc::UnboundedSender, watch};
 
 use crate::{
@@ -31,6 +33,9 @@ use crate::{
     theme::{self, Rgb},
     views::TrackSource,
 };
+
+/// Cached cover art unused for this long is deleted at startup.
+const IMAGE_CACHE_AGE: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 
 /// An encoded image plus, in snapshot mode, its source for pasting into PNG snapshots.
 pub struct Picture {
@@ -379,12 +384,9 @@ impl Loader {
         .await?
     }
 
-    /// Cover art is immutable per URL, so it is cached on disk for good.
+    /// Cover art is immutable per URL, so it is cached on disk until unused for a while.
     async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        url.hash(&mut hasher);
-        let path = self.image_cache.join(format!("{:016x}", hasher.finish()));
+        let path = self.image_cache.join(cache_name(url));
         if let Ok(bytes) = tokio::fs::read(&path).await {
             return Ok(bytes);
         }
@@ -392,6 +394,31 @@ impl Loader {
         let _ = tokio::fs::create_dir_all(&self.image_cache).await;
         let _ = tokio::fs::write(&path, &bytes).await;
         Ok(bytes)
+    }
+
+    /// Deletes cached cover art unused for [`IMAGE_CACHE_AGE`], and files named the way older
+    /// versions did, which are never read again. Runs in the background.
+    pub fn prune_image_cache(&self) {
+        let dir = self.image_cache.clone();
+        tokio::task::spawn_blocking(move || {
+            let Ok(entries) = std::fs::read_dir(&dir) else { return };
+            for entry in entries.flatten() {
+                if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                    continue;
+                }
+                let current = entry.file_name().to_str().is_some_and(|name| {
+                    name.len() == 64 && name.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                });
+                // Reading a file updates its access time, at most once a day on most systems.
+                let age = entry.metadata().ok().and_then(|meta| {
+                    let modified = meta.modified().ok()?;
+                    meta.accessed().map_or(modified, |accessed| accessed.max(modified)).elapsed().ok()
+                });
+                if !current || age.is_some_and(|age| age > IMAGE_CACHE_AGE) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        });
     }
 
     pub fn lyrics(&self, track: &CurrentTrack) {
@@ -484,6 +511,12 @@ impl Loader {
             }
         });
     }
+}
+
+/// The cache file of an image URL: its SHA-256 in hex. Not std's hasher, whose output may change
+/// with any Rust release and would orphan the whole cache.
+fn cache_name(url: &str) -> String {
+    Sha256::digest(url.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Makes everything outside the inscribed circle transparent, with a soft edge.
