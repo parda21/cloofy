@@ -1,0 +1,28 @@
+[package]
+name = "cloofy-spotify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Spotify Web API, librespot session and internal API clients for cloofy"
+
+[dependencies]
+librespot.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+etcetera.workspace = true
+futures.workspace = true
+iana-time-zone.workspace = true
+open.workspace = true
+protobuf.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+url.workspace = true

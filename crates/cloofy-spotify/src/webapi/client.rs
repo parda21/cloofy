@@ -1,0 +1,119 @@
+use std::{fs, io, path::PathBuf};
+
+use anyhow::{Context, Result, bail};
+use reqwest::{Method, StatusCode};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use tokio::sync::Mutex;
+
+use super::auth::{self, Token};
+use crate::paths::write_private;
+
+const API_BASE: &str = "https://api.spotify.com/v1";
+
+/// Web API client for the user's own Spotify app; refreshes its token on demand.
+pub struct WebApi {
+    http: reqwest::Client,
+    client_id: String,
+    token_path: PathBuf,
+    token: Mutex<Option<Token>>,
+}
+
+#[derive(Debug)]
+pub struct ApiResponse {
+    pub status: StatusCode,
+    /// `Value::Null` when the response has no JSON body.
+    pub body: Value,
+}
+
+impl ApiResponse {
+    /// Status plus Spotify's error message, e.g. `403 Forbidden`.
+    pub fn error_text(&self) -> String {
+        let message = self.body.pointer("/error/message").and_then(Value::as_str).unwrap_or_default();
+        format!("{} {message}", self.status.as_u16()).trim_end().to_owned()
+    }
+}
+
+impl WebApi {
+    pub fn new(client_id: impl Into<String>, token_path: PathBuf) -> Result<Self> {
+        let http = reqwest::Client::builder().user_agent(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
+        let token = read_token(&token_path)?;
+        Ok(Self { http, client_id: client_id.into(), token_path, token: Mutex::new(token) })
+    }
+
+    pub async fn is_logged_in(&self) -> bool {
+        self.token.lock().await.is_some()
+    }
+
+    pub async fn login(&self) -> Result<()> {
+        let token = auth::login(&self.http, &self.client_id).await?;
+        self.persist(&token)?;
+        *self.token.lock().await = Some(token);
+        Ok(())
+    }
+
+    pub async fn get(&self, path: &str) -> Result<ApiResponse> {
+        self.request(Method::GET, path, None).await
+    }
+
+    /// GET that fails on non-2xx and deserializes the body.
+    pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let response = self.get(path).await?;
+        if !response.status.is_success() {
+            bail!("Spotify: {}", response.error_text());
+        }
+        serde_json::from_value(response.body).with_context(|| format!("Unexpected response from {path}"))
+    }
+
+    /// A write request that only has to succeed.
+    pub async fn call(&self, method: Method, path: &str, body: Option<&Value>) -> Result<()> {
+        let response = self.request(method, path, body).await?;
+        if !response.status.is_success() {
+            bail!("Spotify: {}", response.error_text());
+        }
+        Ok(())
+    }
+
+    pub async fn request(&self, method: Method, path: &str, body: Option<&Value>) -> Result<ApiResponse> {
+        let token = self.access_token().await?;
+        let mut request = self.http.request(method.clone(), format!("{API_BASE}{path}")).bearer_auth(token);
+        request = match body {
+            Some(body) => request.json(body),
+            // Spotify rejects body-less writes without a Content-Length (411).
+            None if method != Method::GET => request.body(Vec::new()),
+            None => request,
+        };
+        let response = request.send().await?;
+        let status = response.status();
+        let body = serde_json::from_slice(&response.bytes().await?).unwrap_or(Value::Null);
+        Ok(ApiResponse { status, body })
+    }
+
+    async fn access_token(&self) -> Result<String> {
+        let mut guard = self.token.lock().await;
+        let token = guard.as_ref().context("Not logged in to the Web API – run `cloofy login`")?;
+        if token.is_fresh() {
+            return Ok(token.access_token.clone());
+        }
+        let refreshed = auth::refresh(&self.http, &self.client_id, &token.refresh_token)
+            .await
+            .context("Token refresh failed – run `cloofy login` again")?;
+        self.persist(&refreshed)?;
+        let access_token = refreshed.access_token.clone();
+        *guard = Some(refreshed);
+        Ok(access_token)
+    }
+
+    fn persist(&self, token: &Token) -> Result<()> {
+        write_private(&self.token_path, &serde_json::to_vec_pretty(token)?)
+            .with_context(|| format!("{} is not writable", self.token_path.display()))
+    }
+}
+
+fn read_token(path: &PathBuf) -> Result<Option<Token>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).context("Token file corrupted – run `cloofy login`")?)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("{} is not readable", path.display())),
+    }
+}

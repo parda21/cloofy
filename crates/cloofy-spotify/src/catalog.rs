@@ -1,0 +1,508 @@
+//! Typed access to Spotify's catalog: the Web API where it still works, librespot's internal
+//! endpoints where Development Mode apps are locked out.
+
+use anyhow::Result;
+use futures::{StreamExt, stream};
+use librespot::{
+    core::{SpotifyUri, session::Session},
+    metadata::{self as meta, Metadata},
+};
+use reqwest::Method;
+use serde::Deserialize;
+use serde_json::json;
+
+use crate::webapi::WebApi;
+
+const PAGE: u32 = 50;
+/// Maximum URIs per `/me/library` request.
+const LIBRARY_BATCH: usize = 40;
+/// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
+const IMAGE_WIDTH: u32 = 300;
+/// Concurrent metadata requests when resolving playlists through librespot.
+const METADATA_CONCURRENCY: usize = 8;
+
+#[derive(Debug, Clone)]
+pub struct User {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Track {
+    pub uri: String,
+    pub name: String,
+    pub artists: Vec<String>,
+    /// Same order as `artists`; empty where Spotify doesn't say.
+    pub artist_uris: Vec<String>,
+    pub album: String,
+    pub album_uri: String,
+    pub duration_ms: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaylistInfo {
+    pub id: String,
+    pub uri: String,
+    pub name: String,
+    pub owner_id: String,
+    pub owner_name: String,
+    pub collaborative: bool,
+    pub total: u32,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlbumInfo {
+    pub id: String,
+    pub uri: String,
+    pub name: String,
+    pub artists: Vec<String>,
+    pub year: String,
+    pub total: u32,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtistInfo {
+    pub uri: String,
+    pub name: String,
+    pub image_url: Option<String>,
+}
+
+/// A podcast in the user's library.
+#[derive(Debug, Clone)]
+pub struct ShowInfo {
+    pub uri: String,
+    pub name: String,
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchResults {
+    pub tracks: Vec<Track>,
+    pub albums: Vec<AlbumInfo>,
+    pub artists: Vec<ArtistInfo>,
+    pub playlists: Vec<PlaylistInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub total: u32,
+    pub next_offset: Option<u32>,
+}
+
+pub async fn me(api: &WebApi) -> Result<User> {
+    let raw: RawUser = api.get_json("/me").await?;
+    Ok(User { name: raw.display_name.unwrap_or_else(|| raw.id.clone()), id: raw.id })
+}
+
+/// All playlists in the user's library, owned and followed.
+pub async fn playlists(api: &WebApi) -> Result<Vec<PlaylistInfo>> {
+    let mut all = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: RawPage<Option<RawPlaylist>> =
+            api.get_json(&format!("/me/playlists?limit={PAGE}&offset={offset}")).await?;
+        let next = next_offset(&page, offset);
+        all.extend(page.items.into_iter().flatten().map(PlaylistInfo::from));
+        match next {
+            Some(n) => offset = n,
+            None => return Ok(all),
+        }
+    }
+}
+
+pub async fn saved_albums(api: &WebApi) -> Result<Vec<AlbumInfo>> {
+    let mut all = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: RawPage<RawSavedAlbum> = api.get_json(&format!("/me/albums?limit={PAGE}&offset={offset}")).await?;
+        let next = next_offset(&page, offset);
+        all.extend(page.items.into_iter().map(|saved| AlbumInfo::from(saved.album)));
+        match next {
+            Some(n) => offset = n,
+            None => return Ok(all),
+        }
+    }
+}
+
+/// Followed artists; this endpoint pages with a cursor instead of an offset.
+pub async fn followed_artists(api: &WebApi) -> Result<Vec<ArtistInfo>> {
+    let mut all = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let cursor = after.as_deref().map(|a| format!("&after={a}")).unwrap_or_default();
+        let raw: RawFollowing = api.get_json(&format!("/me/following?type=artist&limit={PAGE}{cursor}")).await?;
+        all.extend(raw.artists.items.into_iter().map(ArtistInfo::from));
+        after = raw.artists.cursors.and_then(|c| c.after);
+        if after.is_none() || raw.artists.next.is_none() {
+            return Ok(all);
+        }
+    }
+}
+
+pub async fn saved_shows(api: &WebApi) -> Result<Vec<ShowInfo>> {
+    let mut all = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: RawPage<RawSavedShow> = api.get_json(&format!("/me/shows?limit={PAGE}&offset={offset}")).await?;
+        let next = next_offset(&page, offset);
+        all.extend(page.items.into_iter().map(|saved| ShowInfo {
+            uri: saved.show.uri,
+            name: saved.show.name,
+            image_url: pick_image(&saved.show.images),
+        }));
+        match next {
+            Some(n) => offset = n,
+            None => return Ok(all),
+        }
+    }
+}
+
+/// Number of liked songs.
+pub async fn liked_count(api: &WebApi) -> Result<u32> {
+    let page: RawPage<RawSavedTrack> = api.get_json("/me/tracks?limit=1").await?;
+    Ok(page.total)
+}
+
+pub async fn liked_tracks(api: &WebApi, offset: u32) -> Result<Page<Track>> {
+    let page: RawPage<RawSavedTrack> = api.get_json(&format!("/me/tracks?limit={PAGE}&offset={offset}")).await?;
+    let next_offset = next_offset(&page, offset);
+    Ok(Page {
+        items: page.items.into_iter().filter_map(|i| i.track).map(Track::from).collect(),
+        total: page.total,
+        next_offset,
+    })
+}
+
+/// Only works for playlists the user owns or collaborates on (Development Mode restriction).
+pub async fn playlist_tracks(api: &WebApi, id: &str, offset: u32) -> Result<Page<Track>> {
+    let page: RawPage<RawPlaylistItem> =
+        api.get_json(&format!("/playlists/{id}/items?limit={PAGE}&offset={offset}")).await?;
+    let next_offset = next_offset(&page, offset);
+    Ok(Page {
+        items: page.items.into_iter().filter_map(|i| i.item).map(Track::from).collect(),
+        total: page.total,
+        next_offset,
+    })
+}
+
+pub async fn album_tracks(api: &WebApi, album: &AlbumInfo, offset: u32) -> Result<Page<Track>> {
+    let page: RawPage<RawTrack> =
+        api.get_json(&format!("/albums/{}/tracks?limit={PAGE}&offset={offset}", album.id)).await?;
+    let next_offset = next_offset(&page, offset);
+    Ok(Page {
+        items: page
+            .items
+            .into_iter()
+            .map(|raw| Track { album: album.name.clone(), album_uri: album.uri.clone(), ..Track::from(raw) })
+            .collect(),
+        total: page.total,
+        next_offset,
+    })
+}
+
+pub async fn search(api: &WebApi, query: &str) -> Result<SearchResults> {
+    let query = encode(query);
+    let raw: RawSearch = api.get_json(&format!("/search?q={query}&type=track,album,artist,playlist&limit=10")).await?;
+    Ok(SearchResults {
+        tracks: items(raw.tracks).map(Track::from).collect(),
+        albums: items(raw.albums).map(AlbumInfo::from).collect(),
+        artists: items(raw.artists).map(ArtistInfo::from).collect(),
+        playlists: items(raw.playlists).map(PlaylistInfo::from).collect(),
+    })
+}
+
+/// Saves tracks (or any other URIs) to the user's library, e.g. Liked Songs.
+pub async fn save(api: &WebApi, uris: &[String]) -> Result<()> {
+    library_call(api, Method::PUT, uris).await
+}
+
+pub async fn unsave(api: &WebApi, uris: &[String]) -> Result<()> {
+    library_call(api, Method::DELETE, uris).await
+}
+
+async fn library_call(api: &WebApi, method: Method, uris: &[String]) -> Result<()> {
+    for batch in uris.chunks(LIBRARY_BATCH) {
+        api.call(method.clone(), &format!("/me/library?uris={}", encode(&batch.join(","))), None).await?;
+    }
+    Ok(())
+}
+
+/// Whether each URI is in the user's library, in the same order.
+pub async fn contains(api: &WebApi, uris: &[String]) -> Result<Vec<bool>> {
+    let mut saved = Vec::with_capacity(uris.len());
+    for batch in uris.chunks(LIBRARY_BATCH) {
+        let flags: Vec<bool> = api.get_json(&format!("/me/library/contains?uris={}", encode(&batch.join(",")))).await?;
+        saved.extend(flags);
+    }
+    Ok(saved)
+}
+
+/// Adds a track to the queue of the active device.
+pub async fn queue(api: &WebApi, uri: &str) -> Result<()> {
+    api.call(Method::POST, &format!("/me/player/queue?uri={}", encode(uri)), None).await
+}
+
+pub async fn add_to_playlist(api: &WebApi, playlist_id: &str, uris: &[String]) -> Result<()> {
+    let body = json!({ "uris": uris });
+    api.call(Method::POST, &format!("/playlists/{playlist_id}/items"), Some(&body)).await
+}
+
+/// Playlist contents through librespot, for playlists the Web API won't show (followed and
+/// Spotify-made ones).
+pub async fn playlist_tracks_internal(session: &Session, id: &str) -> Result<Vec<Track>> {
+    let uri = SpotifyUri::from_uri(&format!("spotify:playlist:{id}"))?;
+    let playlist = meta::Playlist::get(session, &uri).await?;
+    let uris: Vec<SpotifyUri> =
+        playlist.tracks().filter(|uri| matches!(uri, SpotifyUri::Track { .. })).cloned().collect();
+    let tracks = stream::iter(uris)
+        .map(|uri| async move { meta::Track::get(session, &uri).await })
+        .buffered(METADATA_CONCURRENCY)
+        .filter_map(|track| async move { track.ok().map(Track::from) })
+        .collect()
+        .await;
+    Ok(tracks)
+}
+
+/// The image closest to the preferred width; a missing width counts as a match.
+fn pick_image(images: &[RawImage]) -> Option<String> {
+    images
+        .iter()
+        .min_by_key(|image| image.width.unwrap_or(IMAGE_WIDTH).abs_diff(IMAGE_WIDTH))
+        .map(|image| image.url.clone())
+}
+
+fn encode(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+fn next_offset<T>(page: &RawPage<T>, offset: u32) -> Option<u32> {
+    let next = offset + page.items.len() as u32;
+    (page.next.is_some() && next < page.total).then_some(next)
+}
+
+fn items<T>(page: Option<RawPage<Option<T>>>) -> impl Iterator<Item = T> {
+    page.into_iter().flat_map(|p| p.items).flatten()
+}
+
+impl From<RawTrack> for Track {
+    fn from(raw: RawTrack) -> Self {
+        let (album, album_uri) = raw.album.map(|a| (a.name, a.uri)).unwrap_or_default();
+        Self {
+            uri: raw.uri,
+            name: raw.name,
+            artist_uris: raw.artists.iter().map(|a| a.uri.clone()).collect(),
+            artists: raw.artists.into_iter().map(|a| a.name).collect(),
+            album,
+            album_uri,
+            duration_ms: raw.duration_ms,
+        }
+    }
+}
+
+impl From<meta::Track> for Track {
+    fn from(track: meta::Track) -> Self {
+        Self {
+            uri: track.id.to_uri(),
+            name: track.name,
+            artists: track.artists.iter().map(|a| a.name.clone()).collect(),
+            artist_uris: track.artists.iter().map(|a| a.id.to_uri()).collect(),
+            album: track.album.name.clone(),
+            album_uri: track.album.id.to_uri(),
+            duration_ms: track.duration.max(0) as u32,
+        }
+    }
+}
+
+impl From<RawPlaylist> for PlaylistInfo {
+    fn from(raw: RawPlaylist) -> Self {
+        Self {
+            id: raw.id,
+            uri: raw.uri,
+            name: raw.name,
+            owner_name: raw.owner.display_name.unwrap_or_else(|| raw.owner.id.clone()),
+            owner_id: raw.owner.id,
+            collaborative: raw.collaborative,
+            total: raw.items.or(raw.tracks).map_or(0, |c| c.total),
+            image_url: pick_image(&raw.images),
+        }
+    }
+}
+
+impl From<RawAlbum> for AlbumInfo {
+    fn from(raw: RawAlbum) -> Self {
+        Self {
+            id: raw.id,
+            uri: raw.uri,
+            name: raw.name,
+            artists: raw.artists.into_iter().map(|a| a.name).collect(),
+            year: raw.release_date.chars().take(4).collect(),
+            total: raw.total_tracks,
+            image_url: pick_image(&raw.images),
+        }
+    }
+}
+
+impl From<RawArtist> for ArtistInfo {
+    fn from(raw: RawArtist) -> Self {
+        Self { image_url: pick_image(&raw.images), uri: raw.uri, name: raw.name }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawPage<T> {
+    items: Vec<T>,
+    #[serde(default)]
+    total: u32,
+    next: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawUser {
+    id: String,
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawSavedTrack {
+    track: Option<RawTrack>,
+}
+
+/// Since February 2026 playlist entries carry the track under `item` instead of `track`.
+#[derive(Deserialize)]
+struct RawPlaylistItem {
+    item: Option<RawTrack>,
+}
+
+#[derive(Deserialize)]
+struct RawTrack {
+    uri: String,
+    name: String,
+    #[serde(default)]
+    artists: Vec<RawNamed>,
+    album: Option<RawAlbumRef>,
+    #[serde(default)]
+    duration_ms: u32,
+}
+
+#[derive(Deserialize)]
+struct RawNamed {
+    name: String,
+    #[serde(default)]
+    uri: String,
+}
+
+#[derive(Deserialize)]
+struct RawAlbumRef {
+    name: String,
+    uri: String,
+}
+
+#[derive(Deserialize)]
+struct RawAlbum {
+    id: String,
+    uri: String,
+    name: String,
+    #[serde(default)]
+    artists: Vec<RawNamed>,
+    #[serde(default)]
+    release_date: String,
+    #[serde(default)]
+    total_tracks: u32,
+    #[serde(default, deserialize_with = "nullable")]
+    images: Vec<RawImage>,
+}
+
+#[derive(Deserialize)]
+struct RawArtist {
+    uri: String,
+    name: String,
+    #[serde(default, deserialize_with = "nullable")]
+    images: Vec<RawImage>,
+}
+
+#[derive(Deserialize)]
+struct RawImage {
+    url: String,
+    width: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct RawSavedAlbum {
+    album: RawAlbum,
+}
+
+#[derive(Deserialize)]
+struct RawSavedShow {
+    show: RawShow,
+}
+
+#[derive(Deserialize)]
+struct RawShow {
+    uri: String,
+    name: String,
+    #[serde(default, deserialize_with = "nullable")]
+    images: Vec<RawImage>,
+}
+
+#[derive(Deserialize)]
+struct RawFollowing {
+    artists: RawCursorPage<RawArtist>,
+}
+
+#[derive(Deserialize)]
+struct RawCursorPage<T> {
+    items: Vec<T>,
+    next: Option<String>,
+    cursors: Option<RawCursors>,
+}
+
+#[derive(Deserialize)]
+struct RawCursors {
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawPlaylist {
+    id: String,
+    uri: String,
+    name: String,
+    owner: RawOwner,
+    #[serde(default)]
+    collaborative: bool,
+    #[serde(default, deserialize_with = "nullable")]
+    images: Vec<RawImage>,
+    /// `items` since February 2026, `tracks` before.
+    items: Option<RawCount>,
+    tracks: Option<RawCount>,
+}
+
+#[derive(Deserialize)]
+struct RawOwner {
+    id: String,
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawCount {
+    total: u32,
+}
+
+#[derive(Deserialize)]
+struct RawSearch {
+    tracks: Option<RawPage<Option<RawTrack>>>,
+    albums: Option<RawPage<Option<RawAlbum>>>,
+    artists: Option<RawPage<Option<RawArtist>>>,
+    playlists: Option<RawPage<Option<RawPlaylist>>>,
+}
+
+/// Treats `null` like a missing field (Spotify sends `"images": null` for some playlists).
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}

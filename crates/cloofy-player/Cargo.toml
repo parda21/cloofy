@@ -1,0 +1,19 @@
+[package]
+name = "cloofy-player"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "librespot playback for cloofy"
+
+[dependencies]
+cloofy-spotify.workspace = true
+librespot.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+# PulseAudio talks to PipeWire's pulse server directly; cpal over ALSA keeps erroring while paused.
+[target.'cfg(target_os = "linux")'.dependencies]
+librespot = { workspace = true, features = ["pulseaudio-backend"] }
