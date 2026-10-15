@@ -70,8 +70,7 @@ impl Notifier {
                 }
                 self.pending = None;
                 self.announced = Some(track.uri.clone());
-                (!focused)
-                    .then(|| self.sequence(&track.name, &format!("{} · {}", track.artists.join(", "), track.album)))
+                (!focused).then(|| self.sequence(&track.name, &byline(track)))
             }
             _ => {
                 self.pending = Some((track.uri.clone(), Instant::now()));
@@ -91,10 +90,20 @@ impl Notifier {
                 )
             }
             Protocol::Rxvt => format!("\x1b]777;notify;{title};{body}\x07"),
+            Protocol::ITerm if body.is_empty() => format!("\x1b]9;{title}\x07"),
             Protocol::ITerm => format!("\x1b]9;{title} · {body}\x07"),
         };
         if self.tmux { passthrough(&sequence) } else { sequence }
     }
+}
+
+/// Artists and album, leaving out what is missing: episodes have no album.
+fn byline(track: &CurrentTrack) -> String {
+    [track.artists.join(", "), track.album.clone()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// Without control characters, which would end the sequence, or semicolons, which separate its
@@ -172,6 +181,16 @@ mod tests {
         let mut iterm = notifier(Protocol::ITerm);
         let sequence = settle(&mut iterm, &track("spotify:track:1"), false);
         assert_eq!(sequence.as_deref(), Some("\x1b]9;One More Time · Daft Punk · Discovery\x07"));
+    }
+
+    #[test]
+    fn leaves_out_what_an_episode_lacks() {
+        let episode = CurrentTrack { album: String::new(), ..track("spotify:episode:1") };
+        let mut iterm = notifier(Protocol::ITerm);
+        let sequence = settle(&mut iterm, &episode, false);
+        assert_eq!(sequence.as_deref(), Some("\x1b]9;One More Time · Daft Punk\x07"));
+        let nobody = CurrentTrack { artists: Vec::new(), ..episode };
+        assert_eq!(byline(&nobody), "");
     }
 
     #[test]
