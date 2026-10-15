@@ -25,10 +25,13 @@ cloofy plays music itself, with no official client or daemon running in the back
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
 ```
 
-This installs the latest release to `~/.local/bin`. On platforms without a prebuilt binary it builds cloofy from source with cargo instead.
+The installer checks your system and installs the latest release. Then it walks you through the [setup](#setup): creating your Spotify app, entering its client ID, and signing in. Without a prebuilt binary for your platform, it builds cloofy from source with cargo. Run it again to update.
+
+- `bash -s -- --yes` installs without asking anything.
+- `bash -s -- --uninstall` removes cloofy.
 
 To build from source yourself (Rust 1.88 or newer):
 
@@ -45,6 +48,8 @@ On Linux the build needs the ALSA and PulseAudio headers:
 | Arch | `alsa-lib libpulse` |
 
 ## Setup
+
+The installer does all of this with you. To do it by hand:
 
 1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard). Give it any name, set the redirect URI to `http://127.0.0.1:8974/callback`, and pick the Web API.
 2. Under **User Management**, add the Spotify account you listen with. Apps in development mode only work for the accounts listed there.
