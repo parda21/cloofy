@@ -16,15 +16,18 @@ use librespot::{
     metadata::audio::{AudioItem, UniqueFields},
     playback::player::PlayerEvent,
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::{
+    Notify,
+    mpsc::{UnboundedReceiver, UnboundedSender},
+};
 
 use crate::app::AppEvent;
 
 const DEVICE_NAME: &str = "cloofy";
-/// Dropped connections are restored this often within the window at most, like librespot's own.
-const RECONNECT_LIMIT: usize = 5;
-const RECONNECT_WINDOW: Duration = Duration::from_secs(600);
-/// Waits between attempts while Spotify can't be reached, doubling up to the longest.
+/// A connection that lasted this long was fine: the next one is tried right away.
+const STABLE: Duration = Duration::from_secs(30);
+/// Waits between attempts while Spotify can't be reached or keeps dropping the connection,
+/// doubling up to the longest.
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_LONGEST: Duration = Duration::from_secs(60);
 
@@ -328,7 +331,14 @@ impl Controller {
 /// Connects the player in the background so the UI shows up instantly, and connects again
 /// whenever the connection drops: after the computer slept, or while the network was gone.
 /// Playback starts at the saved `volume`, and keeps its volume when connecting again.
-pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: UnboundedSender<AppEvent>) {
+/// `retry_now` cuts a wait between attempts short, for when the computer wakes up.
+pub fn spawn(
+    paths: Paths,
+    crossfade: Duration,
+    volume: Option<u16>,
+    retry_now: Arc<Notify>,
+    tx: UnboundedSender<AppEvent>,
+) {
     tokio::spawn(async move {
         let started = async {
             let pending = session::prepare(&paths)?;
@@ -343,14 +353,12 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: Unbound
                 return;
             }
         };
-        let mut reconnects: Vec<Instant> = Vec::new();
         let mut retry = RETRY_FIRST;
         let mut volume = volume;
         loop {
             let session = pending.session.clone();
-            match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
+            let wait = match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
                 Ok((spirc, task)) => {
-                    retry = RETRY_FIRST;
                     let stopping = Arc::new(AtomicBool::new(false));
                     let controller = Controller {
                         spirc,
@@ -361,6 +369,7 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: Unbound
                     if tx.send(AppEvent::PlayerReady(Box::new(controller))).is_err() {
                         return;
                     }
+                    let connected = Instant::now();
                     task.await;
                     if stopping.load(Ordering::Relaxed) {
                         return;
@@ -368,15 +377,16 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: Unbound
                     if !session.is_invalid() {
                         session.shutdown();
                     }
-                    reconnects.retain(|at| at.elapsed() < RECONNECT_WINDOW);
-                    if reconnects.len() >= RECONNECT_LIMIT {
-                        let _ = tx.send(AppEvent::PlayerFailed("Spotify keeps disconnecting".into()));
-                        return;
-                    }
-                    reconnects.push(Instant::now());
                     tracing::warn!("connection to Spotify lost, connecting again");
                     if tx.send(AppEvent::PlayerLost).is_err() {
                         return;
+                    }
+                    // One that dropped soon after it started waits like a failed attempt.
+                    if connected.elapsed() >= STABLE {
+                        retry = RETRY_FIRST;
+                        false
+                    } else {
+                        true
                     }
                 }
                 Err(err) => {
@@ -384,9 +394,15 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: Unbound
                     if tx.send(AppEvent::PlayerFailed(format!("{err:#}"))).is_err() {
                         return;
                     }
-                    tokio::time::sleep(retry).await;
-                    retry = (retry * 2).min(RETRY_LONGEST);
+                    true
                 }
+            };
+            if wait {
+                tokio::select! {
+                    () = tokio::time::sleep(retry) => {}
+                    () = retry_now.notified() => {}
+                }
+                retry = (retry * 2).min(RETRY_LONGEST);
             }
             pending = match session::prepare(&paths) {
                 Ok(pending) => pending,
