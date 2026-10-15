@@ -53,6 +53,8 @@ const TERMINAL_IMAGE_BUDGET: usize = 48 << 20;
 /// A cover that failed to load, e.g. while offline, is tried again when drawn after this long.
 const IMAGE_RETRY: Duration = Duration::from_secs(30);
 const EVICTION_INTERVAL: Duration = Duration::from_secs(30);
+/// Freed memory goes back to the system this long after the last of a burst of loads.
+const TRIM_DELAY: Duration = Duration::from_secs(1);
 /// Now Playing loads its cover for a new size once the window has kept that size this long.
 const ZEN_COVER_SETTLE: Duration = Duration::from_millis(150);
 /// A Now Playing cover that failed to load is tried again after this long.
@@ -308,6 +310,8 @@ pub struct App {
     /// When each image was last drawn; long-unseen ones are dropped to save memory.
     image_used: HashMap<String, Instant>,
     last_eviction: Instant,
+    /// When to hand freed memory back to the system.
+    trim_due: Option<Instant>,
     /// Frames drawn so far.
     draws: u64,
     /// When the last frame started; images used since were drawn in it.
@@ -412,6 +416,7 @@ impl App {
             images: HashMap::new(),
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
+            trim_due: None,
             draws: 0,
             frame_started: Instant::now(),
             terminal_out: Vec::new(),
@@ -604,6 +609,19 @@ impl App {
 
     /// Returns whether the screen needs a redraw.
     fn on_data(&mut self, event: DataEvent) -> bool {
+        // Decoding covers and pages allocates a lot for a moment. Each such load pushes the
+        // trim back, so a burst ends in one.
+        if matches!(
+            event,
+            DataEvent::Image { .. }
+                | DataEvent::Cover { .. }
+                | DataEvent::LargeCover { .. }
+                | DataEvent::Home { .. }
+                | DataEvent::Artist { .. }
+                | DataEvent::Tracks { .. }
+        ) {
+            self.trim_due = Some(Instant::now() + TRIM_DELAY);
+        }
         match event {
             DataEvent::Me(result) => match result {
                 Ok(user) => self.me = Some(user),
@@ -837,6 +855,10 @@ impl App {
         }
         if self.last_eviction.elapsed() >= EVICTION_INTERVAL {
             self.evict_images();
+        }
+        if self.trim_due.is_some_and(|due| Instant::now() >= due) {
+            self.trim_due = None;
+            crate::release_freed_memory();
         }
 
         if self.status.as_ref().is_some_and(|s| s.since.elapsed() >= STATUS_TTL) {
