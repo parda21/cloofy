@@ -154,7 +154,7 @@ impl App {
                 _ => self.play(target.uri, None),
             },
             MenuAction::Shuffle => self.play_shuffled(target.uri),
-            MenuAction::Queue => self.loader.queue(target.uri, target.name),
+            MenuAction::Queue => self.queue(target.uri, target.name),
             MenuAction::Save => self.toggle_library(target.uri, target.name),
             MenuAction::AddToPlaylist => self.open_playlist_picker_for(target.uri),
             MenuAction::GoToAlbum => {
