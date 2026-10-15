@@ -37,6 +37,9 @@ const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const STATUS_TTL: Duration = Duration::from_secs(4);
 const SEEK_STEP_MS: i64 = 5_000;
 const HISTORY_LIMIT: usize = 50;
+/// Opening a page this soon after the last one skips the transition, so browsing fast stays
+/// instant.
+const QUICK_NAV: Duration = Duration::from_millis(300);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Images unseen for this long are dropped from memory.
 const IMAGE_TTL: Duration = Duration::from_secs(120);
@@ -300,6 +303,8 @@ pub struct App {
     pub nav: ListCursor,
     pub view: View,
     history: Vec<View>,
+    /// When the page last changed.
+    last_nav: Option<Instant>,
     next_view_id: u64,
     pub status: Option<Status>,
     pub overlay: Option<Overlay>,
@@ -386,6 +391,7 @@ impl App {
             nav: ListCursor::default(),
             view: View::Home(HomeView::new(0, None)),
             history: Vec::new(),
+            last_nav: None,
             next_view_id: 1,
             status: None,
             overlay: None,
@@ -1988,7 +1994,11 @@ impl App {
         if self.history.len() > HISTORY_LIMIT {
             self.history.remove(0);
         }
-        self.animate_content();
+        let quick = self.last_nav.is_some_and(|at| at.elapsed() < QUICK_NAV);
+        self.last_nav = Some(Instant::now());
+        if !quick {
+            self.animate_content();
+        }
     }
 
     fn back(&mut self) {
@@ -1996,15 +2006,18 @@ impl App {
             Some(view) => {
                 self.view = view;
                 self.focus = Focus::Content;
-                self.animate_content();
+                // A page seen before comes back at once, without the rest of a transition.
+                self.last_nav = Some(Instant::now());
+                self.effects.cancel_unique_effect(Fx::Content);
             }
             None => self.focus = Focus::Nav,
         }
     }
 
+    /// A new page's text fades in briefly, while its backgrounds and covers are there at once.
     fn animate_content(&mut self) {
         let area = self.content_area;
-        let effect = fx::sweep_in(Motion::LeftToRight, 20, 0, BG, (240, Interpolation::QuadOut)).with_area(area);
+        let effect = fx::fade_from_fg(BG, (120, Interpolation::QuadOut)).with_area(area);
         self.animate(Fx::Content, effect);
     }
 
