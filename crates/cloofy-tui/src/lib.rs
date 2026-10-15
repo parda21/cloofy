@@ -141,6 +141,14 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
                 });
             }
         }
+        // After the frame, so that nothing on screen still shows an image being deleted.
+        if !app.terminal_out.is_empty() {
+            let out = terminal.backend_mut();
+            for sequence in app.terminal_out.drain(..) {
+                out.write_all(sequence.as_bytes())?;
+            }
+            out.flush()?;
+        }
     }
     app.shutdown();
     Ok(())

@@ -45,6 +45,9 @@ const IMAGE_CACHE_AGE: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 pub struct Picture {
     pub protocol: Protocol,
     pub source: Option<Arc<image::DynamicImage>>,
+    /// Memory the terminal keeps for the image once drawn. Only kitty keeps images, until told
+    /// to delete them; the other protocols draw them and forget.
+    pub terminal_bytes: usize,
 }
 
 pub enum DataEvent {
@@ -394,7 +397,7 @@ impl Loader {
             let extra = process(&mut image);
             let source = keep_source.then(|| Arc::new(image.clone()));
             // Triangle (bilinear) is several times faster than Lanczos and looks the same when shrinking.
-            let protocol = if picker.protocol_type() == ProtocolType::Kitty {
+            let (protocol, terminal_bytes) = if picker.protocol_type() == ProtocolType::Kitty {
                 // Kitty fits an image into its cells itself, so it is only shrunk to the pixels
                 // the cells have, never enlarged: that would only add pixels to encode, send and
                 // store, such as a 640 px cover blown up to fill Now Playing.
@@ -404,12 +407,13 @@ impl Loader {
                 if image.width() > width || image.height() > height {
                     image = image.resize(width, height, FilterType::Triangle);
                 }
-                picker.new_protocol_cells(image, size)?
+                let terminal_bytes = image.width() as usize * image.height() as usize * 4;
+                (picker.new_protocol_cells(image, size)?, terminal_bytes)
             } else {
                 // Scale, not Fit: small covers (e.g. user-uploaded playlist images) must fill their slot too.
-                picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?
+                (picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?, 0)
             };
-            Ok((Picture { protocol, source }, extra))
+            Ok((Picture { protocol, source, terminal_bytes }, extra))
         })
         .await?
     }
@@ -547,6 +551,21 @@ impl Loader {
 /// with any Rust release and would orphan the whole cache.
 fn cache_name(url: &str) -> String {
     Sha256::digest(url.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+impl Picture {
+    /// Whether the terminal holds the image: a kitty image that has been drawn.
+    pub fn in_terminal(&self) -> bool {
+        matches!(&self.protocol, Protocol::Kitty(kitty) if kitty.transmitted())
+    }
+
+    /// The escape sequence that deletes the image from the terminal, if it holds it.
+    pub fn terminal_delete(&self) -> Option<String> {
+        match &self.protocol {
+            Protocol::Kitty(kitty) if kitty.transmitted() => Some(kitty.delete_sequence()),
+            _ => None,
+        }
+    }
 }
 
 /// Masks artist portraits to a circle; other images stay as they are.
