@@ -469,7 +469,8 @@ fn highlight(buf: &mut Buffer, list: Rect, y: u16, height: u16, selected: bool, 
     }
 }
 
-/// Column widths of a track list; narrower windows drop the album, then the artist.
+/// Column widths of a track list; narrower windows drop the album, then fold the artist
+/// into the title column.
 struct Columns {
     title: usize,
     artist: usize,
@@ -489,7 +490,8 @@ impl Columns {
             let title = flexible * 42 / 100;
             let artist = flexible * 28 / 100;
             Self { title, artist, album: flexible - title - artist }
-        } else if width >= 64 {
+        } else if width >= 48 {
+            // Low enough for the narrowest two-pane window, where the list is 52 columns.
             let flexible = flexible.saturating_sub(2);
             let title = flexible * 58 / 100;
             Self { title, artist: flexible - title, album: 0 }
@@ -524,10 +526,18 @@ impl Columns {
             Span::styled(fit("  ▶", Self::INDEX), style.accent)
         };
         let title_style = if is_current { Style::new().fg(style.accent).bold() } else { Style::new().fg(TEXT) };
-        let mut spans = vec![number, Span::styled(fit(&track.name, self.title), title_style)];
+        let mut spans = vec![number];
         if self.artist > 0 {
+            spans.push(Span::styled(fit(&track.name, self.title), title_style));
             spans.push(Span::raw("  "));
             spans.push(Span::styled(fit(&track.artists.join(", "), self.artist), MUTED));
+        } else {
+            // Too narrow for an artist column: the artists trail the title where they fit.
+            let name = text::truncate(&track.name, self.title);
+            let rest = self.title.saturating_sub(name.width());
+            let artists = if rest >= 6 { format!(" · {}", track.artists.join(", ")) } else { String::new() };
+            spans.push(Span::styled(name, title_style));
+            spans.push(Span::styled(fit(&artists, rest), MUTED));
         }
         if self.album > 0 {
             spans.push(Span::raw("  "));
