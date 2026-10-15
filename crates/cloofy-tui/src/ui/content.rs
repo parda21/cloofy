@@ -163,11 +163,12 @@ fn tracks(
     buf.set_string(text_x, text_y + 1, text::truncate(&title, width), Style::new().fg(TEXT).bold());
     buf.set_string(text_x, text_y + 2, text::truncate(&meta, width), Style::new().fg(MUTED));
     let mut row = vec![
-        (HeaderButton::Play, format!("{} Play", icons().play), true),
-        (HeaderButton::Shuffle, format!("{} Shuffle", icons().shuffle), false),
+        (HeaderButton::Play, text::icon_label(icons().play, "Play"), true),
+        (HeaderButton::Shuffle, text::icon_label(icons().shuffle, "Shuffle"), false),
     ];
     if let Some(saved) = saved {
-        let label = if saved { format!("{} Saved", icons().saved) } else { format!("{} Save", icons().save) };
+        let label =
+            if saved { text::icon_label(icons().saved, "Saved") } else { text::icon_label(icons().save, "Save") };
         row.push((HeaderButton::Save, label, false));
     }
     row.push((HeaderButton::More, icons().more.to_owned(), false));
