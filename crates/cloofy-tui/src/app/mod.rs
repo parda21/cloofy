@@ -242,7 +242,7 @@ impl Hit {
 /// Where a clickable name leads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
-    /// The `artist`th artist of track `row` in the open track list.
+    /// The `artist`th artist of track `row` in the open track list or search results.
     TrackArtist {
         row: usize,
         artist: usize,
@@ -1506,7 +1506,11 @@ impl App {
     fn scroll_content(&mut self, delta: isize) {
         match &mut self.view {
             View::Tracks(v) => v.list.scroll(delta),
-            View::Search(v) => v.list.scroll(delta),
+            View::Search(v) => {
+                // Results with thumbnails are three rows tall; scroll by about as many rows.
+                let rows = v.entry_rows.max(1) as usize;
+                v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
+            }
             View::Home(v) => v.scroll_by(delta),
             View::Artist(v) => v.scroll_by(delta),
             View::Library(v) => {
@@ -2295,21 +2299,32 @@ impl App {
         self.last_context.as_deref()
     }
 
+    /// Track `row` of the open track list or search results.
+    fn listed_track(&self, row: usize) -> Option<&Track> {
+        match &self.view {
+            View::Tracks(v) => v.tracks.get(row),
+            View::Search(v) => match v.entries.get(row) {
+                Some(SearchEntry::Track(track)) => Some(track),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn follow_link(&mut self, link: Link) {
         let (uri, name) = match link {
             Link::TrackArtist { row, artist } => {
-                let View::Tracks(v) = &self.view else { return };
-                let Some(track) = v.tracks.get(row) else { return };
+                let Some(track) = self.listed_track(row) else { return };
                 match (track.artist_uris.get(artist), track.artists.get(artist)) {
                     (Some(uri), Some(name)) => (uri.clone(), name.clone()),
                     _ => return,
                 }
             }
             Link::TrackAlbum(row) => {
-                let View::Tracks(v) = &self.view else { return };
-                let Some(track) = v.tracks.get(row).filter(|t| !t.album_uri.is_empty()) else { return };
-                let (uri, name, artists) = (track.album_uri.clone(), track.album.clone(), track.artists.clone());
-                return self.open_album(uri, name, artists, None);
+                let Some(track) = self.listed_track(row).filter(|t| !t.album_uri.is_empty()) else { return };
+                let (uri, name) = (track.album_uri.clone(), track.album.clone());
+                let (artists, cover) = (track.artists.clone(), track.image_url.clone());
+                return self.open_album(uri, name, artists, cover);
             }
             Link::PlayingArtist(artist) => {
                 let Some(track) = &self.now.track else { return };
@@ -2554,6 +2569,7 @@ impl App {
             error: None,
             typed_at: None,
             list: ListCursor::default(),
+            entry_rows: 1,
         }));
         self.focus = Focus::SearchInput;
     }
