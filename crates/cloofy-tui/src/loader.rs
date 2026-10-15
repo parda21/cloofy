@@ -29,7 +29,11 @@ use ratatui_image::{
     protocol::Protocol,
 };
 use sha2::{Digest, Sha256};
-use tokio::sync::{OnceCell, Semaphore, mpsc::UnboundedSender, watch};
+use tokio::sync::{
+    OnceCell, Semaphore,
+    mpsc::{self, UnboundedSender},
+    watch,
+};
 
 use crate::{
     app::AppEvent,
@@ -138,6 +142,11 @@ pub enum DataEvent {
     },
     /// What plays where, from Spotify Connect.
     Playback(Result<Option<Playback>, String>),
+    /// Spotify answered a remote command, which stood for `commands` collapsed ones.
+    RemoteDone {
+        commands: usize,
+        result: Result<(), String>,
+    },
     Devices(Result<Vec<Device>, String>),
     Notice(String),
     Failed(String),
@@ -165,6 +174,7 @@ pub struct Loader {
     prefetch_turns: Arc<Semaphore>,
     /// The number of the last frame drawn; see [`Loader::frame_drawn`].
     frames_drawn: Arc<AtomicU64>,
+    remote: UnboundedSender<connect::Command>,
 }
 
 /// An image to decode: downloaded bytes, or artwork cloofy draws itself.
@@ -187,7 +197,10 @@ impl Loader {
             cloofy_spotify::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default();
         // Leave cores for the interface and audio.
         let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
+        let (remote, commands) = mpsc::unbounded_channel();
+        tokio::spawn(send_remote(api.clone(), tx.clone(), commands));
         Self {
+            remote,
             api,
             tx,
             session,
@@ -633,13 +646,9 @@ impl Loader {
         });
     }
 
-    /// Controls playback on another Spotify Connect device.
+    /// Controls playback on another Spotify Connect device. Answers with `RemoteDone`.
     pub fn remote(&self, command: connect::Command) {
-        self.spawn(move |this| async move {
-            if let Err(err) = connect::send(&this.api, command).await {
-                this.send(DataEvent::Failed(format!("Remote control: {err:#}")));
-            }
-        });
+        let _ = self.remote.send(command);
     }
 
     pub fn queue(&self, uri: String, name: String) {
@@ -691,6 +700,50 @@ fn mask(round: bool) -> impl FnOnce(&mut image::DynamicImage) + Send + 'static {
     }
 }
 
+/// Sends remote commands one at a time, so they reach Spotify in the order they were given.
+/// Volume and seek commands that pile up meanwhile collapse into the newest one.
+async fn send_remote(
+    api: Arc<WebApi>,
+    tx: UnboundedSender<AppEvent>,
+    mut commands: mpsc::UnboundedReceiver<connect::Command>,
+) {
+    let mut waiting = None;
+    while let Some((command, count)) = next_remote(&mut commands, &mut waiting).await {
+        let result = connect::send(&api, command).await.map_err(|e| format!("{e:#}"));
+        if tx.send(AppEvent::Data(DataEvent::RemoteDone { commands: count, result })).is_err() {
+            return;
+        }
+    }
+}
+
+/// Waits for the next command to send and collapses the ones queued behind it that it makes
+/// pointless. Returns it with the number of commands it stands for.
+async fn next_remote(
+    commands: &mut mpsc::UnboundedReceiver<connect::Command>,
+    waiting: &mut Option<connect::Command>,
+) -> Option<(connect::Command, usize)> {
+    let mut command = match waiting.take() {
+        Some(command) => command,
+        None => commands.recv().await?,
+    };
+    let mut count = 1;
+    while let Ok(newer) = commands.try_recv() {
+        if !supersedes(&newer, &command) {
+            *waiting = Some(newer);
+            break;
+        }
+        command = newer;
+        count += 1;
+    }
+    Some((command, count))
+}
+
+/// Whether `newer` makes `older` pointless: only the last volume or position counts.
+fn supersedes(newer: &connect::Command, older: &connect::Command) -> bool {
+    use connect::Command::{Seek, Volume};
+    matches!((newer, older), (Volume(_), Volume(_)) | (Seek(_), Seek(_)))
+}
+
 /// Makes everything outside the inscribed circle transparent, with a soft edge.
 fn circle(image: &image::DynamicImage) -> image::DynamicImage {
     let mut rgba = image.to_rgba8();
@@ -703,4 +756,26 @@ fn circle(image: &image::DynamicImage) -> image::DynamicImage {
         pixel.0[3] = (pixel.0[3] as f32 * coverage) as u8;
     }
     rgba.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use connect::Command::{Next, Play, Seek, Volume};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn queued_volume_and_seek_commands_collapse_in_order() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for command in [Volume(10), Volume(20), Seek(5), Seek(6), Play, Volume(30), Next] {
+            tx.send(command).unwrap();
+        }
+        drop(tx);
+        let mut waiting = None;
+        let mut sent = Vec::new();
+        while let Some((command, count)) = next_remote(&mut rx, &mut waiting).await {
+            sent.push(format!("{command:?}×{count}"));
+        }
+        assert_eq!(sent, ["Volume(20)×2", "Seek(6)×2", "Play×1", "Volume(30)×1", "Next×1"]);
+    }
 }

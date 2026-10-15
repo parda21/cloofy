@@ -29,7 +29,7 @@ use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture, SessionState},
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{self, Controller, Cover, NowPlaying, Repeat, VolumeSync},
+    playback::{self, Controller, Cover, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -68,9 +68,12 @@ const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
 const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
-/// How often to check which device plays, and how soon after a remote command.
+/// How often to check which device plays, and how soon to look again while a change sent to
+/// another device doesn't show yet.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const QUICK_POLL: Duration = Duration::from_millis(500);
+/// How long after Spotify accepted a remote command to check that the device applied it.
+const CONFIRM_DELAY: Duration = Duration::from_millis(300);
 /// Session state is also saved periodically, in case cloofy gets killed.
 const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 /// Rapid like/unlike toggles collapse into one request after this pause.
@@ -308,10 +311,15 @@ pub struct App {
     local_active: bool,
     /// Playback runs on another device; commands go through Spotify Connect.
     remote_active: bool,
+    /// Changes sent to the other device that Spotify doesn't show yet.
+    remote_intent: RemoteIntent,
+    /// When the last command went to another device; polls started before show older state.
+    last_command: Instant,
     /// Seconds consecutive tracks overlap.
     crossfade: u64,
     next_poll: Instant,
     polling: bool,
+    poll_started: Instant,
     session_tx: watch::Sender<SessionState>,
     /// For starting the player again after it failed to connect.
     paths: Paths,
@@ -442,9 +450,12 @@ impl App {
             device_id: None,
             local_active: false,
             remote_active: false,
+            remote_intent: RemoteIntent::default(),
+            last_command: Instant::now(),
             crossfade,
             next_poll: Instant::now(),
             polling: false,
+            poll_started: Instant::now(),
             session_tx,
             paths,
             events,
@@ -695,8 +706,17 @@ impl App {
                     self.last_context = p.context.clone();
                 }
                 let before = self.now.track.as_ref().map(|t| t.uri.clone());
-                if let Some(url) = self.now.apply_remote(&p) {
+                let dragged_volume = matches!(self.dragging, Some(Hit::Volume { .. })).then_some(self.now.volume);
+                let (cover, unconfirmed) = self.now.apply_remote(&p, &mut self.remote_intent);
+                if let Some(url) = cover {
                     self.loader.cover(url, COVER_SIZE);
+                }
+                if unconfirmed {
+                    self.next_poll = self.next_poll.min(Instant::now() + QUICK_POLL);
+                }
+                // The slider follows the mouse while it holds it, not the device.
+                if let Some(volume) = dragged_volume {
+                    self.now.volume = volume;
                 }
                 self.after_track_change(before);
                 true
@@ -704,7 +724,7 @@ impl App {
             None if self.remote_active => {
                 self.remote_active = false;
                 self.now.device = None;
-                self.now.playing = false;
+                self.now.set_playing(false);
                 true
             }
             None => false,
@@ -936,11 +956,26 @@ impl App {
             }
             DataEvent::Playback(result) => {
                 self.polling = false;
+                // Started before the last remote command, it shows the state from before it.
+                if self.poll_started < self.last_command {
+                    return false;
+                }
                 match result {
                     Ok(playback) => return self.on_playback(playback),
                     Err(err) => {
                         tracing::warn!("playback state: {err}");
                         return false;
+                    }
+                }
+            }
+            DataEvent::RemoteDone { commands, result } => {
+                self.remote_intent.answered(commands, result.is_ok());
+                match result {
+                    // Look again once the device has had a moment to apply it.
+                    Ok(()) => self.next_poll = self.next_poll.min(Instant::now() + CONFIRM_DELAY),
+                    Err(err) => {
+                        self.next_poll = Instant::now();
+                        self.error(format!("Remote control: {err}"));
                     }
                 }
             }
@@ -1069,6 +1104,7 @@ impl App {
 
         if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
             self.polling = true;
+            self.poll_started = Instant::now();
             self.next_poll = Instant::now() + POLL_INTERVAL;
             self.loader.playback();
         }
@@ -1723,7 +1759,8 @@ impl App {
             Command::Quit => self.quit = true,
             Command::PlayPause if self.remote_active => {
                 let playing = !self.now.playing;
-                self.now.playing = playing;
+                self.now.set_playing(playing);
+                self.remote_intent.playing = Some(playing);
                 self.remote(if playing { connect::Command::Play } else { connect::Command::Pause });
             }
             Command::PlayPause if self.resume.is_some() && self.controller.is_some() => {
@@ -1753,6 +1790,7 @@ impl App {
                 let on = !self.now.shuffle;
                 if self.remote_active {
                     self.now.shuffle = on;
+                    self.remote_intent.shuffle = Some(on);
                     self.remote(connect::Command::Shuffle(on));
                 } else {
                     self.control(|c| c.shuffle(on));
@@ -1766,12 +1804,8 @@ impl App {
                 };
                 if self.remote_active {
                     self.now.repeat = next;
-                    let mode = match next {
-                        Repeat::Off => "off",
-                        Repeat::Context => "context",
-                        Repeat::Track => "track",
-                    };
-                    self.remote(connect::Command::Repeat(mode));
+                    self.remote_intent.repeat = Some(next);
+                    self.remote(connect::Command::Repeat(next.remote_name()));
                 } else {
                     self.control(|c| c.repeat(next));
                 }
@@ -2614,9 +2648,11 @@ impl App {
         }
     }
 
+    /// Sends a command to the other device. Its answer schedules the poll that confirms it.
     fn remote(&mut self, command: connect::Command) {
+        self.remote_intent.sent();
+        self.last_command = Instant::now();
         self.loader.remote(command);
-        self.next_poll = Instant::now() + QUICK_POLL;
     }
 
     fn change_volume(&mut self, steps: i32) {
@@ -2629,6 +2665,7 @@ impl App {
     fn set_volume(&mut self, volume: u16) {
         self.now.volume = volume;
         if self.remote_active {
+            self.remote_intent.volume = Some(volume);
             self.remote(connect::Command::Volume((volume as u32 * 100 / u16::MAX as u32) as u8));
             return;
         }
@@ -2655,6 +2692,7 @@ impl App {
         let position_ms = if track.duration_ms > 0 { position_ms.min(track.duration_ms) } else { position_ms };
         if self.remote_active {
             self.now.set_position(position_ms);
+            self.remote_intent.seek = Some((position_ms, Instant::now()));
             self.remote(connect::Command::Seek(position_ms));
         } else if self.local_active {
             self.now.seek(position_ms);
@@ -2696,6 +2734,7 @@ impl App {
         let Some(Overlay::Devices { devices, .. }) = self.overlay.take() else { return };
         let Some(device) = devices.into_iter().nth(index) else { return };
         self.loader.transfer(device);
+        self.last_command = Instant::now();
         self.next_poll = Instant::now() + QUICK_POLL;
     }
 
