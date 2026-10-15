@@ -16,7 +16,7 @@ use image::imageops::FilterType;
 use librespot::core::session::Session;
 use ratatui::layout::Size;
 use ratatui_image::{Resize, picker::Picker, protocol::Protocol};
-use tokio::sync::{OnceCell, mpsc::UnboundedSender, watch};
+use tokio::sync::{OnceCell, Semaphore, mpsc::UnboundedSender, watch};
 
 use crate::{
     app::AppEvent,
@@ -108,6 +108,15 @@ pub struct Loader {
     /// Keep decoded images for dev snapshots.
     keep_sources: bool,
     image_cache: PathBuf,
+    /// Turns for decoding and encoding covers. A screenful asks for dozens at once; run all
+    /// together, they would hog every core and need a few megabytes of buffers each.
+    encode_turns: Arc<Semaphore>,
+}
+
+/// An image to decode: downloaded bytes, or artwork cloofy draws itself.
+enum ImageSource {
+    Downloaded(Vec<u8>),
+    Drawn(fn() -> image::DynamicImage),
 }
 
 impl Loader {
@@ -124,6 +133,8 @@ impl Loader {
             .user_agent(concat!("cloofy/", env!("CARGO_PKG_VERSION")))
             .build()
             .unwrap_or_default();
+        // Leave cores for the interface and audio.
+        let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
         Self {
             api,
             tx,
@@ -134,6 +145,7 @@ impl Loader {
             pathfinder_hashes,
             keep_sources,
             image_cache,
+            encode_turns: Arc::new(Semaphore::new(turns)),
         }
     }
 
@@ -180,14 +192,18 @@ impl Loader {
     /// Loads an image at a fixed cell size; `round` masks it to a circle (artist portraits).
     pub fn image(&self, key: String, url: String, size: Size, round: bool) {
         self.spawn(move |this| async move {
-            let result = this
-                .encode_image(&url, size, move |image| {
+            let result = async {
+                let source = this.fetch_image(&url).await?;
+                // Downloads run freely; decoding waits for a turn, held until the encode is done.
+                let _turn = this.encode_turns.acquire().await?;
+                let mask = move |image: &mut image::DynamicImage| {
                     if round {
                         *image = circle(image);
                     }
-                })
-                .await
-                .map(|(picture, ())| picture);
+                };
+                this.encode_image(source, size, mask).await.map(|(picture, ())| picture)
+            }
+            .await;
             this.send(DataEvent::Image { key, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
@@ -266,40 +282,51 @@ impl Loader {
     /// Downloads cover art, picks the accent color and encodes it for the terminal.
     pub fn cover(&self, url: String, size: Size) {
         self.spawn(move |this| async move {
-            let result = this.encode_image(&url, size, |image| theme::accent_from_image(image)).await;
+            let result = this.load_image(&url, size, |image| theme::accent_from_image(image)).await;
             this.send(DataEvent::Cover { url, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
 
     pub fn large_cover(&self, url: String, size: Size) {
         self.spawn(move |this| async move {
-            let result = this.encode_image(&url, size, |_| ()).await.map(|(picture, ())| picture);
+            let result = this.load_image(&url, size, |_| ()).await.map(|(picture, ())| picture);
             this.send(DataEvent::LargeCover { url, size, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
 
-    async fn encode_image<T: Send + 'static>(
+    /// Fetches and encodes an image without waiting for a turn: the player bar and Now Playing
+    /// show one cover each, which must not queue behind a screenful of thumbnails.
+    async fn load_image<T: Send + 'static>(
         &self,
         url: &str,
         size: Size,
         process: impl FnOnce(&mut image::DynamicImage) -> T + Send + 'static,
     ) -> Result<(Picture, T)> {
-        let generated = match url {
-            art::LIKED_COVER => Some(art::liked_cover as fn() -> image::DynamicImage),
-            art::PLACEHOLDER_COVER => Some(art::placeholder_cover as fn() -> image::DynamicImage),
-            _ => None,
-        };
-        let bytes = match generated {
-            Some(_) => None,
-            None => Some(self.download_image(url).await?),
-        };
+        let source = self.fetch_image(url).await?;
+        self.encode_image(source, size, process).await
+    }
+
+    async fn fetch_image(&self, url: &str) -> Result<ImageSource> {
+        Ok(match url {
+            art::LIKED_COVER => ImageSource::Drawn(art::liked_cover),
+            art::PLACEHOLDER_COVER => ImageSource::Drawn(art::placeholder_cover),
+            _ => ImageSource::Downloaded(self.download_image(url).await?),
+        })
+    }
+
+    /// Decodes, processes and encodes an image for the terminal, on the blocking pool.
+    async fn encode_image<T: Send + 'static>(
+        &self,
+        source: ImageSource,
+        size: Size,
+        process: impl FnOnce(&mut image::DynamicImage) -> T + Send + 'static,
+    ) -> Result<(Picture, T)> {
         let picker = self.picker.clone();
         let keep_source = self.keep_sources;
         tokio::task::spawn_blocking(move || {
-            let mut image = match (bytes, generated) {
-                (Some(bytes), _) => image::load_from_memory(&bytes)?,
-                (None, Some(draw)) => draw(),
-                (None, None) => unreachable!("either downloaded or generated"),
+            let mut image = match source {
+                ImageSource::Downloaded(bytes) => image::load_from_memory(&bytes)?,
+                ImageSource::Drawn(draw) => draw(),
             };
             // Every slot is square, so other shapes are cut to their middle square, as Spotify's
             // client does; scaled whole, they would leave a strip beside or below them.
