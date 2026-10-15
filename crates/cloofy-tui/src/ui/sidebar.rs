@@ -169,11 +169,7 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
         (false, true) => Style::new().fg(TEXT).bold(),
         (false, false) => Style::new().fg(TEXT),
     };
-    let equalizer = match (app.now.playing, app.calm()) {
-        (true, false) => text::equalizer(app.frame()),
-        (true, true) => text::equalizer(0),
-        (false, _) => icons().volume,
-    };
+    let equalizer = if app.now.playing { super::equalizer(app) } else { icons().volume };
     let buf = frame.buffer_mut();
     buf.set_string(x, y, text::truncate(&title, title_width), title_style);
     if playing {

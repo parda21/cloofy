@@ -398,7 +398,7 @@ fn is_playing(app: &App, item: &HomeItem) -> bool {
 /// What marks the playing card: a moving equalizer, or a speaker while paused, as in the
 /// sidebar.
 pub(super) fn playing_marker(app: &App) -> &'static str {
-    if app.now.playing { text::equalizer(app.frame()) } else { crate::icons::icons().volume }
+    if app.now.playing { super::equalizer(app) } else { crate::icons::icons().volume }
 }
 
 /// A card's cover at `(x, y)`, cut to `clip`; an icon on a plain square while it loads.
