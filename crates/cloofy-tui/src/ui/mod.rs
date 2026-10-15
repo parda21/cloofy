@@ -98,6 +98,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     hover(frame.buffer_mut(), app);
+    app.sync_hover();
 
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();

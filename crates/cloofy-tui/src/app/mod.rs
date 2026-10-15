@@ -1228,6 +1228,13 @@ impl App {
         self.hits.iter().rev().find(|(area, _)| area.contains(position)).map(|(_, hit)| *hit)
     }
 
+    /// Notes what the mouse is over in the frame just drawn. Scrolling, keys and loaded data
+    /// move things under a resting mouse; without this, moving it onto the target it was over
+    /// before would look like no change and leave the highlight behind.
+    pub fn sync_hover(&mut self) {
+        self.hovered = self.mouse.and_then(|position| self.hit_at(position)).filter(Hit::is_interactive);
+    }
+
     /// Moves the cursor to a clicked row, card or sidebar entry.
     fn select(&mut self, hit: Hit) {
         match hit {
