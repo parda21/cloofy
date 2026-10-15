@@ -4,6 +4,7 @@ mod commands;
 mod icons;
 mod loader;
 mod media;
+mod notify;
 mod overlay;
 mod playback;
 mod snapshot;
@@ -16,7 +17,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Result, bail};
 use cloofy_spotify::{config::Config, paths::Paths, session, webapi::WebApi};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, EventStream};
+use crossterm::event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream};
 use futures::{FutureExt, StreamExt};
 use ratatui::DefaultTerminal;
 use ratatui_image::picker::Picker;
@@ -45,10 +46,12 @@ pub async fn run(paths: &Paths) -> Result<()> {
     let mut terminal = ratatui::init();
     // Must run after entering the alternate screen and before reading input events.
     let picker = image_picker();
-    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+    // Focus changes tell whether notifications are worth showing.
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)?;
     let crossfade = config.crossfade.unwrap_or(0).min(12);
-    let result = run_app(&mut terminal, paths, api, picker, crossfade).await;
-    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    let notifier = if config.notifications == Some(false) { None } else { notify::Notifier::detect() };
+    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier).await;
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
 }
@@ -59,6 +62,7 @@ async fn run_app(
     api: Arc<WebApi>,
     picker: Picker,
     crossfade: u64,
+    notifier: Option<notify::Notifier>,
 ) -> Result<()> {
     let (tx, mut events) = mpsc::unbounded_channel();
     let (session_tx, session_rx) = watch::channel(None);
@@ -92,7 +96,7 @@ async fn run_app(
     });
     let saved = state::load(&paths.state_file());
     playback::spawn(paths.clone(), Duration::from_secs(crossfade), saved.volume, retry_now, tx);
-    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media);
+    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media, notifier);
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
@@ -120,6 +124,7 @@ async fn run_app(
             _ = closed.recv() => break,
         };
         app.sync_media();
+        app.announce_track();
         if ticker.period() != ticker_period(app.settings.low_power) {
             ticker = new_ticker(app.settings.low_power);
         }

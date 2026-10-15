@@ -13,6 +13,7 @@ cloofy plays music itself, with no official client or daemon running in the back
 - **Lyrics.** Synced lyrics next to a large cover in the now-playing view.
 - **Cover art.** Real images in terminals that speak the Kitty graphics protocol (kitty, Ghostty, WezTerm), and blocks elsewhere.
 - **Mouse.** Click, hover, scroll, and drag the seek and volume bars.
+- **Notifications.** In kitty, Ghostty, WezTerm and iTerm2, each new track shows a desktop notification while cloofy's window is in the background.
 - **Media keys.** On macOS, the media keys, AirPods and Control Center play, pause, skip and seek, and Control Center shows the track with its cover.
 - **Follows your headphones.** On macOS, playback moves to AirPods or headphones as they connect, and pauses when they disconnect.
 - **Stays connected.** cloofy reconnects by itself after sleep or a lost network. On macOS it also pauses before the Mac sleeps.
@@ -106,6 +107,7 @@ cloofy login --force        # sign in again
 client_id = "your client id"
 crossfade = 6     # seconds tracks overlap, 0 to 12; off when missing
 icons = "nerd"    # "nerd" or "text"; detected from the terminal when missing
+notifications = false  # no desktop notifications for new tracks; on when missing
 ```
 
 cloofy keeps its sign-ins and session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
