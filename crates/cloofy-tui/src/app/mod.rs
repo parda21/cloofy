@@ -2753,9 +2753,9 @@ impl App {
     }
 
     /// A track is shown but nothing plays it: cloofy's own device is inactive and would
-    /// ignore play, skip and seek commands.
+    /// ignore play, skip and seek commands. A start on its way activates it.
     fn idle(&self) -> bool {
-        !self.local_active && !self.remote_active && self.now.track.is_some()
+        !self.local_active && !self.remote_active && self.now.track.is_some() && self.now.pending.is_none()
     }
 
     /// Plays the shown track on cloofy from where it stands, e.g. after another device stopped.
