@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+cloofy feels at home on macOS, starts instantly, and can be tried without an account. Thanks to [@yk-sgr](https://github.com/yk-sgr) for everything on macOS.
+
 ### Added
 
 - **Media keys.** On macOS, the media keys, AirPods and Control Center play, pause, skip and seek, and Control Center shows the track with its cover. This works in `cloofy play` and `cloofy connect` too.
@@ -52,5 +56,6 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/parda21/cloofy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parda21/cloofy/releases/tag/v0.1.0
