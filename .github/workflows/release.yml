@@ -65,7 +65,7 @@ jobs:
           version="${TAG#v}"
           awk -v version="$version" '
             index($0, "## [" version "]") == 1 { found = 1; next }
-            found && /^## / { exit }
+            found && (/^## / || /^\[[^]]+\]: /) { exit }
             found { print }
           ' CHANGELOG.md > notes.md
           if ! grep -q '[^[:space:]]' notes.md; then
