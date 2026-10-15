@@ -46,14 +46,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let View::Artist(view) = &mut app.view else { return };
 
     let Some(page) = &view.page else {
+        // Laid out like the loaded header, so nothing moves when the page arrives: an empty
+        // portrait, the name beside it and the status where the stats will be.
         let buf = frame.buffer_mut();
-        buf.set_string(inner.x, inner.y, "ARTIST", Style::new().fg(FAINT).bold());
-        buf.set_string(inner.x, inner.y + 1, &view.name, Style::new().fg(TEXT).bold());
-        let message = match &view.error {
-            Some(err) => Span::styled(format!("✕  {err}"), DANGER),
-            None => Span::styled(format!("{}  Loading…", text::spinner(frame_no)), MUTED),
+        let portrait = Rect::new(inner.x, inner.y, PORTRAIT.width, PORTRAIT.height).intersection(inner);
+        buf.set_style(portrait, Style::new().bg(RAISED));
+        let text_x = inner.x + PORTRAIT.width + 3;
+        let width = inner.right().saturating_sub(text_x) as usize;
+        let status = match &view.error {
+            Some(err) => (format!("✕  {err}"), Style::new().fg(DANGER)),
+            None => (format!("{}  Loading…", text::spinner(frame_no)), Style::new().fg(MUTED)),
         };
-        buf.set_line(inner.x, inner.y + 3, &Line::from(message), inner.width);
+        let lines = [
+            ("ARTIST".to_owned(), Style::new().fg(FAINT).bold()),
+            (view.name.clone(), Style::new().fg(TEXT).bold()),
+            status,
+        ];
+        for (y, (line, style)) in (inner.y + 1..inner.bottom()).zip(lines) {
+            buf.set_string(text_x, y, text::truncate(&line, width), style);
+        }
         return;
     };
 
