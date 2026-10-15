@@ -268,11 +268,13 @@ pub(super) fn draw_shelf(
     }
 
     let cover_y = layout.y + 2;
+    // A card's box reaches one column past its cover on both sides, the first card's too.
+    let padded = Rect { x: area.x.saturating_sub(1), width: area.width + 2, ..area };
     for (column, item) in layout.items.iter().enumerate() {
         let x = area.x + column as u16 * (COVER.width + CARD_GAP);
         let index = layout.first + column;
         let is_selected = selected == Some(index);
-        let card = clip(area, x.saturating_sub(1), COVER.width + 2, cover_y - 1, COVER.height + 4);
+        let card = clip(padded, x.saturating_sub(1), COVER.width + 2, cover_y - 1, COVER.height + 4);
         if is_selected && let Some(card) = card {
             frame.buffer_mut().set_style(card, Style::new().bg(selection));
         }

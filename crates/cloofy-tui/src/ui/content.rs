@@ -211,7 +211,7 @@ fn track_rows(
         let track = &view.tracks[index];
         let line = columns.row(index, track, style);
         buf.set_line(list.x, y, &line, list.width);
-        hits.push((Rect { y, height: 1, ..list }, Hit::Row(index)));
+        hits.push((row_band(list, y, 1), Hit::Row(index)));
         // Artist and album names lead to their pages.
         if columns.artist > 0 {
             let x = list.x + (Columns::INDEX + columns.title + 2) as u16;
@@ -288,7 +288,7 @@ fn search(
         };
         let row = Rect::new(list.x, y, list.width, grid.rows.min(THUMB.height));
         highlight(buf, list, y, row.height, index == view.list.selected && !typing, style);
-        hits.push((row, Hit::Row(index)));
+        hits.push((row_band(list, y, row.height), Hit::Row(index)));
         grid.draw(buf, row, index, &result, style, hits, thumbs);
     }
     let offset = view.list.offset;
@@ -466,12 +466,18 @@ fn highlight(buf: &mut Buffer, list: Rect, y: u16, height: u16, selected: bool, 
         return;
     }
     let bg = if style.focused { style.selection } else { UNFOCUSED_SELECTION };
-    buf.set_style(Rect::new(list.x.saturating_sub(1), y, list.width + 2, height), Style::new().bg(bg));
+    buf.set_style(row_band(list, y, height), Style::new().bg(bg));
     if style.focused {
         for row in y..y + height {
             buf.set_string(list.x.saturating_sub(2), row, "▌", Style::new().fg(style.accent));
         }
     }
+}
+
+/// Rows from `y` of a list plus one column of padding on each side: where the selection and the
+/// click area go, so a hovered row lights up as wide as a selected one.
+pub(super) fn row_band(list: Rect, y: u16, height: u16) -> Rect {
+    Rect::new(list.x.saturating_sub(1), y, list.width + 2, height)
 }
 
 /// Column widths of a track list; narrower windows drop the album, then fold the artist
