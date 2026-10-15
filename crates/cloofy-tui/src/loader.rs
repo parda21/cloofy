@@ -301,6 +301,13 @@ impl Loader {
                 (None, Some(draw)) => draw(),
                 (None, None) => unreachable!("either downloaded or generated"),
             };
+            // Every slot is square, so other shapes are cut to their middle square, as Spotify's
+            // client does; scaled whole, they would leave a strip beside or below them.
+            let (width, height) = (image.width(), image.height());
+            if width != height {
+                let side = width.min(height);
+                image = image.crop_imm((width - side) / 2, (height - side) / 2, side, side);
+            }
             let extra = process(&mut image);
             // Scale, not Fit: small covers (e.g. user-uploaded playlist images) must fill their slot too.
             let source = keep_source.then(|| Arc::new(image.clone()));
