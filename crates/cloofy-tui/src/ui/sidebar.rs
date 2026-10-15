@@ -160,7 +160,10 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
     let x = thumb.right() + 2;
     // What is playing shows in the accent color with a moving equalizer, like Spotify's speaker.
     let playing = app.playing_context().is_some_and(|context| app.entry_uri(entry).as_deref() == Some(context));
-    let width = area.right().saturating_sub(x + if playing { 4 } else { 1 }) as usize;
+    // Text stays out of the last column, where the scrollbar goes. The equalizer ends a column
+    // before it, and only the title row makes room for it.
+    let width = area.right().saturating_sub(x + 1) as usize;
+    let title_width = area.right().saturating_sub(x + if playing { 6 } else { 1 }) as usize;
     let title_style = match (playing, open) {
         (true, _) => Style::new().fg(app.accent.color()).bold(),
         (false, true) => Style::new().fg(TEXT).bold(),
@@ -168,9 +171,9 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
     };
     let equalizer = if app.now.playing { text::equalizer(app.frame()) } else { icons().volume };
     let buf = frame.buffer_mut();
-    buf.set_string(x, y, text::truncate(&title, width), title_style);
+    buf.set_string(x, y, text::truncate(&title, title_width), title_style);
     if playing {
-        buf.set_string(area.right().saturating_sub(3), y, equalizer, Style::new().fg(app.accent.color()));
+        buf.set_string(area.right().saturating_sub(5), y, equalizer, Style::new().fg(app.accent.color()));
     }
     buf.set_string(x, y + 1, text::truncate(&subtitle, width), Style::new().fg(MUTED));
     app.hits.push((row, Hit::Nav(index)));
