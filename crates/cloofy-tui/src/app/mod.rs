@@ -82,6 +82,8 @@ const FRAME: Duration = Duration::from_millis(120);
 const PAGE_FRESH: Duration = Duration::from_secs(60);
 /// Home fetched within this time is shown again without asking Spotify.
 const HOME_FRESH: Duration = Duration::from_secs(5 * 60);
+/// While data keeps arriving, the data cache is written at most this often.
+const CACHE_SAVE_DELAY: Duration = Duration::from_secs(2);
 /// Parts of the library besides playlists, each loaded on its own.
 const LIBRARY_PARTS: u8 = 4;
 /// Waits before starting the player again after it failed to connect, longer after each
@@ -328,6 +330,13 @@ pub struct App {
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
     home_fetched_at: Option<Instant>,
+    /// Library, user or Home changed since the data cache was last written.
+    data_dirty: bool,
+    last_cache_save: Instant,
+    /// The track list the last run left open, until the restored view has taken it.
+    cached_tracks: Option<crate::datacache::Tracks>,
+    /// Which load of which list the track cache holds, to write it only when it changed.
+    cached_tracks_version: Option<(u64, Instant)>,
     /// Cover art by cell size and URL.
     pub images: HashMap<String, ImageSlot>,
     /// When each image was last drawn; long-unseen ones are dropped to save memory.
@@ -448,6 +457,10 @@ impl App {
             library_filter: LibraryFilter::All,
             home_cache: None,
             home_fetched_at: None,
+            data_dirty: false,
+            last_cache_save: Instant::now(),
+            cached_tracks: None,
+            cached_tracks_version: None,
             images: HashMap::new(),
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
@@ -495,7 +508,9 @@ impl App {
             last_frame: 0,
             quit: false,
         };
+        app.load_cache();
         app.restore(state);
+        app.cached_tracks = None;
         app
     }
 
@@ -519,6 +534,10 @@ impl App {
 
     pub fn shutdown(&mut self) {
         self.save_state();
+        if self.data_dirty {
+            self.save_library(false);
+        }
+        self.save_open_tracks(false);
         if let Some(controller) = &self.controller {
             controller.shutdown();
         }
@@ -703,7 +722,14 @@ impl App {
         }
         match event {
             DataEvent::Me(result) => match result {
-                Ok(user) => self.me = Some(user),
+                Ok(user) => {
+                    // The data cache belongs to whoever was logged in last time.
+                    if self.me.as_ref().is_some_and(|me| me.id != user.id) {
+                        self.forget_library();
+                    }
+                    self.me = Some(user);
+                    self.data_dirty = true;
+                }
                 Err(err) => self.error(err),
             },
             DataEvent::Playlists(result) => {
@@ -716,7 +742,10 @@ impl App {
             DataEvent::LikedCount(result) => {
                 self.library_part_done();
                 match result {
-                    Ok(total) => self.liked_total = Some(total),
+                    Ok(total) => {
+                        self.liked_total = Some(total);
+                        self.data_dirty = true;
+                    }
                     Err(err) => tracing::warn!("liked songs: {err}"),
                 }
             }
@@ -760,6 +789,7 @@ impl App {
                 if let Ok(home) = &result {
                     self.home_cache = Some(home.clone());
                     self.home_fetched_at = Some(Instant::now());
+                    self.data_dirty = true;
                 }
                 let Some(View::Home(v)) = self.view_mut(view) else { return false };
                 match result {
@@ -985,6 +1015,10 @@ impl App {
         }
         if self.last_save.elapsed() >= STATE_SAVE_INTERVAL {
             self.save_state();
+            self.save_open_tracks(true);
+        }
+        if self.data_dirty && self.last_cache_save.elapsed() >= CACHE_SAVE_DELAY {
+            self.save_library(true);
         }
         if self.last_eviction.elapsed() >= EVICTION_INTERVAL {
             self.evict_images();
@@ -2271,7 +2305,7 @@ impl App {
         if let Some(uri) = page_uri.filter(|uri| !self.saved.contains_key(uri)) {
             self.loader.check_saved(vec![uri]);
         }
-        let loaded = self.take_loaded_copy(&source);
+        let loaded = self.take_loaded_copy(&source).or_else(|| self.cached_copy(&source));
         self.retire_copies(&source);
         let view = match loaded {
             Some(view) if view.loading || view.fetched_at.is_some_and(|at| at.elapsed() < PAGE_FRESH) => view,

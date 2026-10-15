@@ -1,6 +1,7 @@
 mod app;
 mod art;
 mod commands;
+mod datacache;
 mod icons;
 mod loader;
 mod overlay;

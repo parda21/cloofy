@@ -41,8 +41,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let entries = app.library_entries_for(filter);
     let grid = Rect::new(inner.x, inner.y + HEADER_ROWS, inner.width, inner.height.saturating_sub(HEADER_ROWS));
+    let loading = app.playlists_loading || app.library_loading;
     if entries.is_empty() {
-        frame.buffer_mut().set_string(grid.x, grid.y, "Nothing here yet.", Style::new().fg(MUTED));
+        let message = if loading {
+            format!("{}  Loading…", text::spinner(app.frame()))
+        } else {
+            "Nothing here yet.".to_owned()
+        };
+        frame.buffer_mut().set_string(grid.x, grid.y, message, Style::new().fg(MUTED));
         return;
     }
     // Too little room for covers: one entry per row instead.
@@ -71,7 +77,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if let View::Library(v) = &mut app.view {
         v.columns = columns;
         v.top = top;
-        v.cursor = cursor;
+        // The library arrives in parts; a restored cursor may point at one still on its way.
+        if !loading {
+            v.cursor = cursor;
+        }
     }
 
     let first = top / row_height * columns;
