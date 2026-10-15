@@ -22,7 +22,11 @@ use cloofy_spotify::{
 use image::imageops::FilterType;
 use librespot::core::session::Session;
 use ratatui::layout::Size;
-use ratatui_image::{Resize, picker::Picker, protocol::Protocol};
+use ratatui_image::{
+    Resize,
+    picker::{Picker, ProtocolType},
+    protocol::Protocol,
+};
 use sha2::{Digest, Sha256};
 use tokio::sync::{OnceCell, Semaphore, mpsc::UnboundedSender, watch};
 
@@ -388,10 +392,23 @@ impl Loader {
                 image = image.crop_imm((width - side) / 2, (height - side) / 2, side, side);
             }
             let extra = process(&mut image);
-            // Scale, not Fit: small covers (e.g. user-uploaded playlist images) must fill their slot too.
             let source = keep_source.then(|| Arc::new(image.clone()));
             // Triangle (bilinear) is several times faster than Lanczos and looks the same when shrinking.
-            let protocol = picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?;
+            let protocol = if picker.protocol_type() == ProtocolType::Kitty {
+                // Kitty fits an image into its cells itself, so it is only shrunk to the pixels
+                // the cells have, never enlarged: that would only add pixels to encode, send and
+                // store, such as a 640 px cover blown up to fill Now Playing.
+                let font = picker.font_size();
+                let width = u32::from(size.width) * u32::from(font.width);
+                let height = u32::from(size.height) * u32::from(font.height);
+                if image.width() > width || image.height() > height {
+                    image = image.resize(width, height, FilterType::Triangle);
+                }
+                picker.new_protocol_cells(image, size)?
+            } else {
+                // Scale, not Fit: small covers (e.g. user-uploaded playlist images) must fill their slot too.
+                picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?
+            };
             Ok((Picture { protocol, source }, extra))
         })
         .await?
