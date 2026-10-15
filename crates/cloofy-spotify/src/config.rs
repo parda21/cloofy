@@ -14,6 +14,8 @@ pub struct Config {
     pub crossfade: Option<u64>,
     /// `"nerd"` or `"text"`; detected from the terminal when missing.
     pub icons: Option<String>,
+    /// `"keychain"` keeps sign-ins in the system's keychain; files when missing.
+    pub credentials: Option<String>,
     /// Desktop notifications for new tracks while cloofy is in the background; on when missing.
     pub notifications: Option<bool>,
 }
@@ -33,10 +35,37 @@ impl Config {
         Ok(config)
     }
 
+    /// Whether sign-ins go to the system's keychain rather than files.
+    pub fn keychain(&self) -> Result<bool> {
+        match self.credentials.as_deref() {
+            None | Some("files") => Ok(false),
+            Some("keychain") if cloofy_os::secrets::available() => Ok(true),
+            Some("keychain") => bail!("credentials = \"keychain\" works on macOS only for now"),
+            Some(other) => bail!("credentials = \"{other}\" is unknown: use \"keychain\" or \"files\""),
+        }
+    }
+
     pub fn client_id(&self, paths: &Paths) -> Result<&str> {
         match self.client_id.as_deref().map(str::trim) {
             Some(id) if !id.is_empty() => Ok(id),
             _ => bail!("No client ID configured. Add it to {}:\n\n  client_id = \"…\"", paths.config_file().display()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn credentials(value: Option<&str>) -> Config {
+        Config { credentials: value.map(Into::into), ..Config::default() }
+    }
+
+    #[test]
+    fn keeps_sign_ins_in_files_unless_asked() {
+        assert!(!credentials(None).keychain().unwrap());
+        assert!(!credentials(Some("files")).keychain().unwrap());
+        assert_eq!(credentials(Some("keychain")).keychain().is_ok(), cfg!(target_os = "macos"));
+        assert!(credentials(Some("vault")).keychain().is_err());
     }
 }

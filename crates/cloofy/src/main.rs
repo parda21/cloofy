@@ -89,7 +89,8 @@ async fn run() -> Result<()> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let cli = Cli::parse();
-    let paths = Paths::resolve()?;
+    let mut paths = Paths::resolve()?;
+    paths.keychain = Config::load(&paths)?.keychain()?;
     init_logging(&paths, cli.command.is_none())?;
     match cli.command {
         Some(Command::Login { force }) => login(&paths, force).await,

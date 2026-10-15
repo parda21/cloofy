@@ -108,11 +108,14 @@ client_id = "your client id"
 crossfade = 6     # seconds tracks overlap, 0 to 12; off when missing
 icons = "nerd"    # "nerd" or "text"; detected from the terminal when missing
 notifications = false  # no desktop notifications for new tracks; on when missing
+credentials = "keychain"  # macOS: sign-ins in the Keychain instead of files
 ```
 
 Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`.
 
-cloofy keeps its sign-ins and session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
+With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain the next time it starts. After each update, macOS asks once whether the new cloofy may use them, because release builds aren't signed yet.
+
+cloofy keeps its sign-ins (unless they are in the Keychain) and session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
 
 ## How it works
 
