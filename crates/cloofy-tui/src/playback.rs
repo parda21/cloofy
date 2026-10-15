@@ -1,4 +1,10 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use cloofy_player::Engine;
@@ -10,11 +16,17 @@ use librespot::{
     metadata::audio::{AudioItem, UniqueFields},
     playback::player::PlayerEvent,
 };
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::app::AppEvent;
 
 const DEVICE_NAME: &str = "cloofy";
+/// Dropped connections are restored this often within the window at most, like librespot's own.
+const RECONNECT_LIMIT: usize = 5;
+const RECONNECT_WINDOW: Duration = Duration::from_secs(600);
+/// Waits between attempts while Spotify can't be reached, doubling up to the longest.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_LONGEST: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -214,7 +226,9 @@ fn current_track(item: &AudioItem) -> CurrentTrack {
 pub struct Controller {
     spirc: Spirc,
     pub session: Session,
-    engine: Engine,
+    engine: Arc<Engine>,
+    /// Set when the connection ends on purpose, so it isn't restored.
+    stopping: Arc<AtomicBool>,
 }
 
 impl Controller {
@@ -299,44 +313,111 @@ impl Controller {
         self.engine.player.set_crossfade(crossfade);
     }
 
+    /// Drops the connection; the background task connects again.
+    pub fn reconnect(&self) {
+        self.session.shutdown();
+        let _ = self.spirc.shutdown();
+    }
+
     pub fn shutdown(&self) {
+        self.stopping.store(true, Ordering::Relaxed);
         let _ = self.spirc.shutdown();
     }
 }
 
-/// Connects the player in the background so the UI shows up instantly.
-pub fn spawn(paths: Paths, crossfade: Duration, tx: UnboundedSender<AppEvent>) {
+/// Connects the player in the background so the UI shows up instantly, and connects again
+/// whenever the connection drops: after the computer slept, or while the network was gone.
+/// Playback starts at the saved `volume`, and keeps its volume when connecting again.
+pub fn spawn(paths: Paths, crossfade: Duration, volume: Option<u16>, tx: UnboundedSender<AppEvent>) {
     tokio::spawn(async move {
-        let result = async {
+        let started = async {
             let pending = session::prepare(&paths)?;
+            let (engine, lost_outputs) = Engine::new(&pending.session, crossfade)?;
+            forward_events(&engine, lost_outputs, &tx);
+            anyhow::Ok((pending, Arc::new(engine)))
+        };
+        let (mut pending, engine) = match started.await {
+            Ok(started) => started,
+            Err(err) => {
+                let _ = tx.send(AppEvent::PlayerFailed(format!("{err:#}")));
+                return;
+            }
+        };
+        let mut reconnects: Vec<Instant> = Vec::new();
+        let mut retry = RETRY_FIRST;
+        let mut volume = volume;
+        loop {
             let session = pending.session.clone();
-            let (engine, mut lost_outputs) = Engine::new(&session, crossfade)?;
-            let mut events = engine.player.get_player_event_channel();
-            let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into()).await?;
-            tokio::spawn(task);
-
-            let player_tx = tx.clone();
-            tokio::spawn(async move {
-                while let Some(event) = events.recv().await {
-                    if player_tx.send(AppEvent::Player(event)).is_err() {
-                        break;
+            match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
+                Ok((spirc, task)) => {
+                    retry = RETRY_FIRST;
+                    let stopping = Arc::new(AtomicBool::new(false));
+                    let controller = Controller {
+                        spirc,
+                        session: session.clone(),
+                        engine: engine.clone(),
+                        stopping: stopping.clone(),
+                    };
+                    if tx.send(AppEvent::PlayerReady(Box::new(controller))).is_err() {
+                        return;
+                    }
+                    task.await;
+                    if stopping.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    if !session.is_invalid() {
+                        session.shutdown();
+                    }
+                    reconnects.retain(|at| at.elapsed() < RECONNECT_WINDOW);
+                    if reconnects.len() >= RECONNECT_LIMIT {
+                        let _ = tx.send(AppEvent::PlayerFailed("Spotify keeps disconnecting".into()));
+                        return;
+                    }
+                    reconnects.push(Instant::now());
+                    tracing::warn!("connection to Spotify lost, connecting again");
+                    if tx.send(AppEvent::PlayerLost).is_err() {
+                        return;
                     }
                 }
-            });
-            let output_tx = tx.clone();
-            tokio::spawn(async move {
-                while let Some(name) = lost_outputs.recv().await {
-                    if output_tx.send(AppEvent::OutputLost(name)).is_err() {
-                        break;
+                Err(err) => {
+                    tracing::warn!("connecting to Spotify: {err:#}");
+                    if tx.send(AppEvent::PlayerFailed(format!("{err:#}"))).is_err() {
+                        return;
                     }
+                    tokio::time::sleep(retry).await;
+                    retry = (retry * 2).min(RETRY_LONGEST);
                 }
-            });
-            anyhow::Ok(Controller { spirc, session, engine })
+            }
+            pending = match session::prepare(&paths) {
+                Ok(pending) => pending,
+                Err(err) => {
+                    let _ = tx.send(AppEvent::PlayerFailed(format!("{err:#}")));
+                    return;
+                }
+            };
+            engine.player.set_session(pending.session.clone());
+            volume = Some(engine.volume());
         }
-        .await;
-        let _ = tx.send(match result {
-            Ok(controller) => AppEvent::PlayerReady(Box::new(controller)),
-            Err(err) => AppEvent::PlayerFailed(format!("{err:#}")),
-        });
+    });
+}
+
+/// Passes the player's events and lost outputs on to the app.
+fn forward_events(engine: &Engine, mut lost_outputs: UnboundedReceiver<String>, tx: &UnboundedSender<AppEvent>) {
+    let mut events = engine.player.get_player_event_channel();
+    let player_tx = tx.clone();
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            if player_tx.send(AppEvent::Player(event)).is_err() {
+                break;
+            }
+        }
+    });
+    let output_tx = tx.clone();
+    tokio::spawn(async move {
+        while let Some(name) = lost_outputs.recv().await {
+            if output_tx.send(AppEvent::OutputLost(name)).is_err() {
+                break;
+            }
+        }
     });
 }

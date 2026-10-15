@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod media;
+pub mod power;
 
 use std::{panic, thread};
 

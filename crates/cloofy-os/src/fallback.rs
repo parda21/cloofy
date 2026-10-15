@@ -17,6 +17,16 @@ pub mod audio {
     }
 }
 
+pub mod power {
+    use std::sync::Arc;
+
+    use crate::power::Event;
+
+    pub fn watch(_on_event: Arc<dyn Fn(Event) + Send + Sync>) -> bool {
+        false
+    }
+}
+
 pub mod media {
     use std::sync::Arc;
 

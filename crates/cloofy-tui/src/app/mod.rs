@@ -57,6 +57,8 @@ const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// After sleeping this long, the connection is gone, even if Spotify takes a while to notice.
+const LONG_SLEEP: Duration = Duration::from_secs(60);
 
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
@@ -65,6 +67,10 @@ pub enum AppEvent {
     Player(PlayerEvent),
     PlayerReady(Box<Controller>),
     PlayerFailed(String),
+    /// The connection to Spotify dropped; a new one is on its way.
+    PlayerLost,
+    /// The computer is about to sleep, or woke up.
+    Power(cloofy_os::power::Event),
     /// A media key, headphone button or Control Center.
     Media(cloofy_os::media::Command),
     /// The audio output in use went away, named.
@@ -280,6 +286,8 @@ pub struct App {
     pub now: NowPlaying,
     /// The system's media controls, where there are any.
     media: Option<MediaSync>,
+    /// When the computer went to sleep, in wall-clock time: the monotonic clock stops meanwhile.
+    slept_at: Option<std::time::SystemTime>,
     pub accent: Accent,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
@@ -374,6 +382,7 @@ impl App {
             player_error: None,
             now: NowPlaying::new(),
             media: media.map(MediaSync::new),
+            slept_at: None,
             accent: Accent::new(),
             me: None,
             playlists: Vec::new(),
@@ -470,18 +479,55 @@ impl App {
         match event {
             AppEvent::Player(event) => self.on_player(event),
             AppEvent::PlayerReady(controller) => {
+                self.player_error = None;
                 let _ = self.session_tx.send(Some(controller.session.clone()));
                 self.device_id = Some(controller.session.device_id().to_owned());
-                if let Some(volume) = self.restored_volume {
-                    let _ = controller.set_volume(volume);
-                }
                 controller.set_crossfade(Duration::from_secs(self.crossfade));
                 self.controller = Some(*controller);
             }
             AppEvent::PlayerFailed(err) => self.player_error = Some(err),
+            AppEvent::PlayerLost => self.on_player_lost(),
+            AppEvent::Power(event) => self.on_power(event),
             AppEvent::Media(command) => self.on_media(command),
             AppEvent::OutputLost(name) => self.on_output_lost(name),
             AppEvent::Data(data) => self.on_data(data),
+        }
+    }
+
+    /// The new connection starts out idle; what played gets ready to continue, as after a restart.
+    fn on_player_lost(&mut self) {
+        self.controller = None;
+        let _ = self.session_tx.send(None);
+        if !self.remote_active
+            && self.resume.is_none()
+            && let Some(last) = self.snapshot().last_track
+        {
+            self.now.restore(&last);
+            self.resume = Some(last);
+        }
+        self.notice("Connection to Spotify lost, reconnecting…".into());
+    }
+
+    fn on_power(&mut self, event: cloofy_os::power::Event) {
+        use cloofy_os::power::Event;
+        match event {
+            Event::Sleep => {
+                self.slept_at = Some(std::time::SystemTime::now());
+                if !self.remote_active && self.now.playing {
+                    self.control(|c| c.pause());
+                }
+                self.save_state();
+            }
+            Event::Wake => {
+                let slept = self.slept_at.take().and_then(|at| at.elapsed().ok());
+                if slept.is_none_or(|slept| slept >= LONG_SLEEP)
+                    && let Some(controller) = &self.controller
+                {
+                    controller.reconnect();
+                }
+                // Whatever plays elsewhere may have changed meanwhile.
+                self.next_poll = Instant::now();
+            }
         }
     }
 

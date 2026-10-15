@@ -20,6 +20,10 @@ impl App {
             self.crossfade = crossfade;
         }
         self.restored_volume = state.volume;
+        // Playback starts at this volume too, see `playback::spawn`.
+        if let Some(volume) = state.volume {
+            self.now.volume = volume;
+        }
 
         let selection = state.selection;
         match state.view {
