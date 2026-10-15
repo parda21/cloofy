@@ -17,7 +17,7 @@ mod views;
 use std::{
     io::{BufWriter, Stdout, Write},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, bail};
@@ -134,6 +134,7 @@ async fn run_app(
     let mut ticker = new_ticker(app.settings.low_power);
 
     draw(terminal, &mut app, false)?;
+    let (recording_since, mut last_frame) = (Instant::now(), Instant::now());
     while !app.quit {
         let redraw = tokio::select! {
             // Input first, so a key or click never waits behind loaded data.
@@ -170,7 +171,16 @@ async fn run_app(
         if ticker.period() != ticker_period(app.settings.low_power) {
             ticker = new_ticker(app.settings.low_power);
         }
-        if redraw || app.snapshot_requested {
+        // Recording for the README: a frame every so often, with the mouse position.
+        let record = snapshotter.as_ref().and_then(|s| s.record_every()).filter(|every| last_frame.elapsed() >= *every);
+        if let (Some(_), Some(snapshotter)) = (record, &snapshotter) {
+            last_frame = Instant::now();
+            let buffer = draw(terminal, &mut app, true)?.expect("asked for the frame");
+            let placements = app.placements.clone();
+            let (snapshotter, at) = (snapshotter.clone(), recording_since.elapsed().as_millis() as u64);
+            let mouse = app.mouse.map(|position| (position.x, position.y));
+            tokio::task::spawn_blocking(move || snapshotter.save_frame(&buffer, &placements, at, mouse));
+        } else if redraw || app.snapshot_requested {
             let snapshot = std::mem::take(&mut app.snapshot_requested) && snapshotter.is_some();
             if let Some(buffer) = draw(terminal, &mut app, snapshot)?
                 && let Some(snapshotter) = &snapshotter

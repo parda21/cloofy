@@ -4,7 +4,7 @@
 //! from `CLOOFY_SNAPSHOT_FONTS` (default `~/.cache/cloofy/dev-fonts`): JetBrains Mono and the
 //! Nerd Font symbols, which is what Ghostty uses out of the box.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use fontdue::{Font, FontSettings};
@@ -43,6 +43,10 @@ pub struct Placement {
 
 pub struct Snapshotter {
     dir: PathBuf,
+    /// Font size in pixels: `CLOOFY_SNAPSHOT_PX`, else [`PX`].
+    px: f32,
+    /// With `CLOOFY_SNAPSHOT_RECORD=<ms>`, a frame is written this often, for recordings.
+    record: Option<Duration>,
     regular: Vec<Font>,
     bold: Vec<Font>,
     cell_w: u32,
@@ -76,16 +80,41 @@ impl Snapshotter {
         let mut bold: Vec<Font> = [load("JetBrainsMono-Bold.ttf")].into_iter().flatten().collect();
         bold.extend(regular.iter().cloned());
         let primary = regular.first().context("JetBrainsMono-Regular.ttf missing")?;
-        let lines = primary.horizontal_line_metrics(PX).context("font without line metrics")?;
+        let px = std::env::var("CLOOFY_SNAPSHOT_PX").ok().and_then(|px| px.parse().ok()).unwrap_or(PX);
+        let record =
+            std::env::var("CLOOFY_SNAPSHOT_RECORD").ok().and_then(|ms| ms.parse().ok()).map(Duration::from_millis);
+        let lines = primary.horizontal_line_metrics(px).context("font without line metrics")?;
         std::fs::create_dir_all(&dir)?;
         Ok(Self {
             dir,
-            cell_w: primary.metrics('M', PX).advance_width.ceil() as u32,
+            px,
+            record,
+            cell_w: primary.metrics('M', px).advance_width.ceil() as u32,
             cell_h: (lines.ascent - lines.descent + lines.line_gap).ceil() as u32,
             ascent: lines.ascent,
             regular,
             bold,
         })
+    }
+
+    /// How often to record a frame, when recording.
+    pub fn record_every(&self) -> Option<Duration> {
+        self.record
+    }
+
+    /// Writes one frame of a recording, named by its time in milliseconds and the mouse
+    /// position, which the terminal doesn't draw: `frame-00001234-x090-y030.png`.
+    pub fn save_frame(
+        &self,
+        buffer: &Buffer,
+        placements: &[Placement],
+        at_ms: u64,
+        mouse: Option<(u16, u16)>,
+    ) -> Result<()> {
+        let image = self.render(buffer, placements);
+        let mouse = mouse.map_or("none".into(), |(x, y)| format!("x{x:03}-y{y:03}"));
+        image.save(self.dir.join(format!("frame-{at_ms:08}-{mouse}.png")))?;
+        Ok(())
     }
 
     /// Renders and writes `latest.png`; returns its path.
@@ -177,7 +206,7 @@ impl Snapshotter {
     fn rasterize(&self, c: char, bold: bool) -> Glyph {
         let fonts = if bold { &self.bold } else { &self.regular };
         let font = fonts.iter().find(|f| f.lookup_glyph_index(c) != 0)?;
-        Some(font.rasterize(c, PX))
+        Some(font.rasterize(c, self.px))
     }
 
     /// Block elements and lines are drawn exactly, like terminals do, so they tile seamlessly.
