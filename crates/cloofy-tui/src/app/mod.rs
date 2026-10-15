@@ -1852,7 +1852,7 @@ impl App {
                 }
                 HintAction::Key(code) => self.on_key(KeyEvent::new(code, KeyModifiers::NONE)),
             },
-            Hit::Header(button) => self.header_button(button, column),
+            Hit::Header(button) => self.header_button(button),
             Hit::LikePlaying => {
                 if let Some(track) = &self.now.track {
                     let (uri, name) = (track.uri.clone(), track.name.clone());
@@ -2921,15 +2921,17 @@ impl App {
     }
 
     /// The play, shuffle, save and more buttons in page headers.
-    fn header_button(&mut self, button: HeaderButton, column: u16) {
+    fn header_button(&mut self, button: HeaderButton) {
         let Some(target) = self.page_target() else { return };
         match button {
             HeaderButton::Play => self.play(target.uri, None),
             HeaderButton::Shuffle => self.play_shuffled(target.uri),
             HeaderButton::Save => self.run_menu(crate::overlay::MenuAction::Save, target),
             HeaderButton::More => {
+                // Right below the button, wherever the header puts it or has scrolled it to.
+                let Some(&(area, _)) = self.hits.iter().find(|(_, hit)| *hit == Hit::Header(button)) else { return };
                 let items = menu::page_menu_items(&target, self.is_saved(&target.uri));
-                let anchor = (column, self.content_area.y + 8);
+                let anchor = (area.x, area.bottom());
                 self.overlay = Some(Overlay::Menu(crate::overlay::Menu { target, anchor, items, cursor: 0 }));
                 self.overlay_fx_pending = true;
             }
