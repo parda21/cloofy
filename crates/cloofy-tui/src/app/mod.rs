@@ -1,3 +1,4 @@
+mod library;
 mod menu;
 mod persist;
 
@@ -343,6 +344,11 @@ pub struct App {
     pending_saves: HashMap<String, (bool, String, Instant)>,
     /// Library changes Spotify hasn't confirmed yet; one request per URI at a time.
     saving: HashSet<String>,
+    /// Items taken out of the library before Spotify confirmed it, and where they were, to
+    /// put them back should it fail.
+    unsaved: HashMap<String, (usize, library::LibraryItem)>,
+    /// Library lists to load again after confirmed changes, and when.
+    library_reloads: HashMap<library::LibraryPart, Instant>,
     pub focus: Focus,
     pub nav: ListCursor,
     pub view: View,
@@ -446,6 +452,8 @@ impl App {
             saved: HashMap::new(),
             pending_saves: HashMap::new(),
             saving: HashSet::new(),
+            unsaved: HashMap::new(),
+            library_reloads: HashMap::new(),
             focus: Focus::Content,
             nav: ListCursor::default(),
             view: View::Home(HomeView::new(0, None)),
@@ -696,10 +704,7 @@ impl App {
             DataEvent::Playlists(result) => {
                 self.playlists_loading = false;
                 match result {
-                    Ok(playlists) => {
-                        self.saved.extend(playlists.iter().map(|p| (p.uri.clone(), true)));
-                        self.playlists = playlists;
-                    }
+                    Ok(playlists) => self.set_playlists(playlists),
                     Err(err) => self.error(err),
                 }
             }
@@ -713,27 +718,21 @@ impl App {
             DataEvent::Albums(result) => {
                 self.library_part_done();
                 match result {
-                    Ok(list) => {
-                        self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
-                        self.albums = list;
-                    }
+                    Ok(list) => self.set_albums(list),
                     Err(err) => tracing::warn!("albums: {err}"),
                 }
             }
             DataEvent::Artists(result) => {
                 self.library_part_done();
                 match result {
-                    Ok(list) => {
-                        self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
-                        self.artists = list;
-                    }
+                    Ok(list) => self.set_artists(list),
                     Err(err) => tracing::warn!("artists: {err}"),
                 }
             }
             DataEvent::Shows(result) => {
                 self.library_part_done();
                 match result {
-                    Ok(list) => self.shows = list,
+                    Ok(list) => self.set_shows(list),
                     Err(err) => tracing::warn!("shows: {err}"),
                 }
             }
@@ -856,13 +855,16 @@ impl App {
             DataEvent::SaveDone { uri, notice } => {
                 self.saving.remove(&uri);
                 if !self.pending_saves.contains_key(&uri) {
+                    self.unsaved.remove(&uri);
+                    self.schedule_reload(&uri);
                     self.notice(notice);
                 }
             }
             DataEvent::SaveFailed { uri, saved, error } => {
                 self.saving.remove(&uri);
                 if !self.pending_saves.contains_key(&uri) {
-                    self.saved.insert(uri, saved);
+                    self.saved.insert(uri.clone(), saved);
+                    self.show_library_change(&uri, saved);
                     self.error(error);
                 }
             }
@@ -893,6 +895,9 @@ impl App {
     }
 
     fn on_tracks(&mut self, view: u64, page: Result<Page<Track>, String>) {
+        // A page may predate an unlike that Spotify has not confirmed yet.
+        let unliked: Vec<String> =
+            self.pending_saves.keys().chain(&self.saving).filter(|uri| !self.is_saved(uri)).cloned().collect();
         let Some(View::Tracks(v)) = self.view_mut(view) else { return };
         let page = match page {
             Ok(page) => page,
@@ -902,9 +907,13 @@ impl App {
                 return;
             }
         };
-        let uris: Vec<String> = page.items.iter().map(|t| t.uri.clone()).collect();
         let liked = matches!(v.source, TrackSource::Liked);
-        v.tracks.extend(page.items);
+        let mut items = page.items;
+        if liked {
+            items.retain(|t| !unliked.contains(&t.uri));
+        }
+        let uris: Vec<String> = items.iter().map(|t| t.uri.clone()).collect();
+        v.tracks.extend(items);
         v.total = Some(page.total);
         v.loading = page.next_offset.is_some();
         if liked {
@@ -934,6 +943,7 @@ impl App {
         }
 
         self.flush_saves();
+        self.reload_library();
         if self.player_retry_at.is_some_and(|at| Instant::now() >= at) {
             self.retry_player();
             redraw = true;
@@ -1806,6 +1816,7 @@ impl App {
     pub(super) fn toggle_library(&mut self, uri: String, name: String) {
         let saved = !self.is_saved(&uri);
         self.saved.insert(uri.clone(), saved);
+        self.show_library_change(&uri, saved);
         self.pending_saves.insert(uri, (saved, name, Instant::now()));
     }
 

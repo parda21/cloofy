@@ -65,6 +65,34 @@ pub struct TrackView {
     pub list: ListCursor,
 }
 
+impl TrackView {
+    /// Takes a song out of the list, keeping the cursor on the song it was on. Returns where
+    /// it was.
+    pub fn remove_track(&mut self, uri: &str) -> Option<(usize, Track)> {
+        let index = self.tracks.iter().position(|t| t.uri == uri)?;
+        let track = self.tracks.remove(index);
+        if index < self.list.selected {
+            self.list.selected -= 1;
+        }
+        self.list.selected = self.list.selected.min(self.tracks.len().saturating_sub(1));
+        self.total = self.total.map(|total| total.saturating_sub(1));
+        Some((index, track))
+    }
+
+    /// Adds a song unless it is listed already, keeping the cursor on the song it was on.
+    pub fn insert_track(&mut self, index: usize, track: Track) {
+        if self.tracks.iter().any(|t| t.uri == track.uri) {
+            return;
+        }
+        let index = index.min(self.tracks.len());
+        if index <= self.list.selected && !self.tracks.is_empty() {
+            self.list.selected += 1;
+        }
+        self.tracks.insert(index, track);
+        self.total = self.total.map(|total| total + 1);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SearchEntry {
     Header(&'static str),
@@ -363,5 +391,53 @@ impl View {
             View::Tracks(v) => v.id,
             View::Search(v) => v.id,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(n: u32) -> Track {
+        Track {
+            uri: format!("spotify:track:{n}"),
+            name: format!("Song {n}"),
+            artists: Vec::new(),
+            artist_uris: Vec::new(),
+            album: String::new(),
+            album_uri: String::new(),
+            duration_ms: 1,
+        }
+    }
+
+    fn liked(count: u32, selected: usize) -> TrackView {
+        TrackView {
+            id: 1,
+            source: TrackSource::Liked,
+            tracks: (0..count).map(track).collect(),
+            total: Some(count),
+            loading: false,
+            error: None,
+            list: ListCursor { selected, ..ListCursor::default() },
+        }
+    }
+
+    #[test]
+    fn removing_a_song_keeps_the_cursor_on_its_song() {
+        let mut view = liked(4, 2);
+        assert_eq!(view.remove_track("spotify:track:0").map(|(index, _)| index), Some(0));
+        assert_eq!(view.tracks[view.list.selected].uri, "spotify:track:2");
+        assert_eq!(view.total, Some(3));
+        assert!(view.remove_track("spotify:track:9").is_none());
+    }
+
+    #[test]
+    fn adding_a_song_keeps_the_cursor_and_skips_duplicates() {
+        let mut view = liked(3, 1);
+        view.insert_track(0, track(7));
+        view.insert_track(0, track(7));
+        assert_eq!(view.tracks.len(), 4);
+        assert_eq!(view.tracks[view.list.selected].uri, "spotify:track:1");
+        assert_eq!(view.total, Some(4));
     }
 }
