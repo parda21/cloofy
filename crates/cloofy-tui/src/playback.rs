@@ -139,8 +139,12 @@ impl NowPlaying {
     /// Notes a track start sent to a player, until it plays. `uri` is the track that will
     /// play, if known.
     pub fn start(&mut self, uri: Option<String>) {
-        let from = self.track.as_ref().map(|t| t.uri.clone());
-        self.pending = Some(Pending { uri, from, skip: false, since: Instant::now(), loading: false, previous: None });
+        // A start right after another one still waits to replace what played before both.
+        let (from, previous) = match self.pending.take() {
+            Some(pending) if !pending.loading => (pending.from, pending.previous),
+            _ => (self.track.as_ref().map(|t| t.uri.clone()), None),
+        };
+        self.pending = Some(Pending { uri, from, skip: false, since: Instant::now(), loading: false, previous });
     }
 
     /// Notes a skip to the next or previous track sent to a player, until it plays.
@@ -1088,6 +1092,21 @@ mod tests {
         full.track.as_mut().unwrap().cover_url = Some("https://i.scdn.co/image/cover".into());
         let (cover, _) = now.apply_remote(&full, &mut RemoteIntent::default());
         assert_eq!(cover.as_deref(), Some("https://i.scdn.co/image/cover"));
+    }
+
+    #[test]
+    fn quick_picks_still_wait_for_the_track_from_before() {
+        let (mut now, _) = remote_track(10_000);
+        now.start(Some(OTHER.into()));
+        now.show_early(track(OTHER));
+        let third = "spotify:track:1111111111111111111111";
+        now.start(Some(third.into()));
+        now.show_early(track(third));
+        // The device still plays the first track: not through yet.
+        assert!(now.awaits_remote(&poll(URI, true, 11_000), true));
+        // If it fails, the track from before both comes back.
+        now.cancel_start();
+        assert_eq!(now.track.as_ref().unwrap().uri, URI);
     }
 
     #[test]
