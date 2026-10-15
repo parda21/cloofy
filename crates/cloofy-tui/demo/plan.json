@@ -1,0 +1,319 @@
+{
+  "user": "Sam",
+  "albums": [
+    "Random Access Memories Daft Punk",
+    "Discovery Daft Punk",
+    "Homework Daft Punk",
+    "Currents Tame Impala",
+    "In Rainbows Radiohead",
+    "Kid A Radiohead",
+    "Blonde Frank Ocean",
+    "Melodrama Lorde",
+    "Moon Safari Air",
+    "Migration Bonobo",
+    "Immunity Jon Hopkins",
+    "Since I Left You The Avalanches",
+    "Dummy Portishead",
+    "Mezzanine Massive Attack",
+    "Cross Justice",
+    "OutRun Kavinsky",
+    "Dive Tycho"
+  ],
+  "artists": [
+    "Daft Punk",
+    "Tame Impala",
+    "Radiohead",
+    "Bonobo",
+    "Jon Hopkins",
+    "Justice",
+    "Kavinsky",
+    "Air",
+    "Fred again..",
+    "Caribou"
+  ],
+  "playlists": [
+    {
+      "name": "Late Night Coding",
+      "tracks": [
+        "Daft Punk Around the World",
+        "Justice Genesis",
+        "Kavinsky Nightcall",
+        "Air La femme d'argent",
+        "Tycho Awake",
+        "Bonobo Kerala",
+        "Jon Hopkins Open Eye Signal",
+        "Moderat A New Error",
+        "Caribou Can't Do Without You",
+        "Fred again.. Delilah (pull me out of this)",
+        "Röyksopp Eple",
+        "The Avalanches Since I Left You",
+        "Boards of Canada Roygbiv",
+        "Daft Punk Veridis Quo",
+        "Massive Attack Teardrop",
+        "Kiasmos Looped"
+      ]
+    },
+    {
+      "name": "Morning Run",
+      "tracks": [
+        "Tame Impala The Less I Know The Better",
+        "Daft Punk One More Time",
+        "Justice D.A.N.C.E.",
+        "MGMT Electric Feel",
+        "Phoenix Lisztomania",
+        "LCD Soundsystem Dance Yrself Clean",
+        "Gorillaz Feel Good Inc.",
+        "Two Door Cinema Club What You Know",
+        "The Strokes Last Nite",
+        "Arctic Monkeys Do I Wanna Know?"
+      ]
+    },
+    {
+      "name": "Deep Focus",
+      "tracks": [
+        "Nils Frahm Says",
+        "Ólafur Arnalds saman",
+        "Brian Eno An Ending (Ascent)",
+        "Tycho A Walk",
+        "Bonobo Cirrus",
+        "Max Richter On the Nature of Daylight",
+        "Jon Hopkins Emerald Rush",
+        "Aphex Twin #3",
+        "Boards of Canada Dayvan Cowboy",
+        "Hania Rani Eden"
+      ]
+    },
+    {
+      "name": "Sunday Morning",
+      "tracks": [
+        "Frank Ocean Pink + White",
+        "Khruangbin Maria También",
+        "Men I Trust Show Me How",
+        "Mac DeMarco Chamber of Reflection",
+        "Tom Misch It Runs Through Me",
+        "FKJ Ylang Ylang",
+        "Rex Orange County Best Friend",
+        "Still Woozy Goodie Bag"
+      ]
+    },
+    {
+      "name": "Synthwave Drive",
+      "tracks": [
+        "Kavinsky Nightcall",
+        "The Midnight Sunset",
+        "FM-84 Running in the Night",
+        "Carpenter Brut Turbo Killer",
+        "Perturbator Future Club",
+        "Gunship Tech Noir",
+        "Timecop1983 On the Run",
+        "College A Real Hero"
+      ]
+    },
+    {
+      "name": "Golden Era",
+      "tracks": [
+        "A Tribe Called Quest Electric Relaxation",
+        "Nas N.Y. State of Mind",
+        "The Pharcyde Passin' Me By",
+        "De La Soul Me Myself and I",
+        "Wu-Tang Clan C.R.E.A.M.",
+        "Gang Starr Mass Appeal",
+        "Digable Planets Rebirth of Slick",
+        "Mobb Deep Shook Ones, Pt. II"
+      ]
+    },
+    {
+      "name": "Jazz in the Background",
+      "tracks": [
+        "Miles Davis So What",
+        "Bill Evans Trio Waltz for Debby",
+        "Dave Brubeck Take Five",
+        "Duke Ellington John Coltrane In a Sentimental Mood",
+        "Chet Baker Almost Blue",
+        "Herbie Hancock Cantaloupe Island"
+      ]
+    },
+    {
+      "name": "Daily Mix 1",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Justice Genesis",
+        "Daft Punk Harder, Better, Faster, Stronger",
+        "Kavinsky Odd Look",
+        "Air Sexy Boy",
+        "Fred again.. Marea (we've lost dancing)",
+        "Caribou Odessa"
+      ]
+    },
+    {
+      "name": "Daily Mix 2",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Tame Impala Let It Happen",
+        "Radiohead Weird Fishes/Arpeggi",
+        "MGMT Kids",
+        "Phoenix 1901",
+        "Arctic Monkeys 505",
+        "The Strokes Reptilia"
+      ]
+    },
+    {
+      "name": "Daily Mix 3",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Bonobo Kong",
+        "Tycho Dive",
+        "Jon Hopkins Singularity",
+        "Nils Frahm Ambre",
+        "Ólafur Arnalds Near Light",
+        "Boards of Canada Olson"
+      ]
+    },
+    {
+      "name": "Daily Mix 4",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Frank Ocean Nights",
+        "Lorde Green Light",
+        "Khruangbin Time (You and I)",
+        "Men I Trust Tailwhip",
+        "Tom Misch Disco Yes",
+        "Mac DeMarco Salad Days"
+      ]
+    },
+    {
+      "name": "Discover Weekly",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Moderat Bad Kingdom",
+        "Kiasmos Blurred",
+        "Floating Points Ratio",
+        "Four Tet Baby",
+        "Bicep Glue",
+        "Jamie xx Gosh"
+      ]
+    },
+    {
+      "name": "Release Radar",
+      "library": false,
+      "owner": "Spotify",
+      "tracks": [
+        "Fred again.. leavemealone",
+        "Caribou Honey",
+        "Justice Generator",
+        "Tame Impala Borderline",
+        "Bonobo Rosewood",
+        "Air Highschool Lover"
+      ]
+    }
+  ],
+  "liked": [
+    "Daft Punk Around the World",
+    "Daft Punk Digital Love",
+    "Tame Impala Let It Happen",
+    "Radiohead Nude",
+    "Frank Ocean Ivy",
+    "Lorde Supercut",
+    "Air Kelly Watch the Stars",
+    "Bonobo Kerala",
+    "Jon Hopkins Open Eye Signal",
+    "Justice Genesis",
+    "Kavinsky Nightcall",
+    "Portishead Glory Box",
+    "Massive Attack Teardrop",
+    "The Avalanches Frontier Psychiatrist",
+    "Tycho Awake",
+    "Fred again.. Delilah (pull me out of this)",
+    "Caribou Can't Do Without You",
+    "Khruangbin Maria También",
+    "MGMT Electric Feel",
+    "Phoenix Lisztomania"
+  ],
+  "searches": ["daft punk"],
+  "playing": {
+    "track": "Daft Punk Around the World",
+    "context": "Late Night Coding",
+    "position_ms": 81000
+  },
+  "home": {
+    "greeting": "Good evening",
+    "shortcuts": [
+      "liked",
+      "playlist:Late Night Coding",
+      "album:Random Access Memories",
+      "playlist:Deep Focus",
+      "artist:Tame Impala",
+      "playlist:Synthwave Drive",
+      "album:Currents",
+      "playlist:Daily Mix 1"
+    ],
+    "shelves": [
+      {
+        "title": "Made For You",
+        "items": [
+          "playlist:Daily Mix 1",
+          "playlist:Daily Mix 2",
+          "playlist:Daily Mix 3",
+          "playlist:Daily Mix 4",
+          "playlist:Discover Weekly",
+          "playlist:Release Radar"
+        ]
+      },
+      {
+        "title": "Jump back in",
+        "items": [
+          "album:Discovery",
+          "album:In Rainbows",
+          "album:Blonde",
+          "album:Moon Safari",
+          "album:Migration",
+          "album:Immunity",
+          "album:Justice",
+          "album:Melodrama"
+        ]
+      },
+      {
+        "title": "Your favorite artists",
+        "items": [
+          "artist:Daft Punk",
+          "artist:Tame Impala",
+          "artist:Radiohead",
+          "artist:Bonobo",
+          "artist:Jon Hopkins",
+          "artist:Justice",
+          "artist:Air",
+          "artist:Kavinsky"
+        ]
+      },
+      {
+        "title": "Your playlists",
+        "items": [
+          "playlist:Late Night Coding",
+          "playlist:Morning Run",
+          "playlist:Deep Focus",
+          "playlist:Sunday Morning",
+          "playlist:Synthwave Drive",
+          "playlist:Golden Era",
+          "playlist:Jazz in the Background"
+        ]
+      },
+      {
+        "title": "Albums you might like",
+        "items": [
+          "album:Dummy",
+          "album:Mezzanine",
+          "album:Since I Left You",
+          "album:Dive",
+          "album:OutRun",
+          "album:Homework",
+          "album:Kid A"
+        ]
+      }
+    ]
+  }
+}
