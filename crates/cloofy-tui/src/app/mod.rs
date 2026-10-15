@@ -260,6 +260,9 @@ pub enum HintAction {
     Activate,
     Back,
     ToggleFocus,
+    /// Does exactly what the key does where it is pressed, for keys whose meaning depends
+    /// on the focus or the page.
+    Key(KeyCode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1796,6 +1799,7 @@ impl App {
                 HintAction::ToggleFocus => {
                     self.focus = if self.focus == Focus::Nav { Focus::Content } else { Focus::Nav };
                 }
+                HintAction::Key(code) => self.on_key(KeyEvent::new(code, KeyModifiers::NONE)),
             },
             Hit::Header(button) => self.header_button(button, column),
             Hit::LikePlaying => {
