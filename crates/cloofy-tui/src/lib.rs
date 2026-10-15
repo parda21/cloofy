@@ -116,9 +116,10 @@ async fn run_app(
     cloofy_os::power::watch({
         let (tx, retry_now) = (tx.clone(), retry_now.clone());
         move |event| {
-            // Whatever kept Spotify out of reach may be gone after sleep.
+            // Whatever kept Spotify out of reach may be gone after sleep. The signal is kept
+            // for a wait that only starts once the connection drops.
             if event == cloofy_os::power::Event::Wake {
-                retry_now.notify_waiters();
+                retry_now.notify_one();
             }
             let _ = tx.send(app::AppEvent::Power(event));
         }
