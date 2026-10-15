@@ -18,6 +18,7 @@ objc2-app-kit = { workspace = true, features = ["NSImage"] }
 objc2-core-audio = { workspace = true, features = ["AudioHardware"] }
 objc2-core-foundation = { workspace = true, features = ["CFCGTypes", "CFRunLoop"] }
 objc2-foundation = { workspace = true, features = ["NSData", "NSDictionary", "NSString", "NSValue"] }
+objc2-io-kit = { workspace = true, features = ["libc", "pwr_mgt"] }
 objc2-media-player = { workspace = true, features = [
     "block2",
     "objc2-app-kit",

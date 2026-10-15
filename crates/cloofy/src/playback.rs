@@ -28,7 +28,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let session = pending.session.clone();
     let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
-    let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into()).await?;
+    let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), None).await?;
     tokio::pin!(task);
 
     let mut options = LoadRequestOptions {
@@ -91,7 +91,7 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
     let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
     let mut events = engine.player.get_player_event_channel();
-    let (spirc, task) = engine.connect_device(pending, name.clone()).await?;
+    let (spirc, task) = engine.connect_device(pending, name.clone(), None).await?;
     tokio::pin!(task);
 
     println!(

@@ -77,8 +77,14 @@ async fn run_app(
             let _ = tx.send(app::AppEvent::Media(command));
         }
     });
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx);
+    cloofy_os::power::watch({
+        let tx = tx.clone();
+        move |event| {
+            let _ = tx.send(app::AppEvent::Power(event));
+        }
+    });
     let saved = state::load(&paths.state_file());
+    playback::spawn(paths.clone(), Duration::from_secs(crossfade), saved.volume, tx);
     let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file(), media);
 
     let mut input = EventStream::new();

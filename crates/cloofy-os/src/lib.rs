@@ -5,6 +5,7 @@
 
 pub mod audio;
 pub mod media;
+pub mod power;
 
 #[cfg(target_os = "macos")]
 mod macos;

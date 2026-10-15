@@ -48,14 +48,24 @@ impl Engine {
         Ok((Self { player, mixer }, lost_rx))
     }
 
+    /// The volume playback has now.
+    pub fn volume(&self) -> u16 {
+        self.mixer.volume()
+    }
+
     /// Registers the player as a Spotify Connect device. Spirc connects the session itself,
-    /// which is why it takes a pending session.
+    /// which is why it takes a pending session. It sets the volume to `volume`, or to
+    /// librespot's default without one.
     pub async fn connect_device(
         &self,
         pending: PendingSession,
         name: String,
+        volume: Option<u16>,
     ) -> Result<(Spirc, impl Future<Output = ()> + use<>)> {
-        let config = ConnectConfig { name, device_type: DeviceType::Computer, ..ConnectConfig::default() };
+        let mut config = ConnectConfig { name, device_type: DeviceType::Computer, ..ConnectConfig::default() };
+        if let Some(volume) = volume {
+            config.initial_volume = volume;
+        }
         Ok(Spirc::new(config, pending.session, pending.credentials, self.player.clone(), self.mixer.clone()).await?)
     }
 }

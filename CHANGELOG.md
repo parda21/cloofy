@@ -8,10 +8,12 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 - **Media keys.** On macOS, the media keys, AirPods and Control Center play, pause, skip and seek, and Control Center shows the track with its cover. This works in `cloofy play` and `cloofy connect` too.
 - **Follows your headphones.** On macOS, playback moves to AirPods or headphones as they connect, and pauses when the output in use disconnects instead of carrying on through the speakers.
+- **Reconnecting.** cloofy reconnects to Spotify by itself when the connection drops, after sleep or a network outage, and offers to continue where playback stopped. On macOS it pauses before the Mac sleeps and reconnects as soon as it wakes.
 
 ### Fixed
 
 - On macOS, playback no longer stalls for good when the headphones or AirPods in use disconnect.
+- The saved volume applies on start. cloofy always started at 50% and then saved that.
 
 ## [0.1.0] - 2026-10-15
 
