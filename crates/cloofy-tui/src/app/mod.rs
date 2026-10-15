@@ -113,6 +113,14 @@ const SETTINGS_INTERVAL: Duration = Duration::from_secs(3);
 /// After sleeping this long, the connection is gone, even if Spotify takes a while to notice.
 const LONG_SLEEP: Duration = Duration::from_secs(60);
 
+/// What the app opens with.
+pub enum Start<'a> {
+    /// The last session: the page, the selection and the track to resume.
+    Restore(Box<crate::state::State>),
+    /// The demo's playing track, with nothing of an account restored.
+    Demo(&'a crate::demo::Playing),
+}
+
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
@@ -478,6 +486,8 @@ pub struct App {
     started: Instant,
     last_frame: u64,
     pub quit: bool,
+    /// A showcase with sample data (`cloofy demo`): nothing is saved.
+    demo: bool,
 }
 
 impl App {
@@ -485,7 +495,7 @@ impl App {
         loader: Loader,
         session_tx: watch::Sender<SessionState>,
         crossfade: u64,
-        state: crate::state::State,
+        start: Start,
         paths: Paths,
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
@@ -590,11 +600,44 @@ impl App {
             started: Instant::now(),
             last_frame: 0,
             quit: false,
+            demo: matches!(start, Start::Demo(_)),
         };
-        app.load_cache();
-        app.restore(state);
+        match start {
+            Start::Restore(state) => {
+                app.load_cache();
+                app.restore(*state);
+            }
+            // A showcase starts fresh, and never touches the account's saved session.
+            Start::Demo(playing) => app.start_demo(playing),
+        }
         app.cached_tracks = None;
         app
+    }
+
+    /// Shows the demo's track as playing. Nothing plays: there is no player.
+    fn start_demo(&mut self, playing: &crate::demo::Playing) {
+        let track = &playing.track;
+        let last = crate::state::LastTrack {
+            uri: track.uri.clone(),
+            name: track.name.clone(),
+            artists: track.artists.clone(),
+            artist_uris: track.artist_uris.clone(),
+            album: track.album.clone(),
+            album_uri: Some(track.album_uri.clone()),
+            duration_ms: track.duration_ms,
+            cover_url: track.image_url.clone(),
+            cover_url_large: playing.cover_url_large.clone(),
+            context: playing.context.clone(),
+            position_ms: playing.position_ms,
+        };
+        self.now.restore(&last);
+        self.now.set_playing(true);
+        self.now.volume = (u32::from(u16::MAX) * 7 / 10) as u16;
+        self.last_context = last.context.clone();
+        if let Some(url) = &last.cover_url {
+            self.loader.cover(url.clone(), COVER_SIZE);
+        }
+        self.after_track_change(None);
     }
 
     /// The last session's track is shown and ␣ would continue it.
@@ -3186,6 +3229,7 @@ impl App {
     fn not_connected(&mut self) {
         let text = match &self.player_error {
             Some(err) => format!("Playback unavailable: {err}"),
+            None if self.demo => "This is the demo: nothing plays here".into(),
             None => "Still connecting to Spotify…".into(),
         };
         self.error(text);

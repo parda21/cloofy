@@ -5,11 +5,12 @@ use librespot::{
     core::{SpotifyUri, session::Session},
     metadata::{Lyrics as SpotifyLyrics, lyrics::SyncType},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const LRCLIB: &str = "https://lrclib.net/api/get";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lyrics {
     /// Whether lines carry real timestamps.
     pub synced: bool,
@@ -18,7 +19,7 @@ pub struct Lyrics {
     pub provider: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricLine {
     pub start_ms: u32,
     pub text: String,

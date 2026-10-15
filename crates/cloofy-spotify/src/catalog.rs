@@ -92,7 +92,7 @@ pub struct ShowInfo {
     pub image_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchResults {
     pub tracks: Vec<Track>,
     pub albums: Vec<AlbumInfo>,

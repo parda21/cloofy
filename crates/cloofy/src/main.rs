@@ -47,6 +47,8 @@ enum Command {
         /// Target directory
         dir: std::path::PathBuf,
     },
+    /// Try the interface with a built-in sample library, no account needed (nothing plays)
+    Demo,
     /// Remote mode: wait until a Spotify app picks cloofy as its device
     Connect {
         /// Name the device shows up as in Spotify
@@ -91,12 +93,13 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
     let mut paths = Paths::resolve()?;
     paths.keychain = Config::load(&paths)?.keychain()?;
-    init_logging(&paths, cli.command.is_none())?;
+    init_logging(&paths, matches!(cli.command, None | Some(Command::Demo)))?;
     match cli.command {
         Some(Command::Login { force }) => login(&paths, force).await,
         Some(Command::Doctor) => doctor::run(&paths).await,
         Some(Command::Play { uri, shuffle }) => playback::play(&paths, &uri, shuffle).await,
         Some(Command::Connect { name }) => playback::connect(&paths, name).await,
+        Some(Command::Demo) => cloofy_tui::demo(&paths).await,
         Some(Command::Query { operation, variables }) => query(&paths, &operation, &variables).await,
         Some(Command::DjSample { dir }) => dj_sample(&paths, &dir).await,
         None => cloofy_tui::run(&paths).await,

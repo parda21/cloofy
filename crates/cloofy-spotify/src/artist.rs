@@ -1,6 +1,7 @@
 //! Artist pages: popular tracks, discography and related artists in one query.
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
 
 const IMAGE_WIDTH: u64 = 300;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtistPage {
     pub uri: String,
     pub name: String,
@@ -25,7 +26,7 @@ pub struct ArtistPage {
     pub shelves: Vec<Shelf>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopTrack {
     pub track: Track,
     pub playcount: Option<u64>,

@@ -38,6 +38,7 @@ use tokio::sync::{
 use crate::{
     app::AppEvent,
     art,
+    demo::Demo,
     playback::CurrentTrack,
     theme::{self, Rgb},
     views::TrackSource,
@@ -191,6 +192,8 @@ pub struct Loader {
     /// The number of the last frame drawn; see [`Loader::frame_drawn`].
     frames_drawn: Arc<AtomicU64>,
     remote: UnboundedSender<connect::Command>,
+    /// The sample `cloofy demo` shows instead of the account's data.
+    demo: Option<Arc<Demo>>,
 }
 
 /// An image to decode: downloaded bytes, or artwork cloofy draws itself.
@@ -230,7 +233,18 @@ impl Loader {
             encode_turns: Arc::new(Semaphore::new(turns)),
             prefetch_turns: Arc::new(Semaphore::new(2)),
             frames_drawn: Arc::default(),
+            demo: None,
         }
+    }
+
+    /// Answers every request from the demo's sample instead of Spotify.
+    pub fn with_demo(mut self, demo: Option<Arc<Demo>>) -> Self {
+        self.demo = demo;
+        self
+    }
+
+    fn demo(&self) -> Option<&Demo> {
+        self.demo.as_deref()
     }
 
     /// Notes that frame `number` is on screen. An image request whose image the frame did not
@@ -260,6 +274,9 @@ impl Loader {
     }
 
     pub fn me(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Me(Ok(demo.user.clone())));
+        }
         self.spawn(|this| async move {
             let result = catalog::me(&this.api).await;
             if let Ok(user) = &result {
@@ -277,6 +294,9 @@ impl Loader {
     }
 
     pub fn home(&self, view: u64) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Home { view, result: Ok(demo.home.clone()) });
+        }
         self.spawn(move |this| async move {
             let result = async { home::home(this.pathfinder().await?).await }.await;
             this.send(DataEvent::Home { view, result: result.map_err(|e| format!("{e:#}")) });
@@ -284,6 +304,10 @@ impl Loader {
     }
 
     pub fn artist(&self, view: u64, uri: String) {
+        if let Some(demo) = self.demo() {
+            let result = demo.artist_pages.get(&uri).cloned().ok_or_else(|| "This artist isn't in the demo".to_owned());
+            return self.send(DataEvent::Artist { view, result });
+        }
         self.spawn(move |this| async move {
             let result = async { artist::artist(this.pathfinder().await?, &uri).await }.await;
             this.send(DataEvent::Artist { view, result: result.map_err(|e| format!("{e:#}")) });
@@ -349,6 +373,9 @@ impl Loader {
     }
 
     pub fn liked_count(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::LikedCount(Ok(demo.liked.len() as u32)));
+        }
         self.spawn(|this| async move {
             let result = catalog::liked_count(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::LikedCount(result));
@@ -356,6 +383,9 @@ impl Loader {
     }
 
     pub fn albums(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Albums(Ok(demo.albums.clone())));
+        }
         self.spawn(|this| async move {
             let result = catalog::saved_albums(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Albums(result));
@@ -363,6 +393,9 @@ impl Loader {
     }
 
     pub fn artists(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Artists(Ok(demo.artists.clone())));
+        }
         self.spawn(|this| async move {
             let result = catalog::followed_artists(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Artists(result));
@@ -370,6 +403,9 @@ impl Loader {
     }
 
     pub fn shows(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Shows(Ok(demo.shows.clone())));
+        }
         self.spawn(|this| async move {
             let result = catalog::saved_shows(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Shows(result));
@@ -377,6 +413,9 @@ impl Loader {
     }
 
     pub fn playlists(&self) {
+        if let Some(demo) = self.demo() {
+            return self.send(DataEvent::Playlists(Ok(demo.playlists.clone())));
+        }
         self.spawn(|this| async move {
             let result = catalog::playlists(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Playlists(result));
@@ -386,6 +425,16 @@ impl Loader {
     /// Loads all tracks of a source. Pages after the first are fetched a few at a time and
     /// arrive in order.
     pub fn tracks(&self, view: u64, source: TrackSource) -> Fetch {
+        if let Some(demo) = self.demo() {
+            let items = match &source {
+                TrackSource::Liked => demo.liked.clone(),
+                TrackSource::Playlist(playlist) => demo.tracks(&playlist.uri),
+                TrackSource::Album(album) => demo.tracks(&album.uri),
+            };
+            let total = items.len() as u32;
+            self.send(DataEvent::Tracks { view, page: Ok(Page { items, total, next_offset: None }) });
+            return self.spawn_fetch(|_| async {});
+        }
         self.spawn_fetch(move |this| async move {
             if let TrackSource::Playlist(playlist) = &source
                 && !playlist.collaborative
@@ -463,6 +512,10 @@ impl Loader {
     }
 
     pub fn search(&self, view: u64, query: String) {
+        if let Some(demo) = self.demo() {
+            let result = Ok(demo.search(&query));
+            return self.send(DataEvent::Search { view, query, result });
+        }
         self.spawn(move |this| async move {
             let result = catalog::search(&this.api, &query).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Search { view, query, result });
@@ -594,6 +647,10 @@ impl Loader {
     }
 
     pub fn lyrics(&self, track: &CurrentTrack) {
+        if let Some(demo) = self.demo() {
+            let result = Ok(demo.lyrics.get(&track.uri).cloned());
+            return self.send(DataEvent::Lyrics { uri: track.uri.clone(), result });
+        }
         let uri = track.uri.clone();
         let title = track.name.clone();
         let artist = track.artists.first().cloned().unwrap_or_default();
@@ -612,6 +669,13 @@ impl Loader {
     pub fn check_saved(&self, uris: Vec<String>) {
         if uris.is_empty() {
             return;
+        }
+        if let Some(demo) = self.demo() {
+            let flags = uris.into_iter().map(|uri| {
+                let saved = demo.is_saved(&uri);
+                (uri, saved)
+            });
+            return self.send(DataEvent::Saved(flags.collect()));
         }
         self.spawn(move |this| async move {
             let api = &this.api;
@@ -632,6 +696,10 @@ impl Loader {
     }
 
     pub fn set_saved(&self, uri: String, name: String, saved: bool) {
+        if self.demo.is_some() {
+            let notice = if saved { format!("“{name}” saved") } else { format!("“{name}” removed") };
+            return self.send(DataEvent::SaveDone { uri, notice });
+        }
         self.spawn(move |this| async move {
             let uris = [uri.clone()];
             let result =
@@ -647,6 +715,9 @@ impl Loader {
     }
 
     pub fn playback(&self) {
+        if self.demo.is_some() {
+            return self.send(DataEvent::Playback(Ok(None)));
+        }
         self.spawn(|this| async move {
             let result = connect::playback(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Playback(result));
@@ -654,6 +725,9 @@ impl Loader {
     }
 
     pub fn devices(&self) {
+        if self.demo.is_some() {
+            return self.send(DataEvent::Devices(Ok(Vec::new())));
+        }
         self.spawn(|this| async move {
             let result = connect::devices(&this.api).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Devices(result));
@@ -661,6 +735,9 @@ impl Loader {
     }
 
     pub fn transfer(&self, device: Device) {
+        if self.demo.is_some() {
+            return;
+        }
         self.spawn(move |this| async move {
             let result = connect::transfer(&this.api, &device.id).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Transferred { name: device.name, result });
@@ -669,11 +746,17 @@ impl Loader {
 
     /// Controls playback on another Spotify Connect device. Answers with `RemoteDone`.
     pub fn remote(&self, command: connect::Command) {
+        if self.demo.is_some() {
+            return;
+        }
         let _ = self.remote.send(command);
     }
 
     /// Reports only failures; the app confirms right away.
     pub fn queue(&self, uri: String) {
+        if self.demo.is_some() {
+            return;
+        }
         self.spawn(move |this| async move {
             if let Err(err) = catalog::queue(&this.api, &uri).await {
                 this.send(DataEvent::Failed(format!("Queue: {err:#}")));
@@ -683,6 +766,9 @@ impl Loader {
 
     /// Reports only failures; the app confirms right away.
     pub fn add_to_playlist(&self, playlist_id: String, uris: Vec<String>) {
+        if self.demo.is_some() {
+            return;
+        }
         self.spawn(move |this| async move {
             if let Err(err) = catalog::add_to_playlist(&this.api, &playlist_id, &uris).await {
                 let error = format!("Playlist: {err:#}");

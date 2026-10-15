@@ -77,6 +77,9 @@ impl App {
     /// Writes the library and Home for the next start; in the background unless quitting.
     pub(super) fn save_library(&mut self, background: bool) {
         self.data_dirty = false;
+        if self.demo {
+            return;
+        }
         self.last_cache_save = Instant::now();
         let Some(user) = self.me.clone() else { return };
         let library = datacache::Library {
@@ -94,6 +97,9 @@ impl App {
 
     /// Writes the open track list for the next start, once it is complete and if it changed.
     pub(super) fn save_open_tracks(&mut self, background: bool) {
+        if self.demo {
+            return;
+        }
         let View::Tracks(v) = &self.view else { return };
         let Some(fetched_at) = v.fetched_at.filter(|_| v.incoming.is_none()) else { return };
         if self.cached_tracks_version == Some((v.id, fetched_at)) {
@@ -257,6 +263,9 @@ impl App {
 
     pub fn save_state(&mut self) {
         self.last_save = Instant::now();
+        if self.demo {
+            return;
+        }
         if let Err(err) = state::save(&self.state_path, &self.snapshot()) {
             tracing::warn!("saving state: {err}");
         }

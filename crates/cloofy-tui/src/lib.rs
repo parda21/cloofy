@@ -2,6 +2,7 @@ mod app;
 mod art;
 mod commands;
 mod datacache;
+pub mod demo;
 mod icons;
 mod loader;
 mod media;
@@ -21,7 +22,12 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use cloofy_spotify::{config::Config, paths::Paths, session, webapi::WebApi};
+use cloofy_spotify::{
+    config::Config,
+    paths::{Paths, Secret},
+    session,
+    webapi::WebApi,
+};
 use crossterm::{
     event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream},
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
@@ -58,7 +64,20 @@ pub async fn run(paths: &Paths) -> Result<()> {
     if !api.is_logged_in().await || !session::is_logged_in(paths)? {
         bail!("Not logged in yet – run `cloofy login` first.");
     }
+    run_ui(paths, config, api, None).await
+}
 
+/// The interface with a built-in sample instead of an account: nothing to set up, nothing
+/// plays, nothing is saved.
+pub async fn demo(paths: &Paths) -> Result<()> {
+    let demo = Arc::new(demo::Demo::sample()?);
+    let config = Config::load(paths).unwrap_or_default();
+    // Never asked for anything: every request is answered from the sample.
+    let api = Arc::new(WebApi::new("demo", Secret::File(paths.cache.join("demo-has-no-token")))?);
+    run_ui(paths, config, api, Some(demo)).await
+}
+
+async fn run_ui(paths: &Paths, config: Config, api: Arc<WebApi>, demo: Option<Arc<demo::Demo>>) -> Result<()> {
     #[cfg(unix)]
     let _stderr = StderrToLog::redirect(&paths.log_file());
     icons::init(config.icons.as_deref());
@@ -77,8 +96,9 @@ pub async fn run(paths: &Paths) -> Result<()> {
         restore(info);
     }));
     let crossfade = config.crossfade.unwrap_or(0).min(12);
-    let notifier = if config.notifications == Some(false) { None } else { notify::Notifier::detect() };
-    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier).await;
+    let notifier =
+        if config.notifications == Some(false) || demo.is_some() { None } else { notify::Notifier::detect() };
+    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier, demo).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
@@ -91,6 +111,7 @@ async fn run_app(
     picker: Picker,
     crossfade: u64,
     notifier: Option<notify::Notifier>,
+    demo: Option<Arc<demo::Demo>>,
 ) -> Result<()> {
     let (tx, mut events) = mpsc::unbounded_channel();
     let (session_tx, session_rx) = watch::channel(SessionState::Connecting);
@@ -103,15 +124,21 @@ async fn run_app(
         paths.pathfinder_hashes(),
         paths.cache.join("images"),
         snapshotter.is_some(),
-    );
+    )
+    .with_demo(demo.clone());
     loader.prune_image_cache();
     let notices = tx.clone();
-    let media = cloofy_os::media::Controls::new({
-        let tx = tx.clone();
-        move |command| {
-            let _ = tx.send(app::AppEvent::Media(command));
-        }
-    });
+    // The demo leaves the system alone: no media keys, no player, no saved session.
+    let media = if demo.is_some() {
+        None
+    } else {
+        cloofy_os::media::Controls::new({
+            let tx = tx.clone();
+            move |command| {
+                let _ = tx.send(app::AppEvent::Media(command));
+            }
+        })
+    };
     let retry_now = Arc::new(tokio::sync::Notify::new());
     cloofy_os::power::watch({
         let (tx, retry_now) = (tx.clone(), retry_now.clone());
@@ -124,10 +151,16 @@ async fn run_app(
             let _ = tx.send(app::AppEvent::Power(event));
         }
     });
-    let saved = state::load(&paths.state_file());
-    let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, retry_now, tx.clone());
-    let mut app = App::new(loader, session_tx, crossfade, saved, paths.clone(), media, notifier);
+    let start = match &demo {
+        Some(demo) => app::Start::Demo(&demo.playing),
+        None => {
+            let saved = state::load(&paths.state_file());
+            let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
+            playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, retry_now, tx.clone());
+            app::Start::Restore(Box::new(saved))
+        }
+    };
+    let mut app = App::new(loader, session_tx, crossfade, start, paths.clone(), media, notifier);
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
