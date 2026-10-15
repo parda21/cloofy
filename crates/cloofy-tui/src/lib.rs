@@ -31,10 +31,16 @@ use tokio::{
     time::MissedTickBehavior,
 };
 
-use crate::{app::App, loader::Loader};
+use crate::{
+    app::{App, AppEvent},
+    loader::{DataEvent, Loader},
+};
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);
+/// Most loaded images taken in per frame. They arrive by the dozen when a page opens, and the
+/// frame sends the pixels of each new one, which holds up input until it is written.
+const IMAGES_PER_FRAME: usize = 12;
 
 /// Frames are collected in a buffer and written in one go, instead of in the 1 KiB pieces
 /// stdout's own buffer would send.
@@ -89,6 +95,8 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
     draw(terminal, &mut app, false)?;
     while !app.quit {
         let redraw = tokio::select! {
+            // Input first, so a key or click never waits behind loaded data.
+            biased;
             event = input.next() => match event {
                 Some(event) => {
                     // Handle everything already queued (a fast scroll sends dozens) before drawing once.
@@ -100,12 +108,21 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
                 }
                 None => break,
             },
+            _ = closed.recv() => break,
             Some(event) = events.recv() => {
-                app.on_event(event);
-                true
+                // Likewise handle what else has arrived, such as a burst of covers, before
+                // drawing once.
+                let mut redraw = app.on_event(event);
+                let mut images = 0;
+                while images < IMAGES_PER_FRAME
+                    && let Ok(event) = events.try_recv()
+                {
+                    images += usize::from(matches!(event, AppEvent::Data(DataEvent::Image { .. })));
+                    redraw |= app.on_event(event);
+                }
+                redraw
             }
             _ = ticker.tick() => app.on_tick(),
-            _ = closed.recv() => break,
         };
         if redraw || app.snapshot_requested {
             let snapshot = std::mem::take(&mut app.snapshot_requested) && snapshotter.is_some();

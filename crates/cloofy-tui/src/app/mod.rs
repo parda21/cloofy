@@ -457,9 +457,10 @@ impl App {
         }
     }
 
-    pub fn on_event(&mut self, event: AppEvent) {
+    /// Returns whether the screen needs a redraw.
+    pub fn on_event(&mut self, event: AppEvent) -> bool {
         match event {
-            AppEvent::Player(event) => self.on_player(event),
+            AppEvent::Player(event) => return self.on_player(event),
             AppEvent::PlayerReady(controller) => {
                 let _ = self.session_tx.send(Some(controller.session.clone()));
                 self.device_id = Some(controller.session.device_id().to_owned());
@@ -470,11 +471,12 @@ impl App {
                 self.controller = Some(*controller);
             }
             AppEvent::PlayerFailed(err) => self.player_error = Some(err),
-            AppEvent::Data(data) => self.on_data(data),
+            AppEvent::Data(data) => return self.on_data(data),
         }
+        true
     }
 
-    fn on_player(&mut self, event: PlayerEvent) {
+    fn on_player(&mut self, event: PlayerEvent) -> bool {
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
             self.resume = None;
         }
@@ -486,7 +488,7 @@ impl App {
                     self.now.device = None;
                 }
                 // The local player idles while another device plays.
-                _ => return,
+                _ => return false,
             }
         }
         let before = self.now.track.as_ref().map(|t| t.uri.clone());
@@ -494,11 +496,15 @@ impl App {
             self.loader.cover(url, COVER_SIZE);
         }
         self.after_track_change(before);
+        true
     }
 
-    fn on_playback(&mut self, playback: Option<Playback>) {
+    /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
+    /// mostly confirms what is on screen.
+    fn on_playback(&mut self, playback: Option<Playback>) -> bool {
         match playback {
             Some(p) if Some(p.device.id.as_str()) == self.device_id.as_deref() => {
+                let changed = self.remote_active || (p.context.is_some() && p.context != self.last_context);
                 // Playback started from another app on cloofy's device: learn what it plays.
                 if p.context.is_some() {
                     self.last_context = p.context.clone();
@@ -507,6 +513,7 @@ impl App {
                     self.remote_active = false;
                     self.now.device = None;
                 }
+                changed
             }
             Some(p) => {
                 self.remote_active = true;
@@ -519,13 +526,15 @@ impl App {
                     self.loader.cover(url, COVER_SIZE);
                 }
                 self.after_track_change(before);
+                true
             }
             None if self.remote_active => {
                 self.remote_active = false;
                 self.now.device = None;
                 self.now.playing = false;
+                true
             }
-            None => {}
+            None => false,
         }
     }
 
@@ -553,7 +562,8 @@ impl App {
         }
     }
 
-    fn on_data(&mut self, event: DataEvent) {
+    /// Returns whether the screen needs a redraw.
+    fn on_data(&mut self, event: DataEvent) -> bool {
         match event {
             DataEvent::Me(result) => match result {
                 Ok(user) => self.me = Some(user),
@@ -592,12 +602,12 @@ impl App {
                 }
             }
             DataEvent::Artist { view, result } => {
-                let Some(View::Artist(v)) = self.view_mut(view) else { return };
+                let Some(View::Artist(v)) = self.view_mut(view) else { return false };
                 let page = match result {
                     Ok(page) => page,
                     Err(err) => {
                         v.error = Some(err);
-                        return;
+                        return true;
                     }
                 };
                 let uris = page.top_tracks.iter().map(|t| t.track.uri.clone()).collect();
@@ -610,7 +620,7 @@ impl App {
                 if let Ok(home) = &result {
                     self.home_cache = Some(home.clone());
                 }
-                let Some(View::Home(v)) = self.view_mut(view) else { return };
+                let Some(View::Home(v)) = self.view_mut(view) else { return false };
                 match result {
                     Ok(home) => v.set_home(home),
                     Err(err) => {
@@ -631,9 +641,9 @@ impl App {
             }
             DataEvent::Tracks { view, page } => self.on_tracks(view, page),
             DataEvent::Search { view, query, result } => {
-                let Some(View::Search(v)) = self.view_mut(view) else { return };
+                let Some(View::Search(v)) = self.view_mut(view) else { return false };
                 if v.query.trim() != query {
-                    return;
+                    return false;
                 }
                 v.loading = false;
                 let uris = match result {
@@ -653,7 +663,7 @@ impl App {
             DataEvent::Cover { url, result } => {
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url.as_deref());
                 if current != Some(url.as_str()) {
-                    return;
+                    return false;
                 }
                 match result {
                     Ok((picture, accent)) => {
@@ -680,7 +690,10 @@ impl App {
             DataEvent::Saved(flags) => {
                 // A fresher local toggle wins over a check that was already under way.
                 let fresh: Vec<_> = flags.into_iter().filter(|(uri, _)| !self.save_in_progress(uri)).collect();
+                // Most checks only confirm what is already known.
+                let changed = fresh.iter().any(|(uri, saved)| self.saved.get(uri) != Some(saved));
                 self.saved.extend(fresh);
+                return changed;
             }
             DataEvent::SaveDone { uri, notice } => {
                 self.saving.remove(&uri);
@@ -698,8 +711,11 @@ impl App {
             DataEvent::Playback(result) => {
                 self.polling = false;
                 match result {
-                    Ok(playback) => self.on_playback(playback),
-                    Err(err) => tracing::warn!("playback state: {err}"),
+                    Ok(playback) => return self.on_playback(playback),
+                    Err(err) => {
+                        tracing::warn!("playback state: {err}");
+                        return false;
+                    }
                 }
             }
             DataEvent::Devices(result) => match result {
@@ -709,6 +725,7 @@ impl App {
             DataEvent::Notice(text) => self.notice(text),
             DataEvent::Failed(text) => self.error(text),
         }
+        true
     }
 
     fn on_tracks(&mut self, view: u64, page: Result<Page<Track>, String>) {
