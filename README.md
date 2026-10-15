@@ -110,6 +110,8 @@ icons = "nerd"    # "nerd" or "text"; detected from the terminal when missing
 notifications = false  # no desktop notifications for new tracks; on when missing
 ```
 
+Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`.
+
 cloofy keeps its sign-ins and session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
 
 ## How it works
