@@ -177,7 +177,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let is_selected = row == index;
         let buf = frame.buffer_mut();
         if is_selected {
-            buf.set_style(Rect::new(inner.x.saturating_sub(1), y, inner.width + 2, 1), Style::new().bg(selection));
+            buf.set_style(content::row_band(inner, y, 1), Style::new().bg(selection));
             if focused {
                 buf.set_string(inner.x.saturating_sub(2), y, "▌", Style::new().fg(accent));
             }
@@ -207,7 +207,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(right(&text::duration(track.duration_ms), 5), FAINT),
         ]);
         frame.buffer_mut().set_line(inner.x, y, &line, inner.width);
-        app.hits.push((Rect::new(inner.x, y, inner.width, 1), Hit::Row(index)));
+        app.hits.push((content::row_band(inner, y, 1), Hit::Row(index)));
     }
 
     for layout in layouts {

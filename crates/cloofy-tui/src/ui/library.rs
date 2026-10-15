@@ -6,7 +6,7 @@ use ratatui::{
     style::{Color, Style},
 };
 
-use super::{home, sidebar, text};
+use super::{content, home, sidebar, text};
 use crate::{
     app::{App, Focus, Hit, LibraryEntry, LibraryFilter},
     theme::{MUTED, RAISED, TEXT},
@@ -91,7 +91,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {
             let Some(y) = home::row(grid, row_y(index)) else { continue };
             let (title, subtitle, _, _) = sidebar::describe(app, entry);
-            let row = Rect::new(grid.x, y, grid.width, 1);
+            let row = content::row_band(grid, y, 1);
             let selected = index == cursor;
             let playing = is_playing(app, entry);
             let buf = frame.buffer_mut();
@@ -101,13 +101,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let title_style = home::card_title_style(accent, playing, selected);
             let width = grid.width as usize;
             let title_width = if playing { (width / 2).saturating_sub(5) } else { width / 2 };
-            buf.set_string(row.x, y, text::truncate(&title, title_width), title_style);
+            buf.set_string(grid.x, y, text::truncate(&title, title_width), title_style);
             // At the end of the title column, before the subtitle.
             if playing {
-                buf.set_string(row.x + (width / 2) as u16 - 4, y, marker, Style::new().fg(accent));
+                buf.set_string(grid.x + (width / 2) as u16 - 4, y, marker, Style::new().fg(accent));
             }
             buf.set_string(
-                row.x + (width / 2) as u16 + 2,
+                grid.x + (width / 2) as u16 + 2,
                 y,
                 text::truncate(&subtitle, width / 2 - 2),
                 Style::new().fg(MUTED),
@@ -121,8 +121,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (_, _, image_url, round) = sidebar::describe(app, entry);
         app.prefetch(image_url.as_deref(), COVER, round);
     }
-    // The selection reaches one row above the cards, into the gap below the tabs.
-    let clip = Rect { y: grid.y - 1, height: grid.height + 1, ..grid };
+    // The selection reaches one row above the cards, into the gap below the tabs, and one
+    // column past the cover on both sides, the first column's too.
+    let clip = Rect { x: grid.x.saturating_sub(1), y: grid.y - 1, width: grid.width + 2, height: grid.height + 1 };
     for (index, &entry) in entries.iter().enumerate().take(last).skip(first) {
         let x = grid.x + (index % columns) as u16 * (COVER.width + GAP);
         let y = row_y(index);
