@@ -14,6 +14,8 @@ pub struct Config {
     pub crossfade: Option<u64>,
     /// `"nerd"` or `"text"`; detected from the terminal when missing.
     pub icons: Option<String>,
+    /// Desktop notifications for new tracks while cloofy is in the background; on when missing.
+    pub notifications: Option<bool>,
 }
 
 impl Config {

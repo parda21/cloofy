@@ -3,6 +3,7 @@ mod persist;
 
 use std::{
     collections::{HashMap, HashSet},
+    io::Write,
     time::{Duration, Instant},
 };
 
@@ -23,6 +24,7 @@ use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture},
     media::MediaSync,
+    notify::Notifier,
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
     playback::{Controller, Cover, NowPlaying, Repeat},
     snapshot::Placement,
@@ -291,6 +293,10 @@ pub struct App {
     pub now: NowPlaying,
     /// The system's media controls, where there are any.
     media: Option<MediaSync>,
+    /// Announces new tracks while cloofy is in the background, in terminals that can.
+    notifier: Option<Notifier>,
+    /// Whether the terminal window has keyboard focus, as far as it reports.
+    focused: bool,
     /// When the computer went to sleep, in wall-clock time: the monotonic clock stops meanwhile.
     slept_at: Option<std::time::SystemTime>,
     /// Reduce Motion and Low Power Mode, as of the last check.
@@ -368,6 +374,7 @@ impl App {
         state: crate::state::State,
         state_path: std::path::PathBuf,
         media: Option<cloofy_os::media::Controls>,
+        notifier: Option<Notifier>,
     ) -> Self {
         loader.me();
         loader.playlists();
@@ -390,6 +397,8 @@ impl App {
             player_error: None,
             now: NowPlaying::new(),
             media: media.map(MediaSync::new),
+            notifier,
+            focused: true,
             slept_at: None,
             settings: cloofy_os::settings::current(),
             settings_checked: Instant::now(),
@@ -487,6 +496,10 @@ impl App {
             }
             Event::Mouse(mouse) => self.on_mouse(mouse),
             Event::Resize(..) => true,
+            Event::FocusGained | Event::FocusLost => {
+                self.focused = matches!(event, Event::FocusGained);
+                false
+            }
             _ => false,
         }
     }
@@ -566,6 +579,16 @@ impl App {
             Media::Next => self.run(Command::Next),
             Media::Previous => self.run(Command::Previous),
             Media::Seek(position) => self.seek_to(position.as_millis().try_into().unwrap_or(u32::MAX)),
+        }
+    }
+
+    /// Writes a desktop notification once a new track plays while cloofy is in the background.
+    pub fn announce_track(&mut self) {
+        let Some(notifier) = &mut self.notifier else { return };
+        let track = self.now.track.as_ref().filter(|_| !self.remote_active);
+        if let Some(sequence) = notifier.update(track, self.now.playing, self.focused) {
+            let mut stdout = std::io::stdout();
+            let _ = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush());
         }
     }
 
