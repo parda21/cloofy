@@ -12,6 +12,8 @@ use crate::playback::{CurrentTrack, NowPlaying};
 /// How far the system's own clock may drift from the player before it gets corrected, which
 /// is how seeks reach it.
 const DRIFT: Duration = Duration::from_millis(1500);
+/// How long a cover that failed to load waits before it is tried again.
+const ARTWORK_RETRY: Duration = Duration::from_secs(30);
 
 /// Sends the controls an update whenever what they show would change.
 pub struct MediaSync {
@@ -21,6 +23,8 @@ pub struct MediaSync {
     artwork: Option<(String, Arc<[u8]>)>,
     /// The cover last asked for, so it gets loaded once.
     requested: Option<String>,
+    /// A cover that failed to load, and when.
+    failed: Option<(String, Instant)>,
 }
 
 /// What the controls were told last.
@@ -49,13 +53,17 @@ impl MediaSync {
     }
 
     fn with_sender(send: Box<dyn Fn(State)>) -> Self {
-        Self { send, shown: Shown::default(), artwork: None, requested: None }
+        Self { send, shown: Shown::default(), artwork: None, requested: None, failed: None }
     }
 
     /// The cover the controls should show but don't have yet. Returned once per cover.
     pub fn missing_artwork(&mut self, track: Option<&CurrentTrack>) -> Option<String> {
         let url = track.and_then(artwork_url)?;
-        if self.artwork.as_ref().is_some_and(|(have, _)| have == url) || self.requested.as_deref() == Some(url) {
+        let failed_lately = self.failed.as_ref().is_some_and(|(f, at)| f == url && at.elapsed() < ARTWORK_RETRY);
+        if self.artwork.as_ref().is_some_and(|(have, _)| have == url)
+            || self.requested.as_deref() == Some(url)
+            || failed_lately
+        {
             return None;
         }
         self.requested = Some(url.to_owned());
@@ -65,6 +73,14 @@ impl MediaSync {
     pub fn set_artwork(&mut self, url: String, bytes: Arc<[u8]>) {
         if self.requested.as_deref() == Some(url.as_str()) {
             self.artwork = Some((url, bytes));
+        }
+    }
+
+    /// Lets a cover that failed to load be tried again, after a while.
+    pub fn artwork_failed(&mut self, url: String) {
+        if self.requested.as_deref() == Some(url.as_str()) {
+            self.requested = None;
+            self.failed = Some((url, Instant::now()));
         }
     }
 
@@ -202,6 +218,17 @@ mod tests {
         assert_eq!(sent.len(), 2);
         let artwork = sent[1].track.as_ref().and_then(|t| t.artwork.as_deref());
         assert_eq!(artwork, Some(&b"jpeg"[..]));
+    }
+
+    #[test]
+    fn tries_a_failed_cover_again_later() {
+        let (mut media, _) = recorder();
+        let now = paused_at(0);
+        let url = media.missing_artwork(now.track.as_ref()).expect("the cover gets loaded");
+        media.artwork_failed(url.clone());
+        assert_eq!(media.missing_artwork(now.track.as_ref()), None, "not right away");
+        media.failed = Some((url.clone(), Instant::now() - ARTWORK_RETRY));
+        assert_eq!(media.missing_artwork(now.track.as_ref()), Some(url));
     }
 
     #[test]

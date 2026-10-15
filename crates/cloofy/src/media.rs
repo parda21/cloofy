@@ -88,8 +88,9 @@ impl Media {
     }
 
     fn load_artwork(&mut self, item: &AudioItem) {
-        let Some(url) = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone()) else { return };
-        self.artwork_url = Some(url.clone());
+        // A cover still loading for the previous track must not land on this one.
+        self.artwork_url = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone());
+        let Some(url) = self.artwork_url.clone() else { return };
         let (http, tx) = (self.http.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = async { http.get(&url).send().await?.error_for_status()?.bytes().await }.await;

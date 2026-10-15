@@ -694,11 +694,16 @@ impl App {
                     Err(err) => tracing::warn!("cover {url}: {err}"),
                 }
             }
-            DataEvent::Artwork { url, result } => match (result, &mut self.media) {
-                (Ok(bytes), Some(media)) => media.set_artwork(url, bytes),
-                (Ok(_), None) => {}
-                (Err(err), _) => tracing::warn!("artwork {url}: {err}"),
-            },
+            DataEvent::Artwork { url, result } => {
+                let Some(media) = &mut self.media else { return };
+                match result {
+                    Ok(bytes) => media.set_artwork(url, bytes),
+                    Err(err) => {
+                        tracing::warn!("artwork {url}: {err}");
+                        media.artwork_failed(url);
+                    }
+                }
+            }
             DataEvent::LargeCover { url, size, result } => {
                 self.zen_cover_pending = None;
                 match result {
