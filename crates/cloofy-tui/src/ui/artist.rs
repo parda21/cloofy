@@ -42,6 +42,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
     let playing_uri = app.now.track.as_ref().map(|t| t.uri.clone());
     let playing = app.now.playing;
+    let loading_uri = app.now.pending.as_ref().and_then(|p| p.uri.clone());
     let View::Artist(view) = &mut app.view else { return };
 
     let Some(page) = &view.page else {
@@ -178,6 +179,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         let is_current = playing_uri.as_deref() == Some(track.uri.as_str());
         let number = match (is_current, playing) {
+            _ if loading_uri.as_deref() == Some(track.uri.as_str()) => {
+                Span::styled(fit(&right(text::spinner(frame_no), 3), 5), accent)
+            }
             (false, _) => Span::styled(fit(&right(&(index + 1).to_string(), 3), 5), FAINT),
             (true, true) => Span::styled(fit(&format!(" {}", text::equalizer(frame_no)), 5), accent),
             (true, false) => Span::styled(fit("  ▶", 5), accent),

@@ -171,11 +171,17 @@ pub(super) fn controls(app: &App, accent: Color) -> (Line<'static>, Vec<(u16, u1
     let icons = icons();
     let toggle = |on: bool| if on { Style::new().fg(accent) } else { Style::new().fg(FAINT) };
     let repeat = if app.now.repeat == Repeat::Track { icons.repeat_one } else { icons.repeat };
+    // A track on its way spins in place of play/pause.
+    let play = match (&app.now.pending, app.now.playing) {
+        (Some(_), _) => text::spinner(app.frame()),
+        (None, true) => icons.pause,
+        (None, false) => icons.play,
+    };
     let parts = [
         (icons.shuffle, toggle(app.now.shuffle), Command::Shuffle),
         (icons.previous, Style::new().fg(MUTED), Command::Previous),
         (
-            if app.now.playing { icons.pause } else { icons.play },
+            play,
             // The play button glows while it would continue the last session.
             if app.can_resume() { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() },
             Command::PlayPause,

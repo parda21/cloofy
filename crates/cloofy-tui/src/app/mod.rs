@@ -29,7 +29,7 @@ use crate::{
     commands::Command,
     loader::{DataEvent, Loader, Picture, SessionState},
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{self, Controller, Cover, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    playback::{self, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -43,6 +43,8 @@ pub const COVER_SIZE: Size = Size { width: 6, height: 3 };
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const STATUS_TTL: Duration = Duration::from_secs(4);
 const SEEK_STEP_MS: i64 = 5_000;
+/// "Previous" restarts the track once it has played this long, as in Spotify's own clients.
+const RESTART_AFTER_MS: u32 = 3_000;
 const HISTORY_LIMIT: usize = 50;
 /// Opening a page this soon after the last one skips the transition, so browsing fast stays
 /// instant.
@@ -686,6 +688,22 @@ impl App {
     /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
     /// mostly confirms what is on screen.
     fn on_playback(&mut self, playback: Option<Playback>) -> bool {
+        if let Some(p) = &playback
+            && Some(p.device.id.as_str()) != self.device_id.as_deref()
+        {
+            // While cloofy starts a track itself, Spotify may still name the device that
+            // played before; another device starting a track may still show the old one.
+            // Either would undo the early switch.
+            let stale = if self.remote_active {
+                self.now.awaits_remote(p, self.remote_intent.is_waiting())
+            } else {
+                self.now.pending.is_some()
+            };
+            if stale {
+                self.next_poll = self.next_poll.min(Instant::now() + QUICK_POLL);
+                return false;
+            }
+        }
         match playback {
             Some(p) if Some(p.device.id.as_str()) == self.device_id.as_deref() => {
                 let changed = self.remote_active || (p.context.is_some() && p.context != self.last_context);
@@ -724,6 +742,7 @@ impl App {
             None if self.remote_active => {
                 self.remote_active = false;
                 self.now.device = None;
+                self.now.pending = None;
                 self.now.set_playing(false);
                 true
             }
@@ -974,6 +993,7 @@ impl App {
                     // Look again once the device has had a moment to apply it.
                     Ok(()) => self.next_poll = self.next_poll.min(Instant::now() + CONFIRM_DELAY),
                     Err(err) => {
+                        self.cancel_start();
                         self.next_poll = Instant::now();
                         self.error(format!("Remote control: {err}"));
                     }
@@ -1101,6 +1121,15 @@ impl App {
         if let Some(volume) = self.volume_sync.expire() {
             self.control(|c| c.set_volume(volume));
         }
+        if self.now.start_failed() {
+            // Spirc only logs a failed load; another device's state comes with the next poll.
+            let failed_here = self.now.pending.as_ref().is_some_and(|p| !p.skip) && !self.remote_active;
+            self.cancel_start();
+            if failed_here {
+                self.error("Playback didn't start.".into());
+            }
+            redraw = true;
+        }
 
         if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
             self.polling = true;
@@ -1132,6 +1161,7 @@ impl App {
         };
         let lyrics_loading = self.zen && self.lyrics.as_ref().is_some_and(|l| l.result.is_none());
         self.now.playing
+            || self.now.pending.is_some()
             || loading
             || lyrics_loading
             || self.playlists_loading
@@ -1765,7 +1795,10 @@ impl App {
             }
             Command::PlayPause if self.resume.is_some() && self.controller.is_some() => {
                 if let Some(last) = self.resume.take() {
-                    self.control(|c| c.resume(last.context, last.uri, last.position_ms));
+                    let uri = last.uri.clone();
+                    if self.control(|c| c.resume(last.context, last.uri, last.position_ms)) {
+                        self.now.start(Some(uri));
+                    }
                 }
             }
             Command::PlayPause if self.idle() && self.controller.is_some() => self.play_shown(),
@@ -1773,15 +1806,13 @@ impl App {
                 let has_track = self.now.track.is_some();
                 self.control(|c| c.toggle(has_track));
             }
-            Command::Next if self.remote_active => self.remote(connect::Command::Next),
-            Command::Previous if self.remote_active => self.remote(connect::Command::Previous),
             Command::Next | Command::Previous | Command::Shuffle | Command::Repeat
                 if self.idle() && self.controller.is_some() =>
             {
                 self.notice("Nothing is playing here yet · press space to start".into());
             }
-            Command::Next => self.control(|c| c.next()),
-            Command::Previous => self.control(|c| c.previous()),
+            Command::Next => self.skip(true),
+            Command::Previous => self.skip(false),
             Command::SeekBack => self.seek_by(-SEEK_STEP_MS),
             Command::SeekForward => self.seek_by(SEEK_STEP_MS),
             Command::VolumeUp => self.change_volume(1),
@@ -2490,8 +2521,9 @@ impl App {
             }
             View::Artist(v) => match v.selected() {
                 Some(ArtistSelection::Track(t)) => {
-                    let (context, track) = (v.uri.clone(), t.track.uri.clone());
-                    self.play(context, Some(track));
+                    let (context, track) = (v.uri.clone(), t.track.clone());
+                    self.play(context, Some(track.uri.clone()));
+                    self.show_early(&track, None);
                 }
                 Some(ArtistSelection::Item(item)) => {
                     let item = item.clone();
@@ -2500,20 +2532,23 @@ impl App {
                 None => {}
             },
             View::Tracks(v) => {
-                let Some(track) = v.tracks.get(v.list.selected) else { return };
-                let context = match &v.source {
+                let Some(track) = v.tracks.get(v.list.selected).cloned() else { return };
+                let (context, cover_url) = match &v.source {
                     TrackSource::Liked => match &self.controller {
-                        Some(c) => format!("spotify:user:{}:collection", c.session.username()),
+                        Some(c) => (format!("spotify:user:{}:collection", c.session.username()), None),
                         None => return self.not_connected(),
                     },
-                    TrackSource::Playlist(p) => p.uri.clone(),
-                    TrackSource::Album(a) => a.uri.clone(),
+                    TrackSource::Playlist(p) => (p.uri.clone(), None),
+                    TrackSource::Album(a) => (a.uri.clone(), a.image_url.clone()),
                 };
-                let track = track.uri.clone();
-                self.play(context, Some(track));
+                self.play(context, Some(track.uri.clone()));
+                self.show_early(&track, cover_url);
             }
             View::Search(v) => match v.selected().cloned() {
-                Some(SearchEntry::Track(t)) => self.play(t.album_uri, Some(t.uri)),
+                Some(SearchEntry::Track(t)) => {
+                    self.play(t.album_uri.clone(), Some(t.uri.clone()));
+                    self.show_early(&t, None);
+                }
                 Some(SearchEntry::Artist(a)) => self.open_artist(a.uri, a.name),
                 Some(SearchEntry::Album(a)) => self.open_tracks(TrackSource::Album(a)),
                 Some(SearchEntry::Playlist(p)) => self.open_tracks(TrackSource::Playlist(p)),
@@ -2602,10 +2637,14 @@ impl App {
     fn play(&mut self, context: String, track: Option<String>) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        if self.remote_active {
-            self.remote(connect::Command::PlayContext { context, track, shuffle: false });
+        let sent = if self.remote_active {
+            self.remote(connect::Command::PlayContext { context, track: track.clone(), shuffle: false });
+            true
         } else {
-            self.control(|c| c.play(context, track));
+            self.control(|c| c.play(context, track.clone()))
+        };
+        if sent {
+            self.now.start(track);
         }
     }
 
@@ -2619,17 +2658,87 @@ impl App {
     fn play_shown(&mut self) {
         let Some(track) = &self.now.track else { return };
         let (context, uri, position_ms) = (self.last_context.clone(), track.uri.clone(), self.now.position_ms());
-        self.control(|c| c.resume(context, uri, position_ms));
+        if self.control(|c| c.resume(context, uri.clone(), position_ms)) {
+            self.now.start(Some(uri));
+        }
     }
 
     fn play_shuffled(&mut self, context: String) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        if self.remote_active {
+        let sent = if self.remote_active {
             self.remote(connect::Command::PlayContext { context, track: None, shuffle: true });
+            true
         } else {
-            self.control(|c| c.play_shuffled(context));
+            self.control(|c| c.play_shuffled(context))
+        };
+        if sent {
+            self.now.start(None);
         }
+    }
+
+    /// Skips to the next or previous track; the play button spins until it plays. Like
+    /// Spotify, previous restarts the track instead once it has played a few seconds.
+    fn skip(&mut self, forward: bool) {
+        let restart = !forward && self.now.position_ms() >= RESTART_AFTER_MS;
+        let sent = match (self.remote_active, forward) {
+            (true, true) => {
+                self.remote(connect::Command::Next);
+                true
+            }
+            (true, false) => {
+                if restart {
+                    self.remote_intent.seek = Some((0, Instant::now()));
+                }
+                self.remote(connect::Command::Previous);
+                true
+            }
+            (false, true) => self.control(|c| c.next()),
+            (false, false) => self.control(|c| c.previous()),
+        };
+        // An inactive player drops skips; with nothing shown there is nothing to wait for.
+        if !sent || !(self.remote_active || self.local_active) {
+            return;
+        }
+        if !restart {
+            self.now.skip();
+        } else if self.remote_active {
+            self.now.set_position(0);
+        } else {
+            self.now.seek(0);
+        }
+    }
+
+    /// Shows a picked track in the player bar right away, as the official client does,
+    /// instead of only once its audio has loaded. `cover_url` is its album's cover, if known.
+    fn show_early(&mut self, track: &Track, cover_url: Option<String>) {
+        let before = self.now.track.as_ref().map(|t| t.uri.clone());
+        self.now.show_early(CurrentTrack {
+            uri: track.uri.clone(),
+            name: track.name.clone(),
+            artists: track.artists.clone(),
+            artist_uris: track.artist_uris.clone(),
+            album: track.album.clone(),
+            album_uri: Some(track.album_uri.clone()).filter(|uri| !uri.is_empty()),
+            duration_ms: track.duration_ms,
+            cover_url: cover_url.clone(),
+            cover_url_large: cover_url.clone(),
+        });
+        if self.now.track.as_ref().map(|t| &t.uri) == before.as_ref() {
+            return;
+        }
+        if let Some(url) = cover_url {
+            self.loader.cover(url, COVER_SIZE);
+        }
+        // Lyrics and the like state load alongside the audio.
+        self.after_track_change(before);
+    }
+
+    /// Gives up on a track start, showing again what played before it.
+    fn cancel_start(&mut self) {
+        let before = self.now.track.as_ref().map(|t| t.uri.clone());
+        self.now.cancel_start();
+        self.after_track_change(before);
     }
 
     /// The play, shuffle, save and more buttons in page headers.
@@ -2738,15 +2847,17 @@ impl App {
         self.next_poll = Instant::now() + QUICK_POLL;
     }
 
-    fn control(&mut self, command: impl FnOnce(&Controller) -> anyhow::Result<()>) {
-        match &self.controller {
-            Some(controller) => {
-                if let Err(err) = command(controller) {
-                    self.error(format!("{err:#}"));
-                }
-            }
-            None => self.not_connected(),
+    /// Sends a command to cloofy's own player. Returns whether it went out.
+    fn control(&mut self, command: impl FnOnce(&Controller) -> anyhow::Result<()>) -> bool {
+        let Some(controller) = &self.controller else {
+            self.not_connected();
+            return false;
+        };
+        if let Err(err) = command(controller) {
+            self.error(format!("{err:#}"));
+            return false;
         }
+        true
     }
 
     fn not_connected(&mut self) {
