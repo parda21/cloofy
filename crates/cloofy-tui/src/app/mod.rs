@@ -47,6 +47,8 @@ const QUICK_NAV: Duration = Duration::from_millis(300);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Images unseen for this long are dropped from memory.
 const IMAGE_TTL: Duration = Duration::from_secs(120);
+/// A cover that failed to load, e.g. while offline, is tried again when drawn after this long.
+const IMAGE_RETRY: Duration = Duration::from_secs(30);
 const EVICTION_INTERVAL: Duration = Duration::from_secs(30);
 const SCROLL_STEP: isize = 3;
 /// Spotify's DJ; loading it without a track asks for a fresh set.
@@ -135,7 +137,7 @@ pub enum ImageSlot {
     /// before decoding it.
     Loading(Arc<AtomicU64>),
     Ready(Picture),
-    Failed,
+    Failed(Instant),
 }
 
 /// A clickable region, registered while drawing.
@@ -649,7 +651,7 @@ impl App {
                     Ok(picture) => ImageSlot::Ready(picture),
                     Err(err) => {
                         tracing::warn!("image {key}: {err}");
-                        ImageSlot::Failed
+                        ImageSlot::Failed(Instant::now())
                     }
                 };
                 self.images.insert(key, slot);
@@ -1913,8 +1915,9 @@ impl App {
         self.image_used.insert(key.clone(), Instant::now());
         match self.images.get(&key) {
             Some(ImageSlot::Loading(drawn)) => drawn.store(self.draws, Ordering::Relaxed),
-            Some(_) => {}
-            None => {
+            Some(ImageSlot::Ready(_)) => {}
+            Some(ImageSlot::Failed(at)) if at.elapsed() < IMAGE_RETRY => {}
+            None | Some(ImageSlot::Failed(_)) => {
                 let drawn = Arc::new(AtomicU64::new(self.draws));
                 self.images.insert(key.clone(), ImageSlot::Loading(drawn.clone()));
                 self.loader.image(key.clone(), url.to_owned(), size, round, drawn);
