@@ -58,14 +58,18 @@ pub enum TrackSource {
 }
 
 impl TrackSource {
+    /// Names the list: Liked Songs, or the playlist or album URI.
+    pub fn key(&self) -> &str {
+        match self {
+            TrackSource::Liked => "liked",
+            TrackSource::Playlist(p) => &p.uri,
+            TrackSource::Album(a) => &a.uri,
+        }
+    }
+
     /// Whether both show the same list, however they describe it.
     pub fn same(&self, other: &TrackSource) -> bool {
-        match (self, other) {
-            (TrackSource::Liked, TrackSource::Liked) => true,
-            (TrackSource::Playlist(a), TrackSource::Playlist(b)) => a.uri == b.uri,
-            (TrackSource::Album(a), TrackSource::Album(b)) => a.uri == b.uri,
-            _ => false,
-        }
+        self.key() == other.key()
     }
 }
 

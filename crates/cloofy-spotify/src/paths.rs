@@ -67,7 +67,7 @@ impl Paths {
 }
 
 /// Writes a file only the current user can read, creating parent directories as needed.
-pub(crate) fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

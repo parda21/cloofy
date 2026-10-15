@@ -98,6 +98,7 @@ impl App {
         let playlists: Vec<String> = self.playlists.iter().map(|p| p.uri.clone()).collect();
 
         edit(self);
+        self.data_dirty = true;
 
         if let Some(uri) = nav
             && let Some(index) = self.nav_items().iter().position(|item| self.nav_uri(*item).as_ref() == Some(&uri))
@@ -172,6 +173,7 @@ impl App {
 
     fn show_liked_change(&mut self, uri: &str, liked: bool) {
         self.liked_total = self.liked_total.map(|total| if liked { total + 1 } else { total.saturating_sub(1) });
+        self.data_dirty = true;
         let restore = if liked { self.unsaved.remove(uri) } else { None };
         let (index, track) = match restore {
             Some((index, LibraryItem::Track(track))) => (index, Some(track)),

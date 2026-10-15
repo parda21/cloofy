@@ -16,7 +16,7 @@ use librespot::{
 };
 use protobuf::{EnumOrUnknown, Message};
 use reqwest::Method;
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 
 use crate::webapi::WebApi;
@@ -34,13 +34,13 @@ pub const METADATA_BATCH: usize = 100;
 /// Concurrent requests when that batch request fails and tracks are asked for one by one.
 const METADATA_CONCURRENCY: usize = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub uri: String,
     pub name: String,
@@ -52,7 +52,7 @@ pub struct Track {
     pub duration_ms: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistInfo {
     pub id: String,
     pub uri: String,
@@ -64,7 +64,7 @@ pub struct PlaylistInfo {
     pub image_url: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlbumInfo {
     pub id: String,
     pub uri: String,
@@ -75,7 +75,7 @@ pub struct AlbumInfo {
     pub image_url: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtistInfo {
     pub uri: String,
     pub name: String,
@@ -83,7 +83,7 @@ pub struct ArtistInfo {
 }
 
 /// A podcast in the user's library.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShowInfo {
     pub uri: String,
     pub name: String,
