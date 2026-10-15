@@ -722,10 +722,12 @@ impl App {
 
     /// Unplugged headphones pause playback rather than move it to the speakers.
     fn on_output_lost(&mut self, name: String) {
-        if self.remote_active || !self.now.playing {
-            return;
-        }
+        // The report itself says cloofy's player is writing audio, whatever the state shows,
+        // and pausing a player that isn't playing does nothing.
         self.control(|c| c.pause());
+        // Shown paused at once: a pause from the headphones that arrives before the player
+        // confirms must not toggle playback back on, through the speakers.
+        self.now.set_playing(false);
         self.notice(format!("Paused: {name} disconnected"));
     }
 
@@ -734,6 +736,10 @@ impl App {
         match command {
             Media::Toggle => self.run(Command::PlayPause),
             Media::Play if !self.now.playing => self.run(Command::PlayPause),
+            // Pausing the local player twice stays paused, unlike toggling it.
+            Media::Pause if !self.remote_active => {
+                self.control(|c| c.pause());
+            }
             Media::Pause if self.now.playing => self.run(Command::PlayPause),
             Media::Play | Media::Pause => {}
             Media::Next => self.run(Command::Next),
