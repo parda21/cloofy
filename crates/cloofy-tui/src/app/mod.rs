@@ -1051,6 +1051,12 @@ impl App {
                     self.error(error);
                 }
             }
+            DataEvent::AddFailed { playlist_id, count, error } => {
+                if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
+                    playlist.total = playlist.total.saturating_sub(count);
+                }
+                self.error(error);
+            }
             DataEvent::Playback(result) => {
                 self.polling = false;
                 // Started before the last remote command, it shows the state from before it.
@@ -1992,7 +1998,7 @@ impl App {
             Command::NowPlaying => self.toggle_zen(),
             Command::Like => self.toggle_saved(),
             Command::Queue => match self.target() {
-                Some(target) if target.is_track => self.loader.queue(target.uri, target.name),
+                Some(target) if target.is_track => self.queue(target.uri, target.name),
                 Some(_) => self.error("Only songs can be added to the queue.".into()),
                 None => self.error("No song selected.".into()),
             },
@@ -2112,8 +2118,16 @@ impl App {
         let Some(Overlay::AddToPlaylist { uris, .. }) = self.overlay.take() else { return };
         if let Some(playlist) = self.playlists.get_mut(index) {
             playlist.total += uris.len() as u32;
-            self.loader.add_to_playlist(playlist.clone(), uris);
+            let text = format!("Added to “{}”", playlist.name);
+            self.loader.add_to_playlist(playlist.id.clone(), uris);
+            self.notice(text);
         }
+    }
+
+    /// Confirms at once; the request takes a moment and only reports back when it fails.
+    pub(super) fn queue(&mut self, uri: String, name: String) {
+        self.loader.queue(uri);
+        self.notice(format!("“{name}” added to queue"));
     }
 
     fn open_overlay(&mut self, overlay: Overlay) {

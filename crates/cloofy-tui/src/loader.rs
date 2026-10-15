@@ -140,6 +140,12 @@ pub enum DataEvent {
         saved: bool,
         error: String,
     },
+    /// Adding `count` songs to a playlist failed; its song count goes back down.
+    AddFailed {
+        playlist_id: String,
+        count: u32,
+        error: String,
+    },
     /// What plays where, from Spotify Connect.
     Playback(Result<Option<Playback>, String>),
     /// Spotify answered a remote command, which stood for `commands` collapsed ones.
@@ -654,20 +660,21 @@ impl Loader {
         let _ = self.remote.send(command);
     }
 
-    pub fn queue(&self, uri: String, name: String) {
+    /// Reports only failures; the app confirms right away.
+    pub fn queue(&self, uri: String) {
         self.spawn(move |this| async move {
-            match catalog::queue(&this.api, &uri).await {
-                Ok(()) => this.send(DataEvent::Notice(format!("“{name}” added to queue"))),
-                Err(err) => this.send(DataEvent::Failed(format!("Queue: {err:#}"))),
+            if let Err(err) = catalog::queue(&this.api, &uri).await {
+                this.send(DataEvent::Failed(format!("Queue: {err:#}")));
             }
         });
     }
 
-    pub fn add_to_playlist(&self, playlist: PlaylistInfo, uris: Vec<String>) {
+    /// Reports only failures; the app confirms right away.
+    pub fn add_to_playlist(&self, playlist_id: String, uris: Vec<String>) {
         self.spawn(move |this| async move {
-            match catalog::add_to_playlist(&this.api, &playlist.id, &uris).await {
-                Ok(()) => this.send(DataEvent::Notice(format!("Added to “{}”", playlist.name))),
-                Err(err) => this.send(DataEvent::Failed(format!("Playlist: {err:#}"))),
+            if let Err(err) = catalog::add_to_playlist(&this.api, &playlist_id, &uris).await {
+                let error = format!("Playlist: {err:#}");
+                this.send(DataEvent::AddFailed { playlist_id, count: uris.len() as u32, error });
             }
         });
     }
