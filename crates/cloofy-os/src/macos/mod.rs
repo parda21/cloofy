@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod media;
 pub mod power;
+pub mod secrets;
 pub mod settings;
 
 use std::{panic, thread};
