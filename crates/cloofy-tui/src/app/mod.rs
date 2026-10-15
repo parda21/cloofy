@@ -45,8 +45,11 @@ const HISTORY_LIMIT: usize = 50;
 /// instant.
 const QUICK_NAV: Duration = Duration::from_millis(300);
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-/// Images unseen for this long are dropped from memory.
+/// Images unseen for this long are dropped from memory, unless the terminal holds them.
 const IMAGE_TTL: Duration = Duration::from_secs(120);
+/// Memory kitty may keep for the covers cloofy drew; the least recently drawn ones beyond it are
+/// deleted from the terminal.
+const TERMINAL_IMAGE_BUDGET: usize = 48 << 20;
 /// A cover that failed to load, e.g. while offline, is tried again when drawn after this long.
 const IMAGE_RETRY: Duration = Duration::from_secs(30);
 const EVICTION_INTERVAL: Duration = Duration::from_secs(30);
@@ -307,6 +310,11 @@ pub struct App {
     last_eviction: Instant,
     /// Frames drawn so far.
     draws: u64,
+    /// When the last frame started; images used since were drawn in it.
+    frame_started: Instant,
+    /// Escape sequences to write after the next frame, such as deleting images the terminal
+    /// holds.
+    pub terminal_out: Vec<String>,
     /// Covers the frame being drawn will likely show soon; see [`App::prefetch`].
     prefetch: Vec<(String, Size, bool)>,
     /// Known library state per URI: liked songs, saved albums, followed playlists.
@@ -405,6 +413,8 @@ impl App {
             image_used: HashMap::new(),
             last_eviction: Instant::now(),
             draws: 0,
+            frame_started: Instant::now(),
+            terminal_out: Vec::new(),
             prefetch: Vec::new(),
             saved: HashMap::new(),
             pending_saves: HashMap::new(),
@@ -703,7 +713,9 @@ impl App {
                 }
                 match result {
                     Ok((picture, accent)) => {
-                        self.now.cover = Some(Cover { url, picture });
+                        if let Some(old) = self.now.cover.replace(Cover { url, picture }) {
+                            self.terminal_out.extend(old.picture.terminal_delete());
+                        }
                         self.accent.set(accent);
                     }
                     Err(err) => tracing::warn!("cover {url}: {err}"),
@@ -716,7 +728,11 @@ impl App {
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
                 let wanted = self.zen && self.zen_cover_want == Some(size) && current == Some(url.as_str());
                 match result {
-                    Ok(picture) if wanted => self.zen_cover = Some(LargeCover { url, size, picture }),
+                    Ok(picture) if wanted => {
+                        if let Some(old) = self.zen_cover.replace(LargeCover { url, size, picture }) {
+                            self.terminal_out.extend(old.picture.terminal_delete());
+                        }
+                    }
                     // For a size or track no longer shown: dropped before it is ever sent to the
                     // terminal, which would cost megabytes for nothing.
                     Ok(_) => {}
@@ -1939,6 +1955,7 @@ impl App {
     /// Starts drawing a frame.
     pub fn begin_frame(&mut self) {
         self.draws += 1;
+        self.frame_started = Instant::now();
     }
 
     /// Finishes drawing a frame.
@@ -1986,23 +2003,46 @@ impl App {
         }
     }
 
-    /// Drops images that have not been on screen for a while. Each one holds its encoded
-    /// pixels for the terminal; they come back quickly from the disk cache when needed.
+    /// Drops images that have not been on screen for a while. Until drawn, each one holds its
+    /// encoded pixels for the terminal, and they come back quickly from the disk cache.
+    ///
+    /// A drawn kitty image is different: cloofy keeps next to nothing of it, but kitty keeps
+    /// its pixels until told to delete it, and drawing it again would mean another upload.
+    /// Those stay until they take more than [`TERMINAL_IMAGE_BUDGET`] together; then the least
+    /// recently drawn ones that are off screen are deleted from the terminal.
     fn evict_images(&mut self) {
         self.last_eviction = Instant::now();
-        let stale: Vec<String> = self
-            .image_used
-            .iter()
-            .filter(|(key, used)| {
-                used.elapsed() >= IMAGE_TTL && matches!(self.images.get(*key), Some(ImageSlot::Ready(_)))
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
+        let mut stale = Vec::new();
+        let mut held = 0;
+        let mut off_screen = Vec::new();
+        for (key, used) in &self.image_used {
+            let Some(ImageSlot::Ready(picture)) = self.images.get(key) else { continue };
+            if !picture.in_terminal() {
+                if used.elapsed() >= IMAGE_TTL {
+                    stale.push(key.clone());
+                }
+                continue;
+            }
+            held += picture.terminal_bytes;
+            if *used < self.frame_started {
+                off_screen.push((*used, key.clone(), picture.terminal_bytes));
+            }
+        }
+        off_screen.sort_unstable_by_key(|(used, _, _)| *used);
+        for (_, key, bytes) in off_screen {
+            if held <= TERMINAL_IMAGE_BUDGET {
+                break;
+            }
+            held -= bytes;
+            stale.push(key);
+        }
         if stale.is_empty() {
             return;
         }
         for key in &stale {
-            self.images.remove(key);
+            if let Some(ImageSlot::Ready(picture)) = self.images.remove(key) {
+                self.terminal_out.extend(picture.terminal_delete());
+            }
             self.image_used.remove(key);
         }
         crate::release_freed_memory();
