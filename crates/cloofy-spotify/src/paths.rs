@@ -47,6 +47,11 @@ impl Paths {
         self.cache.join("audio")
     }
 
+    /// Tracks being streamed; librespot copies each to the audio cache once it is complete.
+    pub fn audio_tmp(&self) -> PathBuf {
+        self.cache.join("tmp")
+    }
+
     pub fn pathfinder_hashes(&self) -> PathBuf {
         self.cache.join("pathfinder-hashes.json")
     }
