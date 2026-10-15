@@ -45,7 +45,9 @@ struct RowStyle<'a> {
     playing: bool,
     /// The track on its way to the player.
     loading_uri: Option<String>,
+    /// For the spinner, which keeps turning even where the equalizer stands still.
     frame: u64,
+    equalizer: &'static str,
     saved: &'a HashMap<String, bool>,
 }
 
@@ -107,6 +109,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         playing: app.now.playing,
         loading_uri: app.now.pending.as_ref().and_then(|p| p.uri.clone()),
         frame: app.frame(),
+        equalizer: super::equalizer(app),
         saved: &app.saved,
     };
     let searching = app.focus == Focus::SearchInput;
@@ -408,7 +411,7 @@ impl ResultGrid {
         let name_style = if current { Style::new().fg(style.accent).bold() } else { Style::new().fg(TEXT) };
         buf.set_string(x, y, &name, name_style);
         if current {
-            let marker = if style.playing { text::equalizer(style.frame) } else { icons().volume };
+            let marker = if style.playing { style.equalizer } else { icons().volume };
             buf.set_string(x + name.width() as u16 + 2, y, marker, Style::new().fg(style.accent));
         }
 
@@ -532,7 +535,7 @@ impl Columns {
         } else if !is_current {
             Span::styled(fit(&right(&(index + 1).to_string(), 3), Self::INDEX), FAINT)
         } else if style.playing {
-            Span::styled(fit(&format!(" {}", text::equalizer(style.frame)), Self::INDEX), style.accent)
+            Span::styled(fit(&format!(" {}", style.equalizer), Self::INDEX), style.accent)
         } else {
             Span::styled(fit("  ▶", Self::INDEX), style.accent)
         };

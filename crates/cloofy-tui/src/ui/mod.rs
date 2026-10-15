@@ -235,6 +235,11 @@ pub(super) fn name_spans(x: u16, y: u16, names: &[String], width: usize) -> Vec<
     spans
 }
 
+/// The equalizer that marks what plays; it stands still where motion is unwelcome.
+pub(super) fn equalizer(app: &App) -> &'static str {
+    text::equalizer(if app.calm() { 0 } else { app.frame() })
+}
+
 /// Whether the mouse is over `area` with nothing in front of it.
 pub(super) fn hovered(app: &App, area: Rect) -> bool {
     app.overlay.is_none() && app.mouse.is_some_and(|position| area.contains(position))

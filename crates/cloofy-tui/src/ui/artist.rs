@@ -38,6 +38,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let focused = app.focus == Focus::Content;
     let frame_no = app.frame();
+    let equalizer = super::equalizer(app);
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
     let playing_uri = app.now.track.as_ref().map(|t| t.uri.clone());
@@ -199,7 +200,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(fit(&right(text::spinner(frame_no), 3), 5), accent)
             }
             (false, _) => Span::styled(fit(&right(&(index + 1).to_string(), 3), 5), FAINT),
-            (true, true) => Span::styled(fit(&format!(" {}", text::equalizer(frame_no)), 5), accent),
+            (true, true) => Span::styled(fit(&format!(" {}", equalizer), 5), accent),
             (true, false) => Span::styled(fit("  ▶", 5), accent),
         };
         let title_style = if is_current { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
