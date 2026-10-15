@@ -37,6 +37,8 @@ pub struct Placement {
     /// The image's cells as drawn, row by row; cells that differ at the end of the frame were
     /// drawn over. Empty while snapshots are off.
     pub cells: Vec<Cell>,
+    /// The first time a Kitty image is drawn: the upload of its pixels, written after the frame.
+    pub upload: Option<String>,
 }
 
 pub struct Snapshotter {

@@ -18,7 +18,7 @@ use std::time::Instant;
 use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
-    buffer::Buffer,
+    buffer::{Buffer, Cell},
     layout::{Constraint, Layout, Rect, Size},
     style::{Color, Modifier, Style},
 };
@@ -160,8 +160,9 @@ fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Si
     }
     let skip = (visible_top - top) as u16;
     let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
-    if area.height == size.height {
+    let upload = if area.height == size.height {
         frame.render_widget(Image::new(&picture.protocol), area);
+        take_upload(&mut frame.buffer_mut()[(area.x, area.y)])
     } else {
         // Kitty placeholders and half blocks are plain cells, so rows can be cut; Sixel and
         // iTerm2 images are a single escape sequence and cannot.
@@ -170,28 +171,31 @@ fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Si
         }
         let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
         Image::new(&picture.protocol).render(scratch.area, &mut scratch);
+        let upload = take_upload(&mut scratch[(0, 0)]);
         let buf = frame.buffer_mut();
         for row in 0..area.height {
             for column in 0..area.width {
                 buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
             }
         }
-        // The first time an image is drawn, its upload rides on the top-left cell; keep it.
-        let first = scratch[(0, 0)].symbol();
-        if skip > 0
-            && let Some(start) = first.find(KITTY_PLACEHOLDER)
-            && start > 0
-        {
-            let cell = &mut buf[(area.x, area.y)];
-            let symbol = format!("{}{}", &first[..start], cell.symbol());
-            cell.set_symbol(&symbol);
-        }
-    }
+        upload
+    };
     let cells = match picture.source {
         Some(_) => area.rows().flat_map(|row| row.columns()).map(|p| frame.buffer_mut()[p].clone()).collect(),
         None => Vec::new(),
     };
-    Some(Placement { area, size, skip, source: picture.source.clone(), cells })
+    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload })
+}
+
+/// The first time a Kitty image is drawn, the upload of its pixels rides on its top-left cell.
+/// Takes it off, so that whatever is drawn over that cell, like an overlay, cannot lose it; the
+/// caller writes it out after the frame.
+fn take_upload(cell: &mut Cell) -> Option<String> {
+    let symbol = cell.symbol();
+    let start = symbol.find(KITTY_PLACEHOLDER).filter(|&start| start > 0)?;
+    let (upload, placeholder) = (symbol[..start].to_owned(), symbol[start..].to_owned());
+    cell.set_symbol(&placeholder);
+    Some(upload)
 }
 
 /// The play button of a hovered card, ending at column `right` in row `y`. A dark cell to

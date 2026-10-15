@@ -12,7 +12,7 @@ mod ui;
 mod views;
 
 use std::{
-    io::{BufWriter, Stdout},
+    io::{BufWriter, Stdout, Write},
     sync::Arc,
     time::Duration,
 };
@@ -134,6 +134,13 @@ fn draw(terminal: &mut Term, app: &mut App, snapshot: bool) -> Result<Option<Buf
     crossterm::queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
     let frame = terminal.draw(|frame| ui::draw(frame, app))?;
     let buffer = snapshot.then(|| frame.buffer.clone());
+    // Images drawn for the first time send their pixels now. The upload does not move the
+    // cursor, and the terminal fills in cells that wait for the image once it arrives.
+    for placement in &mut app.placements {
+        if let Some(upload) = placement.upload.take() {
+            terminal.backend_mut().write_all(upload.as_bytes())?;
+        }
+    }
     crossterm::execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
     Ok(buffer)
 }
