@@ -15,18 +15,20 @@ use cloofy_spotify::{
     connect::{self, Device, Playback},
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
+    paths::Paths,
+    session,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use librespot::{core::session::Session, playback::player::PlayerEvent};
+use librespot::playback::player::PlayerEvent;
 use ratatui::layout::{Position, Rect, Size};
 use tachyonfx::{CellFilter, Effect, EffectManager, Interpolation, Motion, fx};
-use tokio::sync::watch;
+use tokio::sync::{mpsc::UnboundedSender, watch};
 
 use crate::{
     commands::Command,
-    loader::{DataEvent, Loader, Picture},
+    loader::{DataEvent, Loader, Picture, SessionState},
     overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
-    playback::{Controller, Cover, NowPlaying, Repeat},
+    playback::{self, Controller, Cover, NowPlaying, Repeat},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
     views::{
@@ -74,6 +76,10 @@ const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// Waits before starting the player again after it failed to connect, longer after each
+/// failure in a row.
+const PLAYER_RETRY: [Duration; 4] =
+    [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(15), Duration::from_secs(60)];
 
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
@@ -290,7 +296,13 @@ pub struct App {
     crossfade: u64,
     next_poll: Instant,
     polling: bool,
-    session_tx: watch::Sender<Option<Session>>,
+    session_tx: watch::Sender<SessionState>,
+    /// For starting the player again after it failed to connect.
+    paths: Paths,
+    events: UnboundedSender<AppEvent>,
+    /// Failed player starts in a row, for backing off between retries.
+    player_failures: usize,
+    player_retry_at: Option<Instant>,
     pub player_error: Option<String>,
     pub now: NowPlaying,
     pub accent: Accent,
@@ -377,10 +389,11 @@ pub struct App {
 impl App {
     pub fn new(
         loader: Loader,
-        session_tx: watch::Sender<Option<Session>>,
+        session_tx: watch::Sender<SessionState>,
+        events: UnboundedSender<AppEvent>,
         crossfade: u64,
         state: crate::state::State,
-        state_path: std::path::PathBuf,
+        paths: Paths,
     ) -> Self {
         loader.me();
         loader.playlists();
@@ -388,7 +401,7 @@ impl App {
         loader.home(0);
         let mut app = Self {
             loader,
-            state_path,
+            state_path: paths.state_file(),
             last_save: Instant::now(),
             resume: None,
             last_context: None,
@@ -400,6 +413,10 @@ impl App {
             next_poll: Instant::now(),
             polling: false,
             session_tx,
+            paths,
+            events,
+            player_failures: 0,
+            player_retry_at: None,
             player_error: None,
             now: NowPlaying::new(),
             accent: Accent::new(),
@@ -507,18 +524,62 @@ impl App {
         match event {
             AppEvent::Player(event) => return self.on_player(event),
             AppEvent::PlayerReady(controller) => {
-                let _ = self.session_tx.send(Some(controller.session.clone()));
+                let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
+                self.player_failures = 0;
                 self.device_id = Some(controller.session.device_id().to_owned());
                 if let Some(volume) = self.restored_volume {
                     let _ = controller.set_volume(volume);
                 }
                 controller.set_crossfade(Duration::from_secs(self.crossfade));
                 self.controller = Some(*controller);
+                self.reload_failed_view();
             }
-            AppEvent::PlayerFailed(err) => self.player_error = Some(err),
+            AppEvent::PlayerFailed(err) => self.on_player_failed(err),
             AppEvent::Data(data) => return self.on_data(data),
         }
         true
+    }
+
+    /// Lets requests waiting for the session fail, and schedules another try.
+    fn on_player_failed(&mut self, err: String) {
+        tracing::warn!("player: {err}");
+        let _ = self.session_tx.send(SessionState::Failed(err.clone()));
+        // Being offline or a server hiccup passes; a missing login does not.
+        if session::is_logged_in(&self.paths).unwrap_or(false) {
+            let delay = PLAYER_RETRY[self.player_failures.min(PLAYER_RETRY.len() - 1)];
+            self.player_failures += 1;
+            self.player_retry_at = Some(Instant::now() + delay);
+        }
+        self.player_error = Some(err);
+    }
+
+    fn retry_player(&mut self) {
+        self.player_retry_at = None;
+        self.player_error = None;
+        let _ = self.session_tx.send(SessionState::Connecting);
+        playback::spawn(self.paths.clone(), Duration::from_secs(self.crossfade), self.events.clone());
+    }
+
+    /// Loads the open page again once the session is up, if it failed without one.
+    fn reload_failed_view(&mut self) {
+        match &mut self.view {
+            View::Home(v) if v.error.is_some() => {
+                v.error = None;
+                v.loading = true;
+                self.loader.home(v.id);
+            }
+            View::Artist(v) if v.error.is_some() => {
+                v.error = None;
+                self.loader.artist(v.id, v.uri.clone());
+            }
+            View::Tracks(v) if v.error.is_some() => {
+                v.error = None;
+                v.loading = true;
+                v.tracks.clear();
+                self.loader.tracks(v.id, v.source.clone(), self.me.as_ref().map(|u| u.id.clone()));
+            }
+            _ => {}
+        }
     }
 
     fn on_player(&mut self, event: PlayerEvent) -> bool {
@@ -850,6 +911,10 @@ impl App {
         }
 
         self.flush_saves();
+        if self.player_retry_at.is_some_and(|at| Instant::now() >= at) {
+            self.retry_player();
+            redraw = true;
+        }
         if self.last_save.elapsed() >= STATE_SAVE_INTERVAL {
             self.save_state();
         }
@@ -899,7 +964,7 @@ impl App {
             || lyrics_loading
             || self.playlists_loading
             || self.library_loading
-            || self.controller.is_none()
+            || (self.controller.is_none() && self.player_error.is_none())
     }
 
     /// Requests the big cover once the Now Playing layout knows its size.

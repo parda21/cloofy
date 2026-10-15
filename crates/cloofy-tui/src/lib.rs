@@ -33,7 +33,7 @@ use tokio::{
 
 use crate::{
     app::{App, AppEvent},
-    loader::{DataEvent, Loader},
+    loader::{DataEvent, Loader, SessionState},
 };
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
@@ -71,7 +71,7 @@ pub async fn run(paths: &Paths) -> Result<()> {
 
 async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: Picker, crossfade: u64) -> Result<()> {
     let (tx, mut events) = mpsc::unbounded_channel();
-    let (session_tx, session_rx) = watch::channel(None);
+    let (session_tx, session_rx) = watch::channel(SessionState::Connecting);
     let snapshotter = snapshot::Snapshotter::from_env().map(Arc::new);
     let loader = Loader::new(
         api,
@@ -84,9 +84,9 @@ async fn run_app(terminal: &mut Term, paths: &Paths, api: Arc<WebApi>, picker: P
     );
     loader.prune_image_cache();
     let notices = tx.clone();
-    playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx);
+    playback::spawn(paths.clone(), Duration::from_secs(crossfade), tx.clone());
     let saved = state::load(&paths.state_file());
-    let mut app = App::new(loader, session_tx, crossfade, saved, paths.state_file());
+    let mut app = App::new(loader, session_tx, tx, crossfade, saved, paths.clone());
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
