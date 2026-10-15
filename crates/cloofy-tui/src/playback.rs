@@ -606,6 +606,9 @@ pub struct Controller {
     engine: Arc<Engine>,
     /// Set when the connection ends on purpose, so it isn't restored.
     stopping: Arc<AtomicBool>,
+    /// Set when cloofy drops the connection to make a new one, as after sleep, so connecting
+    /// again doesn't wait.
+    forced: Arc<AtomicBool>,
 }
 
 impl Controller {
@@ -692,6 +695,7 @@ impl Controller {
 
     /// Drops the connection; the background task connects again.
     pub fn reconnect(&self) {
+        self.forced.store(true, Ordering::Relaxed);
         self.session.shutdown();
         let _ = self.spirc.shutdown();
     }
@@ -730,11 +734,13 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Noti
                     // Before the task starts the dealer: while it starts, it takes no subscriptions.
                     forward_pushes(&session, tx.clone());
                     let stopping = Arc::new(AtomicBool::new(false));
+                    let forced = Arc::new(AtomicBool::new(false));
                     let controller = Controller {
                         spirc,
                         session: session.clone(),
                         engine: engine.clone(),
                         stopping: stopping.clone(),
+                        forced: forced.clone(),
                     };
                     if tx.send(AppEvent::PlayerReady(Box::new(controller))).is_err() {
                         return;
@@ -744,6 +750,9 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Noti
                     if stopping.load(Ordering::Relaxed) {
                         return;
                     }
+                    // Nothing controls the old track any more, and the app offers to resume it.
+                    // A track that was already downloaded would otherwise play on.
+                    engine.player.stop();
                     if !session.is_invalid() {
                         session.shutdown();
                     }
@@ -751,8 +760,9 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Noti
                     if tx.send(AppEvent::PlayerLost).is_err() {
                         return;
                     }
-                    // One that dropped soon after it started waits like a failed attempt.
-                    if connected.elapsed() >= STABLE {
+                    // One cloofy dropped itself, after sleep, goes ahead at once; one that dropped
+                    // soon after it started waits like a failed attempt.
+                    if forced.load(Ordering::Relaxed) || connected.elapsed() >= STABLE {
                         retry = RETRY_FIRST;
                         false
                     } else {
