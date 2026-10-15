@@ -1625,9 +1625,25 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 self.overlay = None;
-                if let Some(hit @ (Hit::Row(_) | Hit::Card { .. } | Hit::Nav(_))) = hit {
-                    self.select(hit);
-                    self.open_menu((mouse.column, mouse.row));
+                // Names and play buttons lie on top of their row or card; the menu is theirs.
+                let hit = hit.map(|hit| match hit {
+                    Hit::Link(Link::TrackArtist { row, .. } | Link::TrackAlbum(row)) => Hit::Row(row),
+                    Hit::CardPlay { shelf, item } => Hit::Card { shelf, item },
+                    Hit::RowPlay(index) => Hit::Row(index),
+                    hit => hit,
+                });
+                let anchor = (mouse.column, mouse.row);
+                match hit {
+                    Some(hit @ (Hit::Row(_) | Hit::Card { .. } | Hit::Nav(_))) => {
+                        self.select(hit);
+                        self.open_menu(anchor);
+                    }
+                    Some(
+                        Hit::Cover
+                        | Hit::LikePlaying
+                        | Hit::Link(Link::PlayingArtist(_) | Link::PlayingAlbum | Link::PlayingContext),
+                    ) => self.open_playing_menu(anchor),
+                    _ => {}
                 }
             }
             MouseEventKind::ScrollDown if sideways => self.scroll_sideways(hit, 1),

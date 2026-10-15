@@ -79,7 +79,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let width = label.width() as u16 + 3;
                 hits.push((Rect::new(note_x, info.y, width, 1), Hit::Link(Link::PlayingContext)));
             }
-            hits.push((Rect::new(heart_x, info.y, 1, 1), Hit::LikePlaying));
+            // The blank cells either side widen the heart into an easier target.
+            hits.push((Rect::new(heart_x.saturating_sub(1), info.y, 3, 1), Hit::LikePlaying));
             buf.set_line(controls_x, info.y, &controls, controls_width);
             hits.extend(targets.into_iter().map(|(offset, width, command)| {
                 (Rect::new(controls_x + offset, info.y, width, 1), Hit::Command(command))
@@ -135,20 +136,39 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.hits.extend(hits);
 }
 
-/// Small windows: title and controls in one row, the progress bar below if there is room.
+/// Small windows: title, heart and controls in one row, the progress bar below if there is room.
 fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
     let Some(track) = &app.now.track else {
-        buf.set_string(area.x + 2, area.y, "Nothing playing", Style::new().fg(MUTED));
+        let (status, style) = if app.is_connected() {
+            ("Nothing playing".to_owned(), Style::new().fg(MUTED))
+        } else if app.player_error.is_some() {
+            ("Playback unavailable".to_owned(), Style::new().fg(DANGER))
+        } else {
+            (format!("{}  Connecting to Spotify…", text::spinner(app.frame())), Style::new().fg(MUTED))
+        };
+        buf.set_string(area.x + 2, area.y, text::truncate(&status, area.width.saturating_sub(4) as usize), style);
         return;
     };
     let accent = app.accent.color();
     let (controls, targets) = controls(app, accent);
     let controls_width = controls.width() as u16;
     let show_controls = area.width >= controls_width + 24;
-    let text_width = area.width.saturating_sub(if show_controls { controls_width + 6 } else { 4 }) as usize;
-    let title = format!("{} · {}", track.name, track.artists.join(", "));
-    buf.set_string(area.x + 2, area.y, text::truncate(&title, text_width), Style::new().fg(TEXT).bold());
-    let mut hits = Vec::new();
+    // Room for the title, then two blank cells, the heart and one more blank cell.
+    let text_width = area.width.saturating_sub(if show_controls { controls_width + 10 } else { 8 }) as usize;
+    let title = text::truncate(&format!("{} · {}", track.name, track.artists.join(", ")), text_width);
+    buf.set_string(area.x + 2, area.y, &title, Style::new().fg(TEXT).bold());
+    // Like the cover in the full bar, the title opens Now Playing.
+    let mut hits = vec![(Rect::new(area.x + 2, area.y, title.width() as u16, 1), Hit::Cover)];
+    let heart_x = area.x + 2 + title.width() as u16 + 2;
+    if heart_x + 1 < area.right() {
+        let (heart, heart_style) = if app.is_saved(&track.uri) {
+            (icons().saved, Style::new().fg(accent))
+        } else {
+            (icons().save, Style::new().fg(FAINT))
+        };
+        buf.set_string(heart_x, area.y, heart, heart_style);
+        hits.push((Rect::new(heart_x - 1, area.y, 3, 1), Hit::LikePlaying));
+    }
     if show_controls {
         let x = area.right().saturating_sub(controls_width + 2);
         buf.set_line(x, area.y, &controls, controls_width);
