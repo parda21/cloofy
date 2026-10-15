@@ -72,6 +72,11 @@ pub enum DataEvent {
         size: Size,
         result: Result<Picture, String>,
     },
+    /// A cover as an encoded image, for the system's media controls.
+    Artwork {
+        url: String,
+        result: Result<Arc<[u8]>, String>,
+    },
     Lyrics {
         uri: String,
         result: Result<Option<Lyrics>, String>,
@@ -268,6 +273,13 @@ impl Loader {
         self.spawn(move |this| async move {
             let result = this.encode_image(&url, size, |image| theme::accent_from_image(image)).await;
             this.send(DataEvent::Cover { url, result: result.map_err(|e| format!("{e:#}")) });
+        });
+    }
+
+    pub fn artwork(&self, url: String) {
+        self.spawn(move |this| async move {
+            let result = this.download_image(&url).await.map(Arc::from).map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Artwork { url, result });
         });
     }
 
