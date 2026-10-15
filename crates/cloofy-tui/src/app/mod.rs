@@ -76,6 +76,8 @@ const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// Parts of the library besides playlists, each loaded on its own.
+const LIBRARY_PARTS: u8 = 4;
 /// Waits before starting the player again after it failed to connect, longer after each
 /// failure in a row.
 const PLAYER_RETRY: [Duration; 4] =
@@ -314,6 +316,8 @@ pub struct App {
     pub shows: Vec<ShowInfo>,
     pub liked_total: Option<u32>,
     pub library_loading: bool,
+    /// Parts of the library still on their way at startup.
+    library_pending: u8,
     pub library_filter: LibraryFilter,
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
@@ -428,6 +432,7 @@ impl App {
             shows: Vec::new(),
             liked_total: None,
             library_loading: true,
+            library_pending: LIBRARY_PARTS,
             library_filter: LibraryFilter::All,
             home_cache: None,
             images: HashMap::new(),
@@ -698,24 +703,36 @@ impl App {
                     Err(err) => self.error(err),
                 }
             }
-            DataEvent::Library { liked, albums, artists, shows } => {
-                self.library_loading = false;
-                self.liked_total = liked.ok();
-                match albums {
+            DataEvent::LikedCount(result) => {
+                self.library_part_done();
+                match result {
+                    Ok(total) => self.liked_total = Some(total),
+                    Err(err) => tracing::warn!("liked songs: {err}"),
+                }
+            }
+            DataEvent::Albums(result) => {
+                self.library_part_done();
+                match result {
                     Ok(list) => {
                         self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
                         self.albums = list;
                     }
                     Err(err) => tracing::warn!("albums: {err}"),
                 }
-                match artists {
+            }
+            DataEvent::Artists(result) => {
+                self.library_part_done();
+                match result {
                     Ok(list) => {
                         self.saved.extend(list.iter().map(|a| (a.uri.clone(), true)));
                         self.artists = list;
                     }
                     Err(err) => tracing::warn!("artists: {err}"),
                 }
-                match shows {
+            }
+            DataEvent::Shows(result) => {
+                self.library_part_done();
+                match result {
                     Ok(list) => self.shows = list,
                     Err(err) => tracing::warn!("shows: {err}"),
                 }
@@ -867,6 +884,12 @@ impl App {
             DataEvent::Failed(text) => self.error(text),
         }
         true
+    }
+
+    /// Counts down the library parts loading at startup; later reloads don't show a spinner.
+    fn library_part_done(&mut self) {
+        self.library_pending = self.library_pending.saturating_sub(1);
+        self.library_loading = self.library_pending > 0;
     }
 
     fn on_tracks(&mut self, view: u64, page: Result<Page<Track>, String>) {

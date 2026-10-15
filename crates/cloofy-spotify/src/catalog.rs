@@ -2,18 +2,21 @@
 //! endpoints where Development Mode apps are locked out.
 
 use anyhow::Result;
-use futures::{StreamExt, stream};
+use futures::{StreamExt, TryStreamExt, stream};
 use librespot::{
     core::{SpotifyUri, session::Session},
     metadata::{self as meta, Metadata},
 };
 use reqwest::Method;
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 
 use crate::webapi::WebApi;
 
-const PAGE: u32 = 50;
+/// Items per page of the Web API's paged lists.
+pub const PAGE: u32 = 50;
+/// Pages of one list fetched at the same time, once the first one tells how many there are.
+pub const PAGE_CONCURRENCY: usize = 4;
 /// Maximum URIs per `/me/library` request.
 const LIBRARY_BATCH: usize = 40;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
@@ -99,32 +102,11 @@ pub async fn me(api: &WebApi) -> Result<User> {
 
 /// All playlists in the user's library, owned and followed.
 pub async fn playlists(api: &WebApi) -> Result<Vec<PlaylistInfo>> {
-    let mut all = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: RawPage<Option<RawPlaylist>> =
-            api.get_json(&format!("/me/playlists?limit={PAGE}&offset={offset}")).await?;
-        let next = next_offset(&page, offset);
-        all.extend(page.items.into_iter().flatten().map(PlaylistInfo::from));
-        match next {
-            Some(n) => offset = n,
-            None => return Ok(all),
-        }
-    }
+    all_pages(api, "/me/playlists", |raw: Option<RawPlaylist>| raw.map(PlaylistInfo::from)).await
 }
 
 pub async fn saved_albums(api: &WebApi) -> Result<Vec<AlbumInfo>> {
-    let mut all = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: RawPage<RawSavedAlbum> = api.get_json(&format!("/me/albums?limit={PAGE}&offset={offset}")).await?;
-        let next = next_offset(&page, offset);
-        all.extend(page.items.into_iter().map(|saved| AlbumInfo::from(saved.album)));
-        match next {
-            Some(n) => offset = n,
-            None => return Ok(all),
-        }
-    }
+    all_pages(api, "/me/albums", |saved: RawSavedAlbum| Some(AlbumInfo::from(saved.album))).await
 }
 
 /// Followed artists; this endpoint pages with a cursor instead of an offset.
@@ -143,21 +125,33 @@ pub async fn followed_artists(api: &WebApi) -> Result<Vec<ArtistInfo>> {
 }
 
 pub async fn saved_shows(api: &WebApi) -> Result<Vec<ShowInfo>> {
-    let mut all = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: RawPage<RawSavedShow> = api.get_json(&format!("/me/shows?limit={PAGE}&offset={offset}")).await?;
-        let next = next_offset(&page, offset);
-        all.extend(page.items.into_iter().map(|saved| ShowInfo {
-            uri: saved.show.uri,
-            name: saved.show.name,
-            image_url: pick_image(&saved.show.images),
-        }));
-        match next {
-            Some(n) => offset = n,
-            None => return Ok(all),
-        }
-    }
+    all_pages(api, "/me/shows", |saved: RawSavedShow| {
+        Some(ShowInfo { uri: saved.show.uri, name: saved.show.name, image_url: pick_image(&saved.show.images) })
+    })
+    .await
+}
+
+/// Every item of an offset-paged list. The first page tells how many there are; the rest are
+/// then fetched a few at a time instead of one after another, and keep their order.
+async fn all_pages<R, T>(api: &WebApi, path: &str, map: impl Fn(R) -> Option<T>) -> Result<Vec<T>>
+where
+    R: DeserializeOwned + Send,
+{
+    let page = |offset: u32| format!("{path}?limit={PAGE}&offset={offset}");
+    let first: RawPage<R> = api.get_json(&page(0)).await?;
+    let offsets: Vec<u32> = match next_offset(&first, 0) {
+        Some(next) => (next..first.total).step_by(PAGE as usize).collect(),
+        None => Vec::new(),
+    };
+    let rest: Vec<RawPage<R>> = stream::iter(offsets)
+        .map(|offset| {
+            let path = page(offset);
+            async move { api.get_json(&path).await }
+        })
+        .buffered(PAGE_CONCURRENCY)
+        .try_collect()
+        .await?;
+    Ok(std::iter::once(first).chain(rest).flat_map(|page| page.items).filter_map(map).collect())
 }
 
 /// Number of liked songs.
