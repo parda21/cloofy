@@ -49,11 +49,13 @@ const OAUTH_SCOPES: &[&str] = &[
 pub struct PendingSession {
     pub session: Session,
     pub credentials: Credentials,
+    paths: Paths,
 }
 
 impl PendingSession {
     pub async fn connect(self) -> Result<Session> {
         self.session.connect(self.credentials, true).await.context("Connecting to Spotify failed")?;
+        remember(&self.paths, &self.session)?;
         Ok(self.session)
     }
 }
@@ -61,7 +63,7 @@ impl PendingSession {
 pub fn prepare(paths: &Paths) -> Result<PendingSession> {
     let cache = cache(paths, !paths.keychain)?;
     let credentials = stored_credentials(paths, &cache)?.context("Streaming not logged in – run `cloofy login`")?;
-    Ok(PendingSession { session: Session::new(config(paths)?, Some(cache)), credentials })
+    Ok(PendingSession { session: Session::new(config(paths)?, Some(cache)), credentials, paths: paths.clone() })
 }
 
 pub fn is_logged_in(paths: &Paths) -> Result<bool> {
@@ -69,7 +71,8 @@ pub fn is_logged_in(paths: &Paths) -> Result<bool> {
 }
 
 /// Updates the credentials in the keychain when Spotify handed out new ones while connecting;
-/// for files, librespot does that itself.
+/// for files, librespot does that itself. [`PendingSession::connect`] calls it; connections
+/// that Spirc makes need to call it themselves.
 pub fn remember(paths: &Paths, session: &Session) -> Result<()> {
     if !paths.keychain {
         return Ok(());
@@ -97,7 +100,7 @@ fn stored_credentials(paths: &Paths, cache: &Cache) -> Result<Option<Credentials
 }
 
 /// Interactive OAuth login. Connecting once stores reusable credentials: librespot writes
-/// them to a file, which moves into the keychain right away in keychain mode.
+/// them to a file, which `remember` moves into the keychain right away in keychain mode.
 pub async fn login(paths: &Paths) -> Result<Session> {
     let config = config(paths)?;
     let token = OAuthClientBuilder::new(&config.client_id, OAUTH_REDIRECT, OAUTH_SCOPES.to_vec())
@@ -106,16 +109,13 @@ pub async fn login(paths: &Paths) -> Result<Session> {
         .build()?
         .get_access_token_async()
         .await?;
-    let session = PendingSession {
+    PendingSession {
         session: Session::new(config, Some(cache(paths, true)?)),
         credentials: Credentials::with_access_token(token.access_token),
+        paths: paths.clone(),
     }
     .connect()
-    .await?;
-    if paths.keychain {
-        paths.streaming_credentials().read()?;
-    }
-    Ok(session)
+    .await
 }
 
 /// librespot keeps the credentials in a file only with `credentials_file`.
