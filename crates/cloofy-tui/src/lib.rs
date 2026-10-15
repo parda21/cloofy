@@ -29,6 +29,8 @@ use crate::{app::App, loader::Loader};
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);
+/// Low Power Mode has no animations to keep smooth, so the timer wakes cloofy less often.
+const LOW_POWER_TICK: Duration = Duration::from_millis(100);
 
 pub async fn run(paths: &Paths) -> Result<()> {
     let config = Config::load(paths)?;
@@ -94,8 +96,7 @@ async fn run_app(
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
-    let mut ticker = tokio::time::interval(TICK);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut ticker = new_ticker(app.settings.low_power);
 
     terminal.draw(|frame| ui::draw(frame, &mut app))?;
     while !app.quit {
@@ -119,6 +120,9 @@ async fn run_app(
             _ = closed.recv() => break,
         };
         app.sync_media();
+        if ticker.period() != ticker_period(app.settings.low_power) {
+            ticker = new_ticker(app.settings.low_power);
+        }
         if redraw || app.snapshot_requested {
             let frame = terminal.draw(|frame| ui::draw(frame, &mut app))?;
             if std::mem::take(&mut app.snapshot_requested)
@@ -138,6 +142,16 @@ async fn run_app(
     }
     app.shutdown();
     Ok(())
+}
+
+fn ticker_period(low_power: bool) -> Duration {
+    if low_power { LOW_POWER_TICK } else { TICK }
+}
+
+fn new_ticker(low_power: bool) -> tokio::time::Interval {
+    let mut ticker = tokio::time::interval(ticker_period(low_power));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    ticker
 }
 
 /// Fires when the terminal window is closed (SIGHUP) or cloofy is asked to stop (SIGTERM),

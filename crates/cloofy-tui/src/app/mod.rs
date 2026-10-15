@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use cloofy_os::settings::Settings;
 use cloofy_spotify::{
     catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, ShowInfo, Track, User},
     connect::{self, Device, Playback},
@@ -57,6 +58,10 @@ const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(350);
 /// Animation frame length (spinners, equalizer, progress bar).
 const FRAME: Duration = Duration::from_millis(120);
+/// In Low Power Mode, a playing track redraws once a second: often enough for the clock.
+const LOW_POWER_FRAME: Duration = Duration::from_secs(1);
+/// How often to look at the system's motion and power settings.
+const SETTINGS_INTERVAL: Duration = Duration::from_secs(3);
 /// After sleeping this long, the connection is gone, even if Spotify takes a while to notice.
 const LONG_SLEEP: Duration = Duration::from_secs(60);
 
@@ -288,6 +293,9 @@ pub struct App {
     media: Option<MediaSync>,
     /// When the computer went to sleep, in wall-clock time: the monotonic clock stops meanwhile.
     slept_at: Option<std::time::SystemTime>,
+    /// Reduce Motion and Low Power Mode, as of the last check.
+    pub settings: Settings,
+    settings_checked: Instant,
     pub accent: Accent,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
@@ -383,6 +391,8 @@ impl App {
             now: NowPlaying::new(),
             media: media.map(MediaSync::new),
             slept_at: None,
+            settings: cloofy_os::settings::current(),
+            settings_checked: Instant::now(),
             accent: Accent::new(),
             me: None,
             playlists: Vec::new(),
@@ -446,7 +456,13 @@ impl App {
 
     /// Animation frame counter, shared by all animated elements.
     pub fn frame(&self) -> u64 {
-        (self.started.elapsed().as_millis() / FRAME.as_millis()) as u64
+        let frame = if self.settings.low_power { LOW_POWER_FRAME } else { FRAME };
+        (self.started.elapsed().as_millis() / frame.as_millis()) as u64
+    }
+
+    /// Without movement that only decorates: for Reduce Motion, and to save energy.
+    pub fn calm(&self) -> bool {
+        self.settings.reduce_motion || self.settings.low_power
     }
 
     pub fn is_saved(&self, uri: &str) -> bool {
@@ -747,7 +763,11 @@ impl App {
                 match result {
                     Ok((picture, accent)) => {
                         self.now.cover = Some(Cover { url, picture });
-                        self.accent.set(accent);
+                        if self.settings.low_power {
+                            self.accent.jump(accent);
+                        } else {
+                            self.accent.set(accent);
+                        }
                     }
                     Err(err) => tracing::warn!("cover {url}: {err}"),
                 }
@@ -836,6 +856,13 @@ impl App {
     pub fn on_tick(&mut self) -> bool {
         let mut redraw = false;
 
+        if self.settings_checked.elapsed() >= SETTINGS_INTERVAL {
+            self.settings_checked = Instant::now();
+            let settings = cloofy_os::settings::current();
+            redraw |= settings != self.settings;
+            self.settings = settings;
+        }
+
         if let View::Search(search) = &mut self.view
             && search.typed_at.is_some_and(|t| t.elapsed() >= SEARCH_DEBOUNCE)
         {
@@ -923,7 +950,7 @@ impl App {
             .and_then(|l| l.current_line(self.now.position_ms()))
             .map_or(0.0, |line| line as f32);
         let distance = target - self.lyrics_scroll;
-        if distance.abs() < 0.02 {
+        if distance.abs() < 0.02 || self.calm() {
             self.lyrics_scroll = target;
             return false;
         }
@@ -1680,8 +1707,12 @@ impl App {
     /// Called by the first draw of an overlay, which knows where it ended up.
     pub fn animate_overlay(&mut self, area: Rect) {
         self.overlay_fx_pending = false;
-        let effect = fx::sweep_in(Motion::UpToDown, 6, 0, RAISED, (180, Interpolation::QuadOut)).with_area(area);
-        self.animate(Fx::Overlay, effect);
+        let effect = if self.settings.reduce_motion {
+            fx::fade_from_fg(RAISED, (150, Interpolation::QuadOut))
+        } else {
+            fx::sweep_in(Motion::UpToDown, 6, 0, RAISED, (180, Interpolation::QuadOut))
+        };
+        self.animate(Fx::Overlay, effect.with_area(area));
     }
 
     fn toggle_saved(&mut self) {
@@ -1756,8 +1787,11 @@ impl App {
         self.animate(Fx::Screen, fx::fade_from_fg(BG, (320, Interpolation::QuadOut)).with_area(screen));
     }
 
-    /// Starts an animation; the next frame measures time from now.
+    /// Starts an animation; the next frame measures time from now. None in Low Power Mode.
     fn animate(&mut self, slot: Fx, effect: Effect) {
+        if self.settings.low_power {
+            return;
+        }
         // Kitty images are drawn through placeholder cells whose color encodes the image;
         // recoloring them mid-animation would show the wrong picture.
         let effect = effect.with_filter(CellFilter::eval_cell(|cell| !cell.symbol().starts_with(KITTY_PLACEHOLDER)));
@@ -2079,8 +2113,12 @@ impl App {
 
     fn animate_content(&mut self) {
         let area = self.content_area;
-        let effect = fx::sweep_in(Motion::LeftToRight, 20, 0, BG, (240, Interpolation::QuadOut)).with_area(area);
-        self.animate(Fx::Content, effect);
+        let effect = if self.settings.reduce_motion {
+            fx::fade_from_fg(BG, (200, Interpolation::QuadOut))
+        } else {
+            fx::sweep_in(Motion::LeftToRight, 20, 0, BG, (240, Interpolation::QuadOut))
+        };
+        self.animate(Fx::Content, effect.with_area(area));
     }
 
     fn next_id(&mut self) -> u64 {
