@@ -11,6 +11,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Reconnecting.** cloofy reconnects to Spotify by itself when the connection drops, after sleep or a network outage, and offers to continue where playback stopped. On macOS it pauses before the Mac sleeps and reconnects as soon as it wakes.
 - **Reduce Motion and Low Power Mode.** On macOS with Reduce Motion, slides become fades, lyrics jump to the current line and the equalizer stands still. In Low Power Mode animations stop and cloofy wakes the computer less often.
 - **Notifications.** Each new track shows a desktop notification while cloofy's window is in the background, in kitty, Ghostty, WezTerm and iTerm2, also inside tmux with `focus-events on` and `allow-passthrough all`. `notifications = false` turns them off.
+- **Keychain.** On macOS, `credentials = "keychain"` keeps sign-ins in the Keychain instead of files. It's off by default, because macOS asks for access again after each update of an unsigned build.
 - **Instant start.** Home, your library and the list you had open show at once from the last run, then refresh in the background.
 - **Search with covers.** Results show their artwork, laid out on one grid.
 

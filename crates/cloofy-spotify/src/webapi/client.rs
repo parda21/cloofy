@@ -1,4 +1,4 @@
-use std::{fs, io, path::PathBuf, time::Duration};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use reqwest::{Method, StatusCode};
@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use super::auth::{self, Token};
-use crate::paths::write_private;
+use crate::paths::Secret;
 
 const API_BASE: &str = "https://api.spotify.com/v1";
 /// Tries per read request, including the first.
@@ -21,7 +21,7 @@ const MAX_RETRY_AFTER: u64 = 10;
 pub struct WebApi {
     http: reqwest::Client,
     client_id: String,
-    token_path: PathBuf,
+    store: Secret,
     token: Mutex<Option<Token>>,
 }
 
@@ -41,10 +41,13 @@ impl ApiResponse {
 }
 
 impl WebApi {
-    pub fn new(client_id: impl Into<String>, token_path: PathBuf) -> Result<Self> {
+    pub fn new(client_id: impl Into<String>, store: Secret) -> Result<Self> {
         let http = crate::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
-        let token = read_token(&token_path)?;
-        Ok(Self { http, client_id: client_id.into(), token_path, token: Mutex::new(token) })
+        let token = match store.read()? {
+            Some(bytes) => Some(serde_json::from_slice(&bytes).context("Stored token corrupted – run `cloofy login`")?),
+            None => None,
+        };
+        Ok(Self { http, client_id: client_id.into(), store, token: Mutex::new(token) })
     }
 
     pub async fn is_logged_in(&self) -> bool {
@@ -138,8 +141,7 @@ impl WebApi {
     }
 
     fn persist(&self, token: &Token) -> Result<()> {
-        write_private(&self.token_path, &serde_json::to_vec_pretty(token)?)
-            .with_context(|| format!("{} is not writable", self.token_path.display()))
+        self.store.write(&serde_json::to_vec_pretty(token)?)
     }
 }
 
@@ -152,12 +154,4 @@ fn retry_after(response: &reqwest::Response) -> Option<Duration> {
         .and_then(|value| value.trim().parse().ok())
         .unwrap_or(1);
     (seconds <= MAX_RETRY_AFTER).then(|| Duration::from_secs(seconds))
-}
-
-fn read_token(path: &PathBuf) -> Result<Option<Token>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).context("Token file corrupted – run `cloofy login`")?)),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).with_context(|| format!("{} is not readable", path.display())),
-    }
 }

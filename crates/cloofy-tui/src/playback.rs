@@ -731,6 +731,9 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Noti
             let session = pending.session.clone();
             let wait = match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
                 Ok((spirc, task)) => {
+                    if let Err(err) = session::remember(&paths, &session) {
+                        tracing::warn!("saving streaming credentials: {err:#}");
+                    }
                     // Before the task starts the dealer: while it starts, it takes no subscriptions.
                     forward_pushes(&session, tx.clone());
                     let stopping = Arc::new(AtomicBool::new(false));

@@ -15,6 +15,8 @@ pub struct Paths {
     pub config: PathBuf,
     pub data: PathBuf,
     pub cache: PathBuf,
+    /// Sign-ins go to the system's keychain instead of files (`credentials = "keychain"`).
+    pub keychain: bool,
 }
 
 impl Paths {
@@ -24,6 +26,7 @@ impl Paths {
             config: base.config_dir().join(APP),
             data: base.data_dir().join(APP),
             cache: base.cache_dir().join(APP),
+            keychain: false,
         })
     }
 
@@ -31,8 +34,17 @@ impl Paths {
         self.config.join("config.toml")
     }
 
-    pub fn webapi_token(&self) -> PathBuf {
-        self.data.join("webapi-token.json")
+    pub fn webapi_token(&self) -> Secret {
+        self.secret("webapi-token", self.data.join("webapi-token.json"))
+    }
+
+    /// librespot's reusable streaming credentials. In files, librespot keeps them itself.
+    pub fn streaming_credentials(&self) -> Secret {
+        self.secret("streaming", self.session_dir().join("credentials.json"))
+    }
+
+    fn secret(&self, name: &'static str, file: PathBuf) -> Secret {
+        if self.keychain { Secret::Keychain { name, file } } else { Secret::File(file) }
     }
 
     pub fn session_dir(&self) -> PathBuf {
@@ -66,6 +78,51 @@ impl Paths {
     }
 }
 
+/// Where a sign-in is kept.
+#[derive(Debug, Clone)]
+pub enum Secret {
+    /// A file only the user can read.
+    File(PathBuf),
+    /// The system's keychain, under `name`. A `file` from before moves over when read.
+    Keychain { name: &'static str, file: PathBuf },
+}
+
+impl Secret {
+    pub fn read(&self) -> Result<Option<Vec<u8>>> {
+        match self {
+            Secret::File(path) => read_file(path),
+            Secret::Keychain { name, file } => {
+                // A file wins: it was written by a login, or before the switch to the keychain.
+                if let Some(bytes) = read_file(file)? {
+                    cloofy_os::secrets::set(name, &bytes).context("Saving to the keychain failed")?;
+                    fs::remove_file(file).with_context(|| format!("{} can't be removed", file.display()))?;
+                    return Ok(Some(bytes));
+                }
+                cloofy_os::secrets::get(name).context("Reading from the keychain failed")
+            }
+        }
+    }
+
+    pub fn write(&self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Secret::File(path) => {
+                write_private(path, bytes).with_context(|| format!("{} is not writable", path.display()))
+            }
+            Secret::Keychain { name, .. } => {
+                cloofy_os::secrets::set(name, bytes).context("Saving to the keychain failed")
+            }
+        }
+    }
+}
+
+fn read_file(path: &Path) -> Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("{} is not readable", path.display())),
+    }
+}
+
 /// Writes a file only the current user can read, creating parent directories as needed.
 pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
@@ -76,4 +133,50 @@ pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     options.open(path)?.write_all(contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cloofy-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn keeps_a_secret_in_a_private_file() {
+        let dir = scratch("secret");
+        let secret = Secret::File(dir.join("token.json"));
+        assert_eq!(secret.read().unwrap(), None);
+        secret.write(b"{}").unwrap();
+        assert_eq!(secret.read().unwrap().as_deref(), Some(&b"{}"[..]));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(dir.join("token.json")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Writes to the login keychain: run it by hand with
+    /// `cargo test -p cloofy-spotify -- --ignored`.
+    #[test]
+    #[ignore = "uses the login keychain"]
+    fn moves_a_file_into_the_keychain() {
+        let dir = scratch("keychain");
+        let name: &'static str = format!("test-{}", std::process::id()).leak();
+        let file = dir.join("token.json");
+        write_private(&file, b"from a file").unwrap();
+        let secret = Secret::Keychain { name, file: file.clone() };
+        assert_eq!(secret.read().unwrap().as_deref(), Some(&b"from a file"[..]));
+        assert!(!file.exists(), "the file is gone once in the keychain");
+        assert_eq!(cloofy_os::secrets::get(name).unwrap().as_deref(), Some(&b"from a file"[..]));
+        secret.write(b"updated").unwrap();
+        assert_eq!(secret.read().unwrap().as_deref(), Some(&b"updated"[..]));
+        cloofy_os::secrets::delete(name).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

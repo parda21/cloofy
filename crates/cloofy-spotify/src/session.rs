@@ -14,6 +14,7 @@ const OAUTH_REDIRECT: &str = "http://127.0.0.1:8975/login";
 const AUDIO_CACHE_LIMIT: u64 = 1 << 30;
 /// Downloading a track takes seconds, and every write refreshes the file's modified time.
 const STALE_TMP_AGE: Duration = Duration::from_secs(60 * 60);
+const CORRUPTED: &str = "Stored streaming credentials corrupted – run `cloofy login`";
 
 /// The scopes Spotify's desktop client requests (the same list librespot uses).
 const OAUTH_SCOPES: &[&str] = &[
@@ -50,26 +51,58 @@ const OAUTH_SCOPES: &[&str] = &[
 pub struct PendingSession {
     pub session: Session,
     pub credentials: Credentials,
+    paths: Paths,
 }
 
 impl PendingSession {
     pub async fn connect(self) -> Result<Session> {
         self.session.connect(self.credentials, true).await.context("Connecting to Spotify failed")?;
+        remember(&self.paths, &self.session)?;
         Ok(self.session)
     }
 }
 
 pub fn prepare(paths: &Paths) -> Result<PendingSession> {
-    let cache = cache(paths)?;
-    let credentials = cache.credentials().context("Streaming not logged in – run `cloofy login`")?;
-    Ok(PendingSession { session: Session::new(config(paths)?, Some(cache)), credentials })
+    let cache = cache(paths, !paths.keychain)?;
+    let credentials = stored_credentials(paths, &cache)?.context("Streaming not logged in – run `cloofy login`")?;
+    Ok(PendingSession { session: Session::new(config(paths)?, Some(cache)), credentials, paths: paths.clone() })
 }
 
 pub fn is_logged_in(paths: &Paths) -> Result<bool> {
-    Ok(cache(paths)?.credentials().is_some())
+    Ok(stored_credentials(paths, &cache(paths, !paths.keychain)?)?.is_some())
 }
 
-/// Interactive OAuth login. Connecting once stores reusable credentials in the cache.
+/// Updates the credentials in the keychain when Spotify handed out new ones while connecting;
+/// for files, librespot does that itself. [`PendingSession::connect`] calls it; connections
+/// that Spirc makes need to call it themselves.
+pub fn remember(paths: &Paths, session: &Session) -> Result<()> {
+    if !paths.keychain {
+        return Ok(());
+    }
+    let secret = paths.streaming_credentials();
+    let Some(bytes) = secret.read()? else { return Ok(()) };
+    let mut stored: Credentials = serde_json::from_slice(&bytes).context(CORRUPTED)?;
+    let auth_data = session.auth_data();
+    if auth_data.is_empty() || auth_data == stored.auth_data {
+        return Ok(());
+    }
+    stored.username = Some(session.username());
+    stored.auth_data = auth_data;
+    secret.write(&serde_json::to_vec(&stored)?)
+}
+
+fn stored_credentials(paths: &Paths, cache: &Cache) -> Result<Option<Credentials>> {
+    if !paths.keychain {
+        return Ok(cache.credentials());
+    }
+    match paths.streaming_credentials().read()? {
+        Some(bytes) => Ok(Some(serde_json::from_slice(&bytes).context(CORRUPTED)?)),
+        None => Ok(None),
+    }
+}
+
+/// Interactive OAuth login. Connecting once stores reusable credentials: librespot writes
+/// them to a file, which `remember` moves into the keychain right away in keychain mode.
 pub async fn login(paths: &Paths) -> Result<Session> {
     let config = config(paths)?;
     let token = OAuthClientBuilder::new(&config.client_id, OAUTH_REDIRECT, OAUTH_SCOPES.to_vec())
@@ -79,17 +112,20 @@ pub async fn login(paths: &Paths) -> Result<Session> {
         .get_access_token_async()
         .await?;
     PendingSession {
-        session: Session::new(config, Some(cache(paths)?)),
+        session: Session::new(config, Some(cache(paths, true)?)),
         credentials: Credentials::with_access_token(token.access_token),
+        paths: paths.clone(),
     }
     .connect()
     .await
 }
 
-fn cache(paths: &Paths) -> Result<Cache> {
+/// librespot keeps the credentials in a file only with `credentials_file`.
+fn cache(paths: &Paths, credentials_file: bool) -> Result<Cache> {
     let session_dir = paths.session_dir();
     let audio_dir = paths.audio_cache();
-    Ok(Cache::new(Some(&session_dir), Some(&session_dir), Some(&audio_dir), Some(AUDIO_CACHE_LIMIT))?)
+    let credentials = credentials_file.then_some(&session_dir);
+    Ok(Cache::new(credentials, Some(&session_dir), Some(&audio_dir), Some(AUDIO_CACHE_LIMIT))?)
 }
 
 /// Keeps the device ID stable so Spotify shows one cloofy device, not a new one per start.
