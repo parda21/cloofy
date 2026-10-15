@@ -576,7 +576,7 @@ impl App {
                 v.error = None;
                 v.loading = true;
                 v.tracks.clear();
-                self.loader.tracks(v.id, v.source.clone(), self.me.as_ref().map(|u| u.id.clone()));
+                self.loader.tracks(v.id, v.source.clone());
             }
             _ => {}
         }
@@ -2192,7 +2192,7 @@ impl App {
             self.loader.check_saved(vec![uri]);
         }
         let id = self.next_id();
-        self.loader.tracks(id, source.clone(), self.me.as_ref().map(|u| u.id.clone()));
+        self.loader.tracks(id, source.clone());
         self.push_view(View::Tracks(TrackView {
             id,
             source,

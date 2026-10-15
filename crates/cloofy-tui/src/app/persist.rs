@@ -37,14 +37,14 @@ impl App {
                 }
             }
             SavedView::Liked => self.open_tracks(TrackSource::Liked),
-            SavedView::Playlist { id, uri, name, owner_id, owner_name, image_url } => {
+            SavedView::Playlist { id, uri, name, owner_id, owner_name, collaborative, image_url } => {
                 self.open_tracks(TrackSource::Playlist(PlaylistInfo {
                     id,
                     uri,
                     name,
                     owner_id,
                     owner_name,
-                    collaborative: false,
+                    collaborative,
                     total: 0,
                     image_url,
                 }));
@@ -108,6 +108,7 @@ impl App {
                         name: p.name.clone(),
                         owner_id: p.owner_id.clone(),
                         owner_name: p.owner_name.clone(),
+                        collaborative: p.collaborative,
                         image_url: p.image_url.clone(),
                     },
                     TrackSource::Album(a) => SavedView::Album {
