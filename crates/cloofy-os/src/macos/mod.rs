@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod media;
 
 use std::{panic, thread};

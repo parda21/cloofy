@@ -67,6 +67,8 @@ pub enum AppEvent {
     PlayerFailed(String),
     /// A media key, headphone button or Control Center.
     Media(cloofy_os::media::Command),
+    /// The audio output in use went away, named.
+    OutputLost(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,8 +480,18 @@ impl App {
             }
             AppEvent::PlayerFailed(err) => self.player_error = Some(err),
             AppEvent::Media(command) => self.on_media(command),
+            AppEvent::OutputLost(name) => self.on_output_lost(name),
             AppEvent::Data(data) => self.on_data(data),
         }
+    }
+
+    /// Unplugged headphones pause playback rather than move it to the speakers.
+    fn on_output_lost(&mut self, name: String) {
+        if self.remote_active || !self.now.playing {
+            return;
+        }
+        self.control(|c| c.pause());
+        self.notice(format!("Paused: {name} disconnected"));
     }
 
     fn on_media(&mut self, command: cloofy_os::media::Command) {
