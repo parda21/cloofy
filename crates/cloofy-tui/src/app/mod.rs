@@ -586,10 +586,8 @@ impl App {
                 self.loader.artist(v.id, v.uri.clone());
             }
             View::Tracks(v) if v.error.is_some() => {
-                v.error = None;
-                v.loading = true;
-                v.tracks.clear();
-                self.loader.tracks(v.id, v.source.clone());
+                self.next_view_id += 1;
+                v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
             }
             _ => {}
         }
@@ -2225,18 +2223,25 @@ impl App {
         if let Some(uri) = page_uri.filter(|uri| !self.saved.contains_key(uri)) {
             self.loader.check_saved(vec![uri]);
         }
-        let id = self.next_id();
-        self.loader.tracks(id, source.clone());
-        self.push_view(View::Tracks(TrackView {
-            id,
-            source,
-            tracks: Vec::new(),
-            total: None,
-            loading: true,
-            error: None,
-            list: ListCursor::default(),
-        }));
+        self.retire_copies(&source);
+        let mut view = TrackView::new(source);
+        view.load(self.next_id(), |id, source| self.loader.tracks(id, source));
+        self.push_view(View::Tracks(view));
         self.focus = Focus::Content;
+    }
+
+    /// Empties earlier copies of a list in the history, so each list is held once however
+    /// often it was opened. Back loads them again.
+    fn retire_copies(&mut self, source: &TrackSource) {
+        for view in &mut self.history {
+            if let View::Tracks(v) = view
+                && v.source.same(source)
+                && !v.stale
+            {
+                self.next_view_id += 1;
+                v.retire(self.next_view_id);
+            }
+        }
     }
 
     fn push_view(&mut self, view: View) {
@@ -2256,6 +2261,12 @@ impl App {
         match self.history.pop() {
             Some(view) => {
                 self.view = view;
+                if let View::Tracks(v) = &mut self.view
+                    && v.stale
+                {
+                    self.next_view_id += 1;
+                    v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
+                }
                 self.focus = Focus::Content;
                 // A page seen before comes back at once, without the rest of a transition.
                 self.last_nav = Some(Instant::now());

@@ -59,6 +59,15 @@ pub enum SessionState {
     Failed(String),
 }
 
+/// A load running in the background; dropping it stops the load.
+pub struct Fetch(tokio::task::AbortHandle);
+
+impl Drop for Fetch {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// An encoded image plus, in snapshot mode, its source for pasting into PNG snapshots.
 pub struct Picture {
     pub protocol: Protocol,
@@ -213,6 +222,14 @@ impl Loader {
         tokio::spawn(task(self.clone()));
     }
 
+    /// Like [`Self::spawn`], for loads that may become pointless before they finish.
+    fn spawn_fetch<F>(&self, task: impl FnOnce(Self) -> F + Send + 'static) -> Fetch
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        Fetch(tokio::spawn(task(self.clone())).abort_handle())
+    }
+
     pub fn me(&self) {
         self.spawn(|this| async move {
             let result = catalog::me(&this.api).await;
@@ -339,8 +356,8 @@ impl Loader {
 
     /// Loads all tracks of a source. Pages after the first are fetched a few at a time and
     /// arrive in order.
-    pub fn tracks(&self, view: u64, source: TrackSource) {
-        self.spawn(move |this| async move {
+    pub fn tracks(&self, view: u64, source: TrackSource) -> Fetch {
+        self.spawn_fetch(move |this| async move {
             if let TrackSource::Playlist(playlist) = &source
                 && !playlist.collaborative
                 && this.user_id().await.as_deref() != Some(playlist.owner_id.as_str())
@@ -375,7 +392,7 @@ impl Loader {
                     return;
                 }
             }
-        });
+        })
     }
 
     /// Followed and Spotify-made playlists only resolve through librespot. Their tracks arrive
