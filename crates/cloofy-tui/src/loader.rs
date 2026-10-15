@@ -19,6 +19,7 @@ use cloofy_spotify::{
     pathfinder::Pathfinder,
     webapi::WebApi,
 };
+use futures::{StreamExt, stream};
 use image::imageops::FilterType;
 use librespot::core::session::Session;
 use ratatui::layout::Size;
@@ -82,13 +83,11 @@ pub enum DataEvent {
         key: String,
     },
     Playlists(Result<Vec<PlaylistInfo>, String>),
-    /// The rest of the library; each part may fail on its own.
-    Library {
-        liked: Result<u32, String>,
-        albums: Result<Vec<AlbumInfo>, String>,
-        artists: Result<Vec<ArtistInfo>, String>,
-        shows: Result<Vec<ShowInfo>, String>,
-    },
+    /// The rest of the library; each part arrives, or fails, on its own.
+    LikedCount(Result<u32, String>),
+    Albums(Result<Vec<AlbumInfo>, String>),
+    Artists(Result<Vec<ArtistInfo>, String>),
+    Shows(Result<Vec<ShowInfo>, String>),
     Tracks {
         view: u64,
         page: Result<Page<Track>, String>,
@@ -291,22 +290,39 @@ impl Loader {
         });
     }
 
+    /// Everything in the library except playlists, each part shown as soon as it is complete.
     pub fn library(&self) {
+        self.liked_count();
+        self.albums();
+        self.artists();
+        self.shows();
+    }
+
+    pub fn liked_count(&self) {
         self.spawn(|this| async move {
-            let api = &this.api;
-            let (liked, albums, artists, shows) = tokio::join!(
-                catalog::liked_count(api),
-                catalog::saved_albums(api),
-                catalog::followed_artists(api),
-                catalog::saved_shows(api),
-            );
-            let text = |e: anyhow::Error| format!("{e:#}");
-            this.send(DataEvent::Library {
-                liked: liked.map_err(text),
-                albums: albums.map_err(text),
-                artists: artists.map_err(text),
-                shows: shows.map_err(text),
-            });
+            let result = catalog::liked_count(&this.api).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::LikedCount(result));
+        });
+    }
+
+    pub fn albums(&self) {
+        self.spawn(|this| async move {
+            let result = catalog::saved_albums(&this.api).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Albums(result));
+        });
+    }
+
+    pub fn artists(&self) {
+        self.spawn(|this| async move {
+            let result = catalog::followed_artists(&this.api).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Artists(result));
+        });
+    }
+
+    pub fn shows(&self) {
+        self.spawn(|this| async move {
+            let result = catalog::saved_shows(&this.api).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Shows(result));
         });
     }
 
@@ -317,7 +333,8 @@ impl Loader {
         });
     }
 
-    /// Loads all tracks of a source, page by page.
+    /// Loads all tracks of a source. Pages after the first are fetched a few at a time and
+    /// arrive in order.
     pub fn tracks(&self, view: u64, source: TrackSource) {
         self.spawn(move |this| async move {
             if let TrackSource::Playlist(playlist) = &source
@@ -329,15 +346,29 @@ impl Loader {
                 return;
             }
 
-            let mut offset = Some(0);
-            while let Some(current) = offset {
-                let page = match &source {
-                    TrackSource::Liked => catalog::liked_tracks(&this.api, current).await,
-                    TrackSource::Playlist(p) => catalog::playlist_tracks(&this.api, &p.id, current).await,
-                    TrackSource::Album(a) => catalog::album_tracks(&this.api, a, current).await,
-                };
-                offset = page.as_ref().ok().and_then(|p| p.next_offset);
+            let (api, source) = (&this.api, &source);
+            let fetch = |offset| async move {
+                match source {
+                    TrackSource::Liked => catalog::liked_tracks(api, offset).await,
+                    TrackSource::Playlist(p) => catalog::playlist_tracks(api, &p.id, offset).await,
+                    TrackSource::Album(a) => catalog::album_tracks(api, a, offset).await,
+                }
+            };
+            let first = fetch(0).await;
+            let offsets: Vec<u32> = match &first {
+                Ok(Page { next_offset: Some(next), total, .. }) => {
+                    (*next..*total).step_by(catalog::PAGE as usize).collect()
+                }
+                _ => Vec::new(),
+            };
+            let rest = stream::iter(offsets).map(fetch).buffered(catalog::PAGE_CONCURRENCY);
+            let mut pages = std::pin::pin!(stream::iter([first]).chain(rest));
+            while let Some(page) = pages.next().await {
+                let failed = page.is_err();
                 this.send(DataEvent::Tracks { view, page: page.map_err(|e| format!("{e:#}")) });
+                if failed {
+                    return;
+                }
             }
         });
     }
