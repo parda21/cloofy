@@ -67,3 +67,12 @@ librespot-oauth = { path = "vendor/librespot/oauth" }
 librespot-playback = { path = "vendor/librespot/playback" }
 librespot-protocol = { path = "vendor/librespot/protocol" }
 ratatui-image = { path = "vendor/ratatui-image" }
+
+# Thin LTO with one codegen unit gives a smaller binary whose hot code sits on fewer pages.
+# Fat LTO would add minutes to `cargo install` (librespot, aws-lc) for little more. Panics
+# keep unwinding, so one in a background task (say, decoding a broken cover) fails only that
+# task instead of the whole app.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
