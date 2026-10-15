@@ -11,11 +11,27 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Reconnecting.** cloofy reconnects to Spotify by itself when the connection drops, after sleep or a network outage, and offers to continue where playback stopped. On macOS it pauses before the Mac sleeps and reconnects as soon as it wakes.
 - **Reduce Motion and Low Power Mode.** On macOS with Reduce Motion, slides become fades, lyrics jump to the current line and the equalizer stands still. In Low Power Mode animations stop and cloofy wakes the computer less often.
 - **Notifications.** Each new track shows a desktop notification while cloofy's window is in the background, in kitty, Ghostty, WezTerm and iTerm2, also inside tmux with `focus-events on` and `allow-passthrough all`. `notifications = false` turns them off.
+- **Instant start.** Home, your library and the list you had open show at once from the last run, then refresh in the background.
+- **Search with covers.** Results show their artwork, laid out on one grid.
+
+### Changed
+
+- **Smoother screen.** Each frame reaches the terminal whole, so pages and covers no longer tear, and keys and clicks go ahead of loading data.
+- **Lighter covers.** Kitty terminals scale covers themselves. Covers load a few at a time, visible ones first and the next page ahead, and non-square ones fill their slot. cloofy needs much less memory for them.
+- **Controls answer at once.** Play, pause, skip, seek and volume show on screen right away, on cloofy and on other devices, and don't jump back while Spotify catches up.
+- **Other devices.** cloofy follows them through Spotify's own updates instead of asking every 3 seconds.
+- **Faster pages.** Pages opened again show at once. Long lists and followed playlists show while they load. Likes, saves and follows show in your library right away.
+- **Page changes.** A new page shows at once with a short fade instead of a wipe.
+- **Smaller and leaner.** Release builds are smaller and faster, and tracks are buffered on disk instead of in memory.
 
 ### Fixed
 
 - On macOS, playback no longer stalls for good when the headphones or AirPods in use disconnect.
 - The saved volume applies on start. cloofy always started at 50% and then saved that.
+- Help and the command palette no longer crash in small windows.
+- Stalled requests give up, rate-limited ones are tried again, and a failed connection to Spotify shows instead of pages that load forever.
+- Every key has a mouse action: hint clicks do what their keys do, right-click works on names, play buttons and the player, and clicked targets light up.
+- Many layout fixes: columns, highlights, spacing and card rows line up across pages and window sizes.
 
 ## [0.1.0] - 2026-10-15
 
