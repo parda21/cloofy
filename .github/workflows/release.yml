@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A manual run builds everything without publishing, to try out changes to this workflow.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -47,6 +49,7 @@ jobs:
 
   publish:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
