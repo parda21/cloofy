@@ -30,8 +30,11 @@ struct Row {
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let accent = app.accent.color();
     let selection = app.accent.selection();
+    let frame_no = app.frame();
     let Some(overlay) = &mut app.overlay else { return };
     let title = overlay.picker_title().unwrap_or_default();
+    // A fresh list loads behind the last one.
+    let refreshing = matches!(overlay, Overlay::Devices { refreshing: true, .. });
     let (query, rows) = match overlay {
         Overlay::Palette(picker) => (picker.query.clone(), rows(picker)),
         Overlay::AddToPlaylist { picker, .. } | Overlay::Devices { picker, .. } => (picker.query.clone(), rows(picker)),
@@ -71,6 +74,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     }
     input.push(Span::styled("▏", accent));
     buf.set_line(inner.x, inner.y, &Line::from(input), inner.width);
+    if refreshing {
+        buf.set_string(inner.right().saturating_sub(1), inner.y, text::spinner(frame_no), Style::new().fg(FAINT));
+    }
     buf.set_string(
         popup.x + 1,
         inner.y + 1,

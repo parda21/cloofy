@@ -14,10 +14,13 @@ use crate::{
 type Hint = (&'static str, &'static str, Option<HintAction>);
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
-    let device = match (&app.now.device, app.is_connected()) {
-        (Some(name), _) => Span::styled(format!("{}  Playing on {name}", icons().speaker), app.accent.color()),
-        (None, true) => Span::styled(format!("{}  cloofy", icons().computer), app.accent.color()),
-        (None, false) => Span::styled(format!("{}  cloofy", icons().computer), FAINT),
+    let device = match (app.transferring_to(), &app.now.device, app.is_connected()) {
+        (Some(name), ..) => {
+            Span::styled(format!("{}  → {name} …", crate::ui::text::spinner(app.frame())), app.accent.color())
+        }
+        (None, Some(name), _) => Span::styled(format!("{}  Playing on {name}", icons().speaker), app.accent.color()),
+        (None, None, true) => Span::styled(format!("{}  cloofy", icons().computer), app.accent.color()),
+        (None, None, false) => Span::styled(format!("{}  cloofy", icons().computer), FAINT),
     };
     let device_width = device.width() as u16;
     let device_x = area.right().saturating_sub(device_width + 2);

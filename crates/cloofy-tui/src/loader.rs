@@ -148,6 +148,11 @@ pub enum DataEvent {
         result: Result<(), String>,
     },
     Devices(Result<Vec<Device>, String>),
+    /// Spotify answered a transfer of playback to the device named `name`.
+    Transferred {
+        name: String,
+        result: Result<(), String>,
+    },
     Notice(String),
     Failed(String),
 }
@@ -639,10 +644,8 @@ impl Loader {
 
     pub fn transfer(&self, device: Device) {
         self.spawn(move |this| async move {
-            match connect::transfer(&this.api, &device.id).await {
-                Ok(()) => this.send(DataEvent::Notice(format!("Playing on {}", device.name))),
-                Err(err) => this.send(DataEvent::Failed(format!("Transfer: {err:#}"))),
-            }
+            let result = connect::transfer(&this.api, &device.id).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Transferred { name: device.name, result });
         });
     }
 

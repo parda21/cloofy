@@ -76,6 +76,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const QUICK_POLL: Duration = Duration::from_millis(500);
 /// How long after Spotify accepted a remote command to check that the device applied it.
 const CONFIRM_DELAY: Duration = Duration::from_millis(300);
+/// How long the device label shows a transfer that the device hasn't confirmed.
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
 /// Session state is also saved periodically, in case cloofy gets killed.
 const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 /// Rapid like/unlike toggles collapse into one request after this pause.
@@ -286,6 +288,13 @@ pub struct Status {
     since: Instant,
 }
 
+/// A transfer of playback to another device, until that device shows up playing.
+struct Transfer {
+    device_id: String,
+    name: String,
+    since: Instant,
+}
+
 /// What `f`, `q` and `a` act on.
 struct Target {
     uri: String,
@@ -317,6 +326,12 @@ pub struct App {
     remote_intent: RemoteIntent,
     /// When the last command went to another device; polls started before show older state.
     last_command: Instant,
+    /// The last device list, so the picker opens at once while a fresh one loads.
+    devices_cache: Option<Vec<Device>>,
+    /// The picker should open when the device list arrives.
+    devices_wanted: bool,
+    /// Playback is moving to another device.
+    transfer: Option<Transfer>,
     /// Seconds consecutive tracks overlap.
     crossfade: u64,
     next_poll: Instant,
@@ -454,6 +469,9 @@ impl App {
             remote_active: false,
             remote_intent: RemoteIntent::default(),
             last_command: Instant::now(),
+            devices_cache: None,
+            devices_wanted: false,
+            transfer: None,
             crossfade,
             next_poll: Instant::now(),
             polling: false,
@@ -655,6 +673,10 @@ impl App {
         }
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
             self.resume = None;
+            // Playback moved here.
+            if self.transfer.as_ref().is_some_and(|t| Some(&t.device_id) == self.device_id.as_ref()) {
+                self.transfer = None;
+            }
         }
         if self.remote_active {
             match event {
@@ -688,6 +710,11 @@ impl App {
     /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
     /// mostly confirms what is on screen.
     fn on_playback(&mut self, playback: Option<Playback>) -> bool {
+        if let (Some(transfer), Some(p)) = (&self.transfer, &playback)
+            && transfer.device_id == p.device.id
+        {
+            self.transfer = None;
+        }
         if let Some(p) = &playback
             && Some(p.device.id.as_str()) != self.device_id.as_deref()
         {
@@ -999,9 +1026,34 @@ impl App {
                     }
                 }
             }
-            DataEvent::Devices(result) => match result {
-                Ok(devices) => self.open_devices(devices),
-                Err(err) => self.error(format!("Devices: {err}")),
+            DataEvent::Devices(result) => {
+                let wanted = std::mem::take(&mut self.devices_wanted);
+                match result {
+                    Ok(devices) => {
+                        self.devices_cache = Some(devices.clone());
+                        if matches!(self.overlay, Some(Overlay::Devices { .. })) {
+                            self.refresh_devices(devices);
+                        } else if wanted {
+                            self.open_devices(devices, false);
+                        }
+                    }
+                    Err(err) => {
+                        if let Some(Overlay::Devices { refreshing, .. }) = &mut self.overlay {
+                            *refreshing = false;
+                        }
+                        self.error(format!("Devices: {err}"));
+                    }
+                }
+            }
+            DataEvent::Transferred { name, result } => match result {
+                Ok(()) => {
+                    self.notice(format!("Playing on {name}"));
+                    self.next_poll = self.next_poll.min(Instant::now() + CONFIRM_DELAY);
+                }
+                Err(err) => {
+                    self.transfer = None;
+                    self.error(format!("Transfer: {err}"));
+                }
             },
             DataEvent::Notice(text) => self.notice(text),
             DataEvent::Failed(text) => self.error(text),
@@ -1121,6 +1173,10 @@ impl App {
         if let Some(volume) = self.volume_sync.expire() {
             self.control(|c| c.set_volume(volume));
         }
+        if self.transfer.as_ref().is_some_and(|t| t.since.elapsed() >= TRANSFER_TIMEOUT) {
+            self.transfer = None;
+            redraw = true;
+        }
         if self.now.start_failed() {
             // Spirc only logs a failed load; another device's state comes with the next poll.
             let failed_here = self.now.pending.as_ref().is_some_and(|p| !p.skip) && !self.remote_active;
@@ -1162,6 +1218,8 @@ impl App {
         let lyrics_loading = self.zen && self.lyrics.as_ref().is_some_and(|l| l.result.is_none());
         self.now.playing
             || self.now.pending.is_some()
+            || self.transfer.is_some()
+            || matches!(self.overlay, Some(Overlay::Devices { refreshing: true, .. }))
             || loading
             || lyrics_loading
             || self.playlists_loading
@@ -1873,8 +1931,15 @@ impl App {
                 self.notice(text);
             }
             Command::Devices => {
-                self.notice("Finding devices…".into());
                 self.loader.devices();
+                match self.devices_cache.clone().filter(|d| !d.is_empty()) {
+                    // The last list opens at once and updates when the fresh one arrives.
+                    Some(devices) => self.open_devices(devices, true),
+                    None => {
+                        self.devices_wanted = true;
+                        self.notice("Finding devices…".into());
+                    }
+                }
             }
             Command::Palette => self.open_palette(),
             Command::Help => self.open_overlay(Overlay::Help),
@@ -2815,36 +2880,42 @@ impl App {
         }
     }
 
-    fn open_devices(&mut self, devices: Vec<Device>) {
-        if devices.is_empty() {
+    fn open_devices(&mut self, devices: Vec<Device>, refreshing: bool) {
+        if devices.is_empty() && !refreshing {
             return self.error("No Spotify devices found.".into());
         }
-        let own = self.device_id.clone();
-        let items = devices
-            .iter()
-            .enumerate()
-            .map(|(index, device)| {
-                let icon = crate::icons::device(&device.kind);
-                let this = if Some(&device.id) == own.as_ref() { " (this device)" } else { "" };
-                let state = if device.active { "● playing" } else { device.kind.as_str() };
-                PickItem {
-                    label: format!("{icon}  {}{this}", device.name),
-                    detail: state.to_owned(),
-                    image_url: None,
-                    value: index,
-                }
-            })
-            .collect();
+        let items = device_items(&devices, self.device_id.as_deref());
         self.status = None;
-        self.open_overlay(Overlay::Devices { devices, picker: Picker::new(items) });
+        self.open_overlay(Overlay::Devices { devices, picker: Picker::new(items), refreshing });
+    }
+
+    /// Updates the open device picker with a fresh list, keeping the selected device.
+    fn refresh_devices(&mut self, devices: Vec<Device>) {
+        if devices.is_empty() {
+            self.overlay = None;
+            return self.error("No Spotify devices found.".into());
+        }
+        let items = device_items(&devices, self.device_id.as_deref());
+        let Some(Overlay::Devices { devices: shown, picker, refreshing }) = &mut self.overlay else { return };
+        let selected = picker.selected().and_then(|&index| shown.get(index)).map(|d| d.id.clone());
+        picker.set_items(items, |&index| devices.get(index).map(|d| &d.id) == selected.as_ref());
+        *shown = devices;
+        *refreshing = false;
     }
 
     fn transfer_to(&mut self, index: usize) {
         let Some(Overlay::Devices { devices, .. }) = self.overlay.take() else { return };
         let Some(device) = devices.into_iter().nth(index) else { return };
+        // The device label shows the move until the device turns up playing.
+        self.transfer =
+            Some(Transfer { device_id: device.id.clone(), name: device.name.clone(), since: Instant::now() });
         self.loader.transfer(device);
         self.last_command = Instant::now();
-        self.next_poll = Instant::now() + QUICK_POLL;
+    }
+
+    /// The device playback is moving to, while it does.
+    pub fn transferring_to(&self) -> Option<&str> {
+        self.transfer.as_ref().map(|t| t.name.as_str())
     }
 
     /// Sends a command to cloofy's own player. Returns whether it went out.
@@ -2880,6 +2951,25 @@ impl App {
 /// Images are kept per URL and cell size.
 fn image_key(url: &str, size: Size) -> String {
     format!("{}x{}:{url}", size.width, size.height)
+}
+
+/// Picker rows for Spotify Connect devices; `own` is cloofy's device ID.
+fn device_items(devices: &[Device], own: Option<&str>) -> Vec<PickItem<usize>> {
+    devices
+        .iter()
+        .enumerate()
+        .map(|(index, device)| {
+            let icon = crate::icons::device(&device.kind);
+            let this = if Some(device.id.as_str()) == own { " (this device)" } else { "" };
+            let state = if device.active { "● playing" } else { device.kind.as_str() };
+            PickItem {
+                label: format!("{icon}  {}{this}", device.name),
+                detail: state.to_owned(),
+                image_url: None,
+                value: index,
+            }
+        })
+        .collect()
 }
 
 /// A picked overlay entry, unified across the different pickers.
