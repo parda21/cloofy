@@ -18,6 +18,8 @@ pub struct Config {
     pub credentials: Option<String>,
     /// Desktop notifications for new tracks while cloofy is in the background; on when missing.
     pub notifications: Option<bool>,
+    /// Looks for a new release at start and offers to update; on when missing.
+    pub update_check: Option<bool>,
 }
 
 impl Config {

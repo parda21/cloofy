@@ -17,6 +17,7 @@ mod views;
 
 use std::{
     io::{BufWriter, Stdout, Write},
+    path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -58,7 +59,9 @@ type Term = Terminal<CrosstermBackend<BufWriter<Stdout>>>;
 /// Low Power Mode has no animations to keep smooth, so the timer wakes cloofy less often.
 const LOW_POWER_TICK: Duration = Duration::from_millis(100);
 
-pub async fn run(paths: &Paths) -> Result<()> {
+/// Returns the binary to start in place of this one, when the user installed an update and
+/// asked to restart.
+pub async fn run(paths: &Paths) -> Result<Option<PathBuf>> {
     let config = Config::load(paths)?;
     let api = Arc::new(WebApi::new(config.client_id(paths)?, paths.webapi_token())?);
     if !api.is_logged_in().await || !session::is_logged_in(paths)? {
@@ -68,8 +71,8 @@ pub async fn run(paths: &Paths) -> Result<()> {
 }
 
 /// The interface with a built-in sample instead of an account: nothing to set up, nothing
-/// plays, nothing is saved.
-pub async fn demo(paths: &Paths) -> Result<()> {
+/// plays, nothing is saved. Returns like [`run`].
+pub async fn demo(paths: &Paths) -> Result<Option<PathBuf>> {
     let demo = Arc::new(demo::Demo::sample()?);
     let config = Config::load(paths).unwrap_or_default();
     // Never asked for anything: every request is answered from the sample.
@@ -77,7 +80,12 @@ pub async fn demo(paths: &Paths) -> Result<()> {
     run_ui(paths, config, api, Some(demo)).await
 }
 
-async fn run_ui(paths: &Paths, config: Config, api: Arc<WebApi>, demo: Option<Arc<demo::Demo>>) -> Result<()> {
+async fn run_ui(
+    paths: &Paths,
+    config: Config,
+    api: Arc<WebApi>,
+    demo: Option<Arc<demo::Demo>>,
+) -> Result<Option<PathBuf>> {
     #[cfg(unix)]
     let _stderr = StderrToLog::redirect(&paths.log_file());
     icons::init(config.icons.as_deref());
@@ -98,12 +106,14 @@ async fn run_ui(paths: &Paths, config: Config, api: Arc<WebApi>, demo: Option<Ar
     let crossfade = config.crossfade.unwrap_or(0).min(12);
     let notifier =
         if config.notifications == Some(false) || demo.is_some() { None } else { notify::Notifier::detect() };
-    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier, demo).await;
+    let update_check = config.update_check != Some(false) && demo.is_none();
+    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier, update_check, demo).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_app(
     terminal: &mut Term,
     paths: &Paths,
@@ -111,8 +121,9 @@ async fn run_app(
     picker: Picker,
     crossfade: u64,
     notifier: Option<notify::Notifier>,
+    update_check: bool,
     demo: Option<Arc<demo::Demo>>,
-) -> Result<()> {
+) -> Result<Option<PathBuf>> {
     let (tx, mut events) = mpsc::unbounded_channel();
     let (session_tx, session_rx) = watch::channel(SessionState::Connecting);
     let snapshotter = snapshot::Snapshotter::from_env().map(Arc::new);
@@ -161,6 +172,9 @@ async fn run_app(
         }
     };
     let mut app = App::new(loader, session_tx, crossfade, start, paths.clone(), media, notifier);
+    if update_check {
+        app.check_for_update(false);
+    }
 
     let mut input = EventStream::new();
     let mut closed = shutdown_signals()?;
@@ -239,7 +253,7 @@ async fn run_app(
         }
     }
     app.shutdown();
-    Ok(())
+    Ok(app.restart.take())
 }
 
 /// Draws a frame as one synchronized update, so the terminal shows it whole rather than half

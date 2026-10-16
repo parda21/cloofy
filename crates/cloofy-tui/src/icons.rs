@@ -45,6 +45,10 @@ pub struct Icons {
     pub cast: &'static str,
     /// Moves DJ on to different picks.
     pub dj: &'static str,
+    /// A newer cloofy to install.
+    pub update: &'static str,
+    /// Start the installed update.
+    pub restart: &'static str,
 }
 
 const NERD: Icons = Icons {
@@ -81,6 +85,8 @@ const NERD: Icons = Icons {
     tv: "\u{F0502}",
     cast: "\u{F0118}",
     dj: "\u{F147D}",
+    update: "\u{F0CE1}",
+    restart: "\u{F0709}",
 };
 
 const TEXT: Icons = Icons {
@@ -117,6 +123,8 @@ const TEXT: Icons = Icons {
     tv: "▭",
     cast: "◎",
     dj: "DJ",
+    update: "↑",
+    restart: "↻",
 };
 
 static ICONS: OnceLock<&'static Icons> = OnceLock::new();

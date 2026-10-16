@@ -5,6 +5,7 @@ mod persist;
 use std::{
     collections::{HashMap, HashSet},
     io::Write,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -19,6 +20,7 @@ use cloofy_spotify::{
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
     paths::Paths,
+    update::Release,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use librespot::playback::player::PlayerEvent;
@@ -119,6 +121,22 @@ pub enum Start<'a> {
     Restore(Box<crate::state::State>),
     /// The demo's playing track, with nothing of an account restored.
     Demo(&'a crate::demo::Playing),
+}
+
+/// A newer cloofy, offered in the top bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Update {
+    Available(Release),
+    /// Downloading, with the percentage once the size is known.
+    Installing {
+        release: Release,
+        percent: Option<u8>,
+    },
+    /// In place of the running binary, which carries on until restarted.
+    Installed {
+        release: Release,
+        binary: PathBuf,
+    },
 }
 
 // Events move through a channel once each; boxing the big ones would only add allocations.
@@ -486,6 +504,10 @@ pub struct App {
     started: Instant,
     last_frame: u64,
     pub quit: bool,
+    /// A newer cloofy, and how far installing it got.
+    pub update: Option<Update>,
+    /// The updated binary to start once the interface has closed.
+    pub restart: Option<PathBuf>,
     /// A showcase with sample data (`cloofy demo`): nothing is saved.
     demo: bool,
 }
@@ -600,6 +622,8 @@ impl App {
             started: Instant::now(),
             last_frame: 0,
             quit: false,
+            update: None,
+            restart: None,
             demo: matches!(start, Start::Demo(_)),
         };
         match start {
@@ -677,6 +701,56 @@ impl App {
         self.save_open_tracks(false);
         if let Some(controller) = &self.controller {
             controller.shutdown();
+        }
+    }
+
+    // ── Updates ──────────────────────────────────────────────────────────────────────────
+
+    /// Looks for a newer cloofy; one the user `asked` for reports what it finds either way.
+    pub fn check_for_update(&mut self, asked: bool) {
+        self.loader.check_update(self.paths.clone(), asked);
+    }
+
+    fn on_update_available(&mut self, release: Release) {
+        // An update on its way, or done, stays as it is.
+        if matches!(self.update, Some(Update::Installing { .. } | Update::Installed { .. })) {
+            return;
+        }
+        if self.update.as_ref() != Some(&Update::Available(release.clone())) {
+            self.notice(format!("cloofy {} is out · U updates", release.version()));
+        }
+        self.update = Some(Update::Available(release));
+    }
+
+    /// The update button: installs the update, or restarts into the installed one. Without
+    /// either, looks for one.
+    fn run_update(&mut self) {
+        match self.update.clone() {
+            None if self.demo => self.error("This is the demo: nothing updates here".into()),
+            None => {
+                self.notice("Looking for updates…".into());
+                self.check_for_update(true);
+            }
+            Some(Update::Available(release)) => {
+                self.notice(format!("Updating to cloofy {}…", release.version()));
+                self.loader.install_update(release.clone());
+                self.update = Some(Update::Installing { release, percent: None });
+            }
+            Some(Update::Installing { .. }) => {}
+            Some(Update::Installed { binary, .. }) => {
+                self.restart = Some(binary);
+                self.quit = true;
+            }
+        }
+    }
+
+    /// What the update command does now, for the palette.
+    fn update_label(&self) -> String {
+        match &self.update {
+            None => Command::Update.label().to_owned(),
+            Some(Update::Available(release)) => format!("Update to cloofy {}", release.version()),
+            Some(Update::Installing { .. }) => "Updating cloofy…".to_owned(),
+            Some(Update::Installed { release, .. }) => format!("Restart into cloofy {}", release.version()),
         }
     }
 
@@ -1298,6 +1372,25 @@ impl App {
             DataEvent::DjAsked(Err(err)) => {
                 self.cancel_start();
                 self.error(format!("DJ: {err}"));
+            }
+            DataEvent::UpdateAvailable(release) => self.on_update_available(release),
+            DataEvent::UpdateProgress(percent) => {
+                if let Some(Update::Installing { percent: shown, .. }) = &mut self.update {
+                    *shown = Some(percent);
+                }
+            }
+            DataEvent::UpdateInstalled(binary) => {
+                if let Some(Update::Installing { release, .. }) = self.update.take() {
+                    self.notice(format!("cloofy {} is installed · U restarts into it", release.version()));
+                    self.update = Some(Update::Installed { release, binary });
+                }
+            }
+            DataEvent::UpdateFailed(err) => {
+                if let Some(Update::Installing { release, .. }) = self.update.take() {
+                    self.update = Some(Update::Available(release));
+                }
+                // The status line has one row.
+                self.error(format!("Update failed: {}", err.split_whitespace().collect::<Vec<_>>().join(" ")));
             }
             DataEvent::Notice(text) => self.notice(text),
             DataEvent::Failed(text) => self.error(text),
@@ -2143,6 +2236,7 @@ impl App {
                 }
             }
             Command::Quit => self.quit = true,
+            Command::Update => self.run_update(),
             Command::PlayPause if self.remote_active => {
                 let playing = !self.now.playing;
                 self.now.set_playing(playing);
@@ -2271,6 +2365,7 @@ impl App {
             .map(|&command| PickItem {
                 label: match command {
                     Command::Dj if self.dj_playing() => "Ask DJ…".to_owned(),
+                    Command::Update => self.update_label(),
                     _ => command.label().to_owned(),
                 },
                 detail: command.key().to_owned(),
@@ -2278,6 +2373,13 @@ impl App {
                 value: PaletteAction::Run(command),
             })
             .collect();
+        // An update waiting to be installed or started comes first.
+        if matches!(self.update, Some(Update::Available(_) | Update::Installed { .. }))
+            && let Some(index) = items.iter().position(|item| matches!(item.value, PaletteAction::Run(Command::Update)))
+        {
+            let item = items.remove(index);
+            items.insert(0, item);
+        }
         items.push(PickItem {
             label: "Home".into(),
             detail: "open".into(),

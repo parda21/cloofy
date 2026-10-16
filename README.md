@@ -29,7 +29,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 ## Features
 
 - **Plays on its own.** Audio goes through librespot, and cloofy is a Spotify Connect device. It controls your other devices too, and follows them live.
-- **Home and the DJ.** Your shelves, Made For You mixes, and the DJ with its voice between tracks. Crossfade if you like.
+- **Home and the DJ.** Your shelves, Made For You mixes, and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify's apps, or let it pick something different. Crossfade if you like.
 - **Your library.** Playlists, albums, artists and podcasts, in a sidebar or as a full page with covers.
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
@@ -81,7 +81,7 @@ The demo opens the full interface with a sample library: real albums and artists
 curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
 ```
 
-The installer checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup): your Spotify app, its client ID, and signing in. Run it again to update.
+The installer checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup): your Spotify app, its client ID, and signing in. cloofy offers new releases itself, see [updates](#updates).
 
 <details>
 <summary>Installer options, building from source</summary>
@@ -142,7 +142,8 @@ On Linux the build needs the ALSA and PulseAudio headers:
 | <kbd>.</kbd> | Actions for the selection |
 | <kbd>z</kbd> | Now playing and lyrics |
 | <kbd>d</kbd> | Devices |
-| <kbd>D</kbd> | Start the DJ |
+| <kbd>D</kbd> | Start the DJ; while it plays, ask it for something |
+| <kbd>U</kbd> | Update cloofy |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Command palette |
 | <kbd>?</kbd> | All shortcuts |
 | <kbd>Ctrl</kbd> <kbd>C</kbd> | Quit |
@@ -155,7 +156,12 @@ Other commands:
 cloofy play <uri or link>   # play without the interface; --shuffle to shuffle
 cloofy connect              # wait as a Spotify Connect device until an app picks it
 cloofy login --force        # sign in again
+cloofy update               # update to the latest release
 ```
+
+## Updates
+
+When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
 
 ## Configuration
 
@@ -167,6 +173,7 @@ crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
 notifications = false      # no desktop notifications for new tracks; on when missing
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files
+update_check = false       # don't look for new releases at start; on when missing
 ```
 
 Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.

@@ -7,6 +7,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 ### Added
 
 - **Ask DJ.** While DJ plays on cloofy, `D` or the DJ button next to the controls opens the DJ panel, as in Spotify's apps. Type what you'd like to hear or take one of Spotify's suggestions: DJ acknowledges the request and plays what it put together for it. "Pick something for me" jumps to different picks, and DJ announces the change.
+- **Updates in one click.** When a new release is out, a button in the top bar says so. Click it or press `U`, and cloofy downloads the release, checks it against its checksum and replaces itself; the same button then restarts into it. `cloofy update` does it from the command line, and `update_check = false` stops cloofy looking.
 
 ## [0.2.0] - 2026-10-15
 

@@ -9,4 +9,5 @@ pub mod lyrics;
 pub mod pathfinder;
 pub mod paths;
 pub mod session;
+pub mod update;
 pub mod webapi;

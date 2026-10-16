@@ -17,6 +17,8 @@ use cloofy_spotify::{
     home::{self, Home},
     lyrics::{self, Lyrics, LyricsQuery},
     pathfinder::Pathfinder,
+    paths::Paths,
+    update::{self, Release},
     webapi::WebApi,
 };
 use futures::{StreamExt, stream};
@@ -169,6 +171,13 @@ pub enum DataEvent {
     DjSuggestions(Result<Vec<String>, String>),
     /// DJ took a request, or turned it down.
     DjAsked(Result<(), String>),
+    /// A release newer than this cloofy.
+    UpdateAvailable(Release),
+    /// How much of the update has downloaded, in percent.
+    UpdateProgress(u8),
+    /// The update took the place of the binary at this path; it runs after a restart.
+    UpdateInstalled(PathBuf),
+    UpdateFailed(String),
     Notice(String),
     Failed(String),
 }
@@ -287,6 +296,44 @@ impl Loader {
                 let _ = this.user_id.set(user.id.clone());
             }
             this.send(DataEvent::Me(result.map_err(|e| format!("{e:#}"))));
+        });
+    }
+
+    /// Looks for a newer cloofy on GitHub, at most every few hours unless `asked`. Only a look
+    /// the user asked for reports finding nothing, or failing.
+    pub fn check_update(&self, paths: Paths, asked: bool) {
+        self.spawn(move |this| async move {
+            match update::check(&paths, asked).await {
+                Ok(Some(release)) => this.send(DataEvent::UpdateAvailable(release)),
+                Ok(None) if asked => {
+                    this.send(DataEvent::Notice(format!("cloofy {} is the latest version", update::current_version())))
+                }
+                Ok(None) => {}
+                Err(err) if asked => this.send(DataEvent::Failed(format!("Couldn't look for updates: {err:#}"))),
+                Err(err) => tracing::warn!("Update check failed: {err:#}"),
+            }
+        });
+    }
+
+    /// Downloads `release` and puts it in place of the running binary.
+    pub fn install_update(&self, release: Release) {
+        self.spawn(move |this| async move {
+            let tx = this.tx.clone();
+            let mut shown = None;
+            let result = update::install(&release, |done, total| {
+                let percent = total.filter(|total| *total > 0).map(|total| (done * 100 / total) as u8);
+                if percent != shown {
+                    shown = percent;
+                    if let Some(percent) = percent {
+                        let _ = tx.send(AppEvent::Data(DataEvent::UpdateProgress(percent)));
+                    }
+                }
+            })
+            .await;
+            this.send(match result {
+                Ok(binary) => DataEvent::UpdateInstalled(binary),
+                Err(err) => DataEvent::UpdateFailed(format!("{err:#}")),
+            });
         });
     }
 
