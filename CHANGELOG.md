@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-16
+
+The DJ takes requests, and cloofy updates itself.
+
 ### Added
 
 - **Ask DJ.** While DJ plays on cloofy, `D` or the DJ button next to the controls opens the DJ panel, as in Spotify's apps. Type what you'd like to hear or take one of Spotify's suggestions: DJ acknowledges the request and plays what it put together for it. "Pick something for me" jumps to different picks, and DJ announces the change.
@@ -61,6 +65,7 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/parda21/cloofy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/parda21/cloofy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parda21/cloofy/releases/tag/v0.1.0
