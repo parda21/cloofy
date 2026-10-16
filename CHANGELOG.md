@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Updates in one click.** When a new release is out, a button in the top bar says so. Click it or press `U`, and cloofy downloads the release, checks it against its checksum and replaces itself; the same button then restarts into it. `cloofy update` does it from the command line, and `update_check = false` stops cloofy looking.
+
 ## [0.2.0] - 2026-10-15
 
 cloofy feels at home on macOS, starts instantly, and can be tried without an account. Thanks to [@yk-sgr](https://github.com/yk-sgr) for everything on macOS.

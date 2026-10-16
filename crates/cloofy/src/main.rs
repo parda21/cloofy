@@ -2,6 +2,7 @@ mod doctor;
 mod media;
 mod playback;
 mod style;
+mod update;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -25,6 +26,8 @@ enum Command {
     },
     /// Check which Spotify features are reachable
     Doctor,
+    /// Update cloofy to the latest release
+    Update,
     /// Play a song, album, playlist or artist directly in cloofy
     Play {
         /// Spotify URI or link, e.g. https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc
@@ -97,12 +100,13 @@ async fn run() -> Result<()> {
     match cli.command {
         Some(Command::Login { force }) => login(&paths, force).await,
         Some(Command::Doctor) => doctor::run(&paths).await,
+        Some(Command::Update) => update::run().await,
         Some(Command::Play { uri, shuffle }) => playback::play(&paths, &uri, shuffle).await,
         Some(Command::Connect { name }) => playback::connect(&paths, name).await,
-        Some(Command::Demo) => cloofy_tui::demo(&paths).await,
+        Some(Command::Demo) => update::restart_if_asked(cloofy_tui::demo(&paths).await?),
         Some(Command::Query { operation, variables }) => query(&paths, &operation, &variables).await,
         Some(Command::DjSample { dir }) => dj_sample(&paths, &dir).await,
-        None => cloofy_tui::run(&paths).await,
+        None => update::restart_if_asked(cloofy_tui::run(&paths).await?),
     }
 }
 

@@ -43,6 +43,10 @@ pub struct Icons {
     pub tablet: &'static str,
     pub tv: &'static str,
     pub cast: &'static str,
+    /// A newer cloofy to install.
+    pub update: &'static str,
+    /// Start the installed update.
+    pub restart: &'static str,
 }
 
 const NERD: Icons = Icons {
@@ -78,6 +82,8 @@ const NERD: Icons = Icons {
     tablet: "\u{F04F6}",
     tv: "\u{F0502}",
     cast: "\u{F0118}",
+    update: "\u{F0CE1}",
+    restart: "\u{F0709}",
 };
 
 const TEXT: Icons = Icons {
@@ -113,6 +119,8 @@ const TEXT: Icons = Icons {
     tablet: "▭",
     tv: "▭",
     cast: "◎",
+    update: "↑",
+    restart: "↻",
 };
 
 static ICONS: OnceLock<&'static Icons> = OnceLock::new();

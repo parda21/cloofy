@@ -57,8 +57,10 @@ const LIBRARY: Section = (
         (".", "Actions menu"),
     ],
 );
-const GENERAL: Section =
-    ("GENERAL", &[("^K  :", "Command palette"), ("/", "Search"), ("?", "This help"), ("^C  ^Q", "Quit")]);
+const GENERAL: Section = (
+    "GENERAL",
+    &[("^K  :", "Command palette"), ("/", "Search"), ("?", "This help"), ("U", "Update cloofy"), ("^C  ^Q", "Quit")],
+);
 
 /// Everything in one column where the window is tall enough.
 const ONE_COLUMN: &[&[Section]] = &[&[NAVIGATION, PLAYBACK, LIBRARY, GENERAL]];

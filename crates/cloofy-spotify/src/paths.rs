@@ -76,6 +76,11 @@ impl Paths {
     pub fn log_file(&self) -> PathBuf {
         self.cache.join("cloofy.log")
     }
+
+    /// When cloofy last asked GitHub for a new release, and the answer.
+    pub fn update_check(&self) -> PathBuf {
+        self.cache.join("update-check.json")
+    }
 }
 
 /// Where a sign-in is kept.

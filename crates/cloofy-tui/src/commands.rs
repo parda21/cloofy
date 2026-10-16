@@ -26,12 +26,13 @@ pub enum Command {
     Menu,
     Palette,
     Help,
+    Update,
     Quit,
 }
 
 impl Command {
     /// Commands offered in the palette, in display order.
-    pub const PALETTE: [Command; 22] = [
+    pub const PALETTE: [Command; 23] = [
         Command::Home,
         Command::Library,
         Command::PlayPause,
@@ -53,6 +54,7 @@ impl Command {
         Command::SeekForward,
         Command::SeekBack,
         Command::Help,
+        Command::Update,
         Command::Quit,
     ];
 
@@ -80,6 +82,7 @@ impl Command {
             Command::Menu => "Actions for selection…",
             Command::Palette => "Command palette",
             Command::Help => "Keyboard shortcuts",
+            Command::Update => "Check for updates",
             Command::Quit => "Quit cloofy",
         }
     }
@@ -108,6 +111,7 @@ impl Command {
             Command::Menu => ".",
             Command::Palette => "^K",
             Command::Help => "?",
+            Command::Update => "U",
             Command::Quit => "^C",
         }
     }
@@ -139,6 +143,7 @@ impl Command {
             KeyCode::Char('d') => Command::Devices,
             KeyCode::Char('D') => Command::Dj,
             KeyCode::Char('X') => Command::Crossfade,
+            KeyCode::Char('U') => Command::Update,
             KeyCode::Char('.') => Command::Menu,
             KeyCode::Char('H') => Command::SeekBack,
             KeyCode::Char('L') => Command::SeekForward,

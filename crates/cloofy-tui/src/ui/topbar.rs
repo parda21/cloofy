@@ -1,4 +1,5 @@
-//! The top bar: wordmark, home button and the search field, like the official client.
+//! The top bar: wordmark, home button and the search field, like the official client, and an
+//! update button while there is a newer cloofy.
 
 use ratatui::{
     buffer::Buffer,
@@ -10,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{text, wordmark};
 use crate::{
-    app::{App, Focus, HintAction, Hit, NavItem},
+    app::{App, Focus, HintAction, Hit, NavItem, Update},
     commands::Command,
     icons::icons,
     theme::{BG, FAINT, MUTED, RAISED, TEXT},
@@ -21,6 +22,9 @@ pub const HEIGHT: u16 = 5;
 /// A square-ish button with its icon in the middle cell.
 const BUTTON_WIDTH: u16 = 5;
 const DISABLED: Color = Color::Rgb(58, 58, 68);
+/// The search field in a small window keeps this much room for its prompt before the update
+/// button takes any.
+const COMPACT_SEARCH_MIN: u16 = 30;
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     buf.set_style(area, Style::new().bg(BG));
@@ -45,13 +49,18 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let search = Rect::new(home.right() + 1, row, width, 1);
     search_field(buf, app, search, 2);
 
+    // Right of the search field: the update button, then the user's name.
+    let mut right = area.right().saturating_sub(3);
+    if let Some(button) = update_button(buf, app, right, row, 2, right.saturating_sub(search.right() + 2)) {
+        right = button.x.saturating_sub(2);
+    }
     if let Some(me) = &app.me
         && wide
     {
         let name = format!("{}  {}", icons().artist, me.name);
         let width = name.width() as u16;
-        if area.right().saturating_sub(width + 3) > search.right() + 2 {
-            buf.set_string(area.right().saturating_sub(width + 3), row, name, Style::new().fg(MUTED));
+        if right.saturating_sub(width) > search.right() + 2 {
+            buf.set_string(right - width, row, name, Style::new().fg(MUTED));
         }
     }
 }
@@ -61,8 +70,38 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
     let back =
         button(buf, app, area.x + 1, area.y, 1, icons().chevron_left, Hit::Hint(HintAction::Back), app.can_go_back());
     let home = button(buf, app, back.right() + 1, area.y, 1, icons().home, Hit::Command(Command::Home), true);
-    let search = Rect::new(home.right() + 1, area.y, area.right().saturating_sub(home.right() + 2), 1);
+    let end = area.right().saturating_sub(1);
+    let room = end.saturating_sub(home.right() + 1 + COMPACT_SEARCH_MIN);
+    let search_end = update_button(buf, app, end, area.y, 1, room).map_or(end, |button| button.x);
+    let search = Rect::new(home.right() + 1, area.y, search_end.saturating_sub(home.right() + 1), 1);
     search_field(buf, app, search, 1);
+}
+
+/// The update button, its right edge at `right`, with as much of its label as fits into `room`
+/// columns and at least its icon. Draws nothing without an update.
+fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
+    let (icon, labels) = match app.update.as_ref()? {
+        Update::Available(release) => (icons().update, [format!("Update to v{}", release.version()), "Update".into()]),
+        Update::Installing { percent, .. } => {
+            let percent = percent.map(|percent| format!("{percent}%")).unwrap_or_default();
+            (text::spinner(app.frame()), [format!("Updating {percent}").trim_end().to_owned(), percent])
+        }
+        Update::Installed { release, .. } => {
+            (icons().restart, [format!("Restart for v{}", release.version()), "Restart".into()])
+        }
+    };
+    let content = labels
+        .into_iter()
+        .filter(|label| !label.is_empty())
+        .map(|label| format!("{icon}  {label}"))
+        .chain([icon.to_owned()])
+        .find(|content| content.width() as u16 + 2 * padding <= room)?;
+    let width = content.width() as u16 + 2 * padding;
+    let area = Rect::new(right.saturating_sub(width), y, width, 1).intersection(buf.area);
+    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_string(area.x + padding, y, content, Style::new().fg(app.accent.color()).bold());
+    app.hits.push((area, Hit::Command(Command::Update)));
+    Some(area)
 }
 
 /// A filled button with `icon` centered, `padding` cells either side; dimmed and inert unless
