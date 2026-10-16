@@ -689,6 +689,18 @@ impl Controller {
         Ok(())
     }
 
+    /// Jumps DJ to its next segment of picks, as the DJ button does in Spotify's apps.
+    pub fn next_segment(&self) -> Result<()> {
+        Ok(self.spirc.next_segment()?)
+    }
+
+    /// Asks DJ for something. The future resolves once DJ took the request; its answer
+    /// plays seconds later.
+    pub fn ask_dj(&self, prompt: String, suggested: bool) -> Result<impl Future<Output = Result<()>> + use<>> {
+        let answer = self.spirc.ask_dj(prompt, suggested)?;
+        Ok(async move { Ok(answer.await?) })
+    }
+
     pub fn set_crossfade(&self, crossfade: Duration) {
         self.engine.player.set_crossfade(crossfade);
     }

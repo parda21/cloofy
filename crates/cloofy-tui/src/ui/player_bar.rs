@@ -197,7 +197,7 @@ pub(super) fn controls(app: &App, accent: Color) -> (Line<'static>, Vec<(u16, u1
         (None, true) => icons.pause,
         (None, false) => icons.play,
     };
-    let parts = [
+    let mut parts = vec![
         (icons.shuffle, toggle(app.now.shuffle), Command::Shuffle),
         (icons.previous, Style::new().fg(MUTED), Command::Previous),
         (
@@ -209,6 +209,10 @@ pub(super) fn controls(app: &App, accent: Color) -> (Line<'static>, Vec<(u16, u1
         (icons.next, Style::new().fg(MUTED), Command::Next),
         (repeat, toggle(app.now.repeat != Repeat::Off), Command::Repeat),
     ];
+    // While DJ plays, its button moves it on to different picks, as in Spotify's apps.
+    if app.dj_playing() {
+        parts.push((icons.dj, Style::new().fg(accent), Command::Dj));
+    }
     let mut spans = Vec::new();
     let mut targets = Vec::new();
     let mut x = 0;

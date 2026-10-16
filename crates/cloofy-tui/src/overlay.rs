@@ -9,9 +9,44 @@ use crate::{commands::Command, views::ListCursor};
 pub enum Overlay {
     Help,
     Palette(Picker<PaletteAction>),
-    AddToPlaylist { uris: Vec<String>, picker: Picker<usize> },
-    Devices { devices: Vec<cloofy_spotify::connect::Device>, picker: Picker<usize>, refreshing: bool },
+    AddToPlaylist {
+        uris: Vec<String>,
+        picker: Picker<usize>,
+    },
+    Devices {
+        devices: Vec<cloofy_spotify::connect::Device>,
+        picker: Picker<usize>,
+        refreshing: bool,
+    },
     Menu(Menu),
+    /// Asks DJ for something or jumps to different picks, like the DJ button in Spotify's apps.
+    Dj {
+        picker: Picker<DjChoice>,
+        suggestions: Vec<String>,
+        loading: bool,
+    },
+}
+
+/// A row of the DJ panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DjChoice {
+    /// Asks for what was typed.
+    Ask,
+    /// Jumps to different picks.
+    Jump,
+    /// Asks for one of Spotify's suggestions.
+    Suggestion(usize),
+}
+
+/// The DJ panel's rows: what was typed, different picks, then Spotify's suggestions.
+pub fn dj_items(query: &str, suggestions: &[String]) -> Vec<PickItem<DjChoice>> {
+    let item = |label: String, detail: &str, value| PickItem { label, detail: detail.into(), image_url: None, value };
+    let query = query.trim();
+    let ask = (!query.is_empty()).then(|| item(format!("Ask for “{query}”"), "enter", DjChoice::Ask));
+    ask.into_iter()
+        .chain([item("Pick something for me".into(), "new picks", DjChoice::Jump)])
+        .chain(suggestions.iter().enumerate().map(|(index, s)| item(s.clone(), "idea", DjChoice::Suggestion(index))))
+        .collect()
 }
 
 /// The right-click menu of one item.
@@ -72,6 +107,7 @@ impl Overlay {
             Overlay::AddToPlaylist { .. } => Some("Add to which playlist?"),
             Overlay::Devices { .. } => Some("Transfer playback to…"),
             Overlay::Menu(_) => None,
+            Overlay::Dj { .. } => Some("What should your DJ play?"),
         }
     }
 }
@@ -116,6 +152,8 @@ pub struct Picker<T> {
     pub matches: Vec<usize>,
     pub cursor: ListCursor,
     matcher: Matcher,
+    /// Whether typing narrows the list; otherwise the text is free and every item stays.
+    filter: bool,
 }
 
 struct Candidate<'a> {
@@ -138,7 +176,13 @@ impl<T: Copy> Picker<T> {
             matches,
             cursor: ListCursor::default(),
             matcher: Matcher::new(Config::DEFAULT),
+            filter: true,
         }
+    }
+
+    /// A picker whose text is free, like a request, rather than a filter of the list.
+    pub fn free_text(items: Vec<PickItem<T>>) -> Self {
+        Self { filter: false, ..Self::new(items) }
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> PickerOutcome<T> {
@@ -191,6 +235,11 @@ impl<T: Copy> Picker<T> {
 
     fn set_query(&mut self, query: String) {
         self.query = query;
+        self.cursor = ListCursor::default();
+        if !self.filter {
+            self.matches = (0..self.items.len()).collect();
+            return;
+        }
         let candidates = self.items.iter().enumerate().map(|(index, item)| Candidate { index, text: &item.label });
         let pattern = Pattern::parse(&self.query, CaseMatching::Ignore, Normalization::Smart);
         self.matches = pattern
@@ -198,7 +247,6 @@ impl<T: Copy> Picker<T> {
             .into_iter()
             .map(|(candidate, _)| candidate.index)
             .collect();
-        self.cursor = ListCursor::default();
     }
 }
 
@@ -228,5 +276,20 @@ mod tests {
         assert_eq!(picker.query, "speaker");
         assert_eq!(picker.matches.len(), 2);
         assert_eq!(fresh[*picker.selected().unwrap()], kept);
+    }
+
+    #[test]
+    fn a_request_to_dj_is_free_text_offered_first() {
+        let suggestions = vec!["Chicago House".to_owned()];
+        let mut picker = Picker::free_text(dj_items("", &suggestions));
+        assert_eq!(picker.selected(), Some(&DjChoice::Jump));
+        for c in "jazz".chars() {
+            picker.on_key(KeyEvent::from(KeyCode::Char(c)));
+            let query = picker.query.clone();
+            picker.set_items(dj_items(&query, &suggestions), |_| false);
+        }
+        // Nothing is filtered away, and enter asks for what was typed.
+        assert_eq!(picker.matches.len(), 3);
+        assert!(matches!(picker.on_key(KeyEvent::from(KeyCode::Enter)), PickerOutcome::Select(DjChoice::Ask)));
     }
 }

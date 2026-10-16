@@ -165,6 +165,10 @@ pub enum DataEvent {
         name: String,
         result: Result<(), String>,
     },
+    /// What Spotify suggests asking DJ for.
+    DjSuggestions(Result<Vec<String>, String>),
+    /// DJ took a request, or turned it down.
+    DjAsked(Result<(), String>),
     Notice(String),
     Failed(String),
 }
@@ -741,6 +745,28 @@ impl Loader {
         self.spawn(move |this| async move {
             let result = connect::transfer(&this.api, &device.id).await.map_err(|e| format!("{e:#}"));
             this.send(DataEvent::Transferred { name: device.name, result });
+        });
+    }
+
+    /// What Spotify suggests asking DJ for while `track_uri` plays. Answers with `DjSuggestions`.
+    pub fn dj_suggestions(&self, track_uri: String) {
+        if self.demo.is_some() {
+            return self.send(DataEvent::DjSuggestions(Ok(Vec::new())));
+        }
+        self.spawn(move |this| async move {
+            let suggestions = async {
+                Ok::<_, anyhow::Error>(this.session().await?.spclient().get_dj_suggestions(&track_uri).await?)
+            };
+            let result = suggestions.await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::DjSuggestions(result));
+        });
+    }
+
+    /// Waits for DJ to take a request. Answers with `DjAsked`.
+    pub fn ask_dj(&self, answer: impl Future<Output = anyhow::Result<()>> + Send + 'static) {
+        self.spawn(move |this| async move {
+            let result = answer.await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::DjAsked(result));
         });
     }
 

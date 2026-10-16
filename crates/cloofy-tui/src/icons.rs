@@ -43,6 +43,8 @@ pub struct Icons {
     pub tablet: &'static str,
     pub tv: &'static str,
     pub cast: &'static str,
+    /// Moves DJ on to different picks.
+    pub dj: &'static str,
 }
 
 const NERD: Icons = Icons {
@@ -78,6 +80,7 @@ const NERD: Icons = Icons {
     tablet: "\u{F04F6}",
     tv: "\u{F0502}",
     cast: "\u{F0118}",
+    dj: "\u{F147D}",
 };
 
 const TEXT: Icons = Icons {
@@ -113,6 +116,7 @@ const TEXT: Icons = Icons {
     tablet: "▭",
     tv: "▭",
     cast: "◎",
+    dj: "DJ",
 };
 
 static ICONS: OnceLock<&'static Icons> = OnceLock::new();

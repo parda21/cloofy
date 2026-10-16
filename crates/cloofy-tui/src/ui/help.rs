@@ -41,7 +41,7 @@ const PLAYBACK: Section = (
         ("s", "Shuffle"),
         ("r", "Repeat: off, all, one"),
         ("p", "Play (Home, artist)"),
-        ("D", "Start DJ"),
+        ("D", "Start DJ / ask DJ"),
         ("X", "Crossfade length"),
         ("z", "Now playing & lyrics"),
         ("d", "Switch device"),

@@ -31,7 +31,7 @@ use crate::{
     loader::{DataEvent, Loader, Picture, SessionState},
     media::MediaSync,
     notify::Notifier,
-    overlay::{MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome},
+    overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
     playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     snapshot::Placement,
     theme::{Accent, BG, RAISED},
@@ -1280,6 +1280,25 @@ impl App {
                     self.error(format!("Transfer: {err}"));
                 }
             },
+            DataEvent::DjSuggestions(result) => {
+                let Some(Overlay::Dj { picker, suggestions, loading }) = &mut self.overlay else { return true };
+                *loading = false;
+                match result {
+                    Ok(fresh) => {
+                        let selected = picker.selected().copied();
+                        *suggestions = fresh;
+                        picker.set_items(dj_items(&picker.query, suggestions), |&choice| Some(choice) == selected);
+                    }
+                    // Without suggestions, the panel still asks and jumps.
+                    Err(err) => tracing::warn!("DJ suggestions: {err}"),
+                }
+            }
+            // DJ's answer speaks for itself, seconds later.
+            DataEvent::DjAsked(Ok(())) => {}
+            DataEvent::DjAsked(Err(err)) => {
+                self.cancel_start();
+                self.error(format!("DJ: {err}"));
+            }
             DataEvent::Notice(text) => self.notice(text),
             DataEvent::Failed(text) => self.error(text),
         }
@@ -1745,6 +1764,16 @@ impl App {
             Some(Overlay::Palette(picker)) => picker.on_key(key).map(Choice::Palette),
             Some(Overlay::AddToPlaylist { picker, .. }) => picker.on_key(key).map(Choice::Playlist),
             Some(Overlay::Devices { picker, .. }) => picker.on_key(key).map(Choice::Device),
+            Some(Overlay::Dj { picker, suggestions, .. }) => {
+                let query = picker.query.clone();
+                let outcome = picker.on_key(key);
+                // The first row asks for what was typed.
+                if picker.query != query {
+                    let query = picker.query.clone();
+                    picker.set_items(dj_items(&query, suggestions), |_| false);
+                }
+                outcome.map(Choice::Dj)
+            }
             _ => PickerOutcome::Stay,
         };
         self.apply_choice(outcome);
@@ -1777,6 +1806,7 @@ impl App {
             PickerOutcome::Select(Choice::Palette(action)) => self.run_palette(action),
             PickerOutcome::Select(Choice::Playlist(index)) => self.add_to_playlist(index),
             PickerOutcome::Select(Choice::Device(index)) => self.transfer_to(index),
+            PickerOutcome::Select(Choice::Dj(choice)) => self.choose_dj(choice),
             PickerOutcome::Close => self.overlay = None,
             PickerOutcome::Stay => {}
         }
@@ -2048,6 +2078,7 @@ impl App {
                     Some(Overlay::Palette(picker)) => picker.select(position).map(Choice::Palette),
                     Some(Overlay::AddToPlaylist { picker, .. }) => picker.select(position).map(Choice::Playlist),
                     Some(Overlay::Devices { picker, .. }) => picker.select(position).map(Choice::Device),
+                    Some(Overlay::Dj { picker, .. }) => picker.select(position).map(Choice::Dj),
                     _ => PickerOutcome::Stay,
                 };
                 self.apply_choice(outcome);
@@ -2077,6 +2108,7 @@ impl App {
                 Some(Overlay::AddToPlaylist { picker, .. }) | Some(Overlay::Devices { picker, .. }) => {
                     picker.cursor.move_by(delta.signum(), picker.matches.len())
                 }
+                Some(Overlay::Dj { picker, .. }) => picker.cursor.move_by(delta.signum(), picker.matches.len()),
                 _ => {}
             },
             Some(Hit::NavArea | Hit::Nav(_) | Hit::Chip(_)) => self.nav.scroll(delta.signum()),
@@ -2183,6 +2215,7 @@ impl App {
                 let area = self.content_area;
                 self.open_menu((area.x + area.width / 3, area.y + area.height / 3));
             }
+            Command::Dj if self.dj_playing() => self.open_dj(),
             Command::Dj => {
                 self.notice("Starting DJ…".into());
                 self.play(DJ_URI.into(), None);
@@ -2236,7 +2269,10 @@ impl App {
         let mut items: Vec<_> = Command::PALETTE
             .iter()
             .map(|&command| PickItem {
-                label: command.label().to_owned(),
+                label: match command {
+                    Command::Dj if self.dj_playing() => "Ask DJ…".to_owned(),
+                    _ => command.label().to_owned(),
+                },
                 detail: command.key().to_owned(),
                 image_url: None,
                 value: PaletteAction::Run(command),
@@ -2476,6 +2512,11 @@ impl App {
     pub fn playing_context(&self) -> Option<&str> {
         self.now.track.as_ref()?;
         self.last_context.as_deref()
+    }
+
+    /// Whether cloofy itself plays DJ, so the DJ button moves it on to different picks.
+    pub fn dj_playing(&self) -> bool {
+        self.local_active && self.playing_context() == Some(DJ_URI)
     }
 
     /// Track `row` of the open track list or search results.
@@ -3175,6 +3216,46 @@ impl App {
         }
     }
 
+    /// The DJ panel: ask DJ for something, take one of Spotify's suggestions or jump to
+    /// different picks.
+    fn open_dj(&mut self) {
+        let Some(track) = &self.now.track else { return };
+        self.loader.dj_suggestions(track.uri.clone());
+        self.status = None;
+        let picker = Picker::free_text(dj_items("", &[]));
+        self.open_overlay(Overlay::Dj { picker, suggestions: Vec::new(), loading: true });
+    }
+
+    fn choose_dj(&mut self, choice: DjChoice) {
+        let Some(Overlay::Dj { picker, suggestions, .. }) = self.overlay.take() else { return };
+        match choice {
+            DjChoice::Jump => {
+                if self.control(Controller::next_segment) {
+                    self.notice("Getting different DJ picks…".into());
+                    self.now.start(None);
+                }
+            }
+            DjChoice::Ask => self.ask_dj(picker.query.trim().to_owned(), false),
+            DjChoice::Suggestion(index) => {
+                if let Some(prompt) = suggestions.into_iter().nth(index) {
+                    self.ask_dj(prompt, true);
+                }
+            }
+        }
+    }
+
+    fn ask_dj(&mut self, prompt: String, suggested: bool) {
+        let Some(controller) = &self.controller else { return self.not_connected() };
+        match controller.ask_dj(prompt, suggested) {
+            Ok(answer) => {
+                self.loader.ask_dj(answer);
+                self.notice("Asking DJ…".into());
+                self.now.start(None);
+            }
+            Err(err) => self.error(format!("DJ: {err:#}")),
+        }
+    }
+
     fn open_devices(&mut self, devices: Vec<Device>, refreshing: bool) {
         if devices.is_empty() && !refreshing {
             return self.error("No Spotify devices found.".into());
@@ -3274,4 +3355,5 @@ enum Choice {
     Palette(PaletteAction),
     Playlist(usize),
     Device(usize),
+    Dj(DjChoice),
 }

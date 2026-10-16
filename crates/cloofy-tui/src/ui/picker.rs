@@ -35,15 +35,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let Some(overlay) = &mut app.overlay else { return };
     let title = overlay.picker_title().unwrap_or_default();
     // A fresh list loads behind the last one.
-    let refreshing = matches!(overlay, Overlay::Devices { refreshing: true, .. });
+    let refreshing = matches!(overlay, Overlay::Devices { refreshing: true, .. } | Overlay::Dj { loading: true, .. });
     let (query, rows) = match overlay {
         Overlay::Palette(picker) => (picker.query.clone(), rows(picker)),
         Overlay::AddToPlaylist { picker, .. } | Overlay::Devices { picker, .. } => (picker.query.clone(), rows(picker)),
+        Overlay::Dj { picker, .. } => (picker.query.clone(), rows(picker)),
         Overlay::Help | Overlay::Menu(_) => return,
     };
     let cursor = match overlay {
         Overlay::Palette(picker) => &mut picker.cursor,
         Overlay::AddToPlaylist { picker, .. } | Overlay::Devices { picker, .. } => &mut picker.cursor,
+        Overlay::Dj { picker, .. } => &mut picker.cursor,
         Overlay::Help | Overlay::Menu(_) => return,
     };
     // Pickers with covers use two-line rows: name and detail next to a thumbnail. Windows too
