@@ -1,0 +1,54 @@
+# Made for each release from packaging/aur/cloofy/PKGBUILD in https://github.com/parda21/cloofy.
+# Maintainer: parda21 <36790116+parda21@users.noreply.github.com>
+
+pkgname=cloofy
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Spotify client for the terminal'
+arch=('x86_64' 'aarch64')
+url='https://github.com/parda21/cloofy'
+license=('MIT')
+depends=('alsa-lib' 'glibc' 'libgcc' 'libpulse')
+makedepends=('cargo' 'git')
+# With makepkg's LTO flags, the C code of aws-lc, which rustls builds, becomes GCC bytecode
+# that Rust's linker can't read.
+options=('!lto')
+# cloofy vendors two forks as git submodules, checked out from these clones in prepare().
+source=("git+$url.git#tag=v$pkgver"
+        'git+https://github.com/parda21/librespot.git'
+        'git+https://github.com/parda21/ratatui-image.git')
+sha256sums=('SKIP'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$pkgname"
+  git submodule init
+  git config submodule.vendor/librespot.url "$srcdir/librespot"
+  git config submodule.vendor/ratatui-image.url "$srcdir/ratatui-image"
+  git -c protocol.file.allow=always submodule update
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release --package cloofy
+}
+
+check() {
+  cd "$pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # In release mode, to reuse what build() compiled.
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd "$pkgname"
+  install -Dm755 target/release/cloofy "$pkgdir/usr/bin/cloofy"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

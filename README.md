@@ -85,6 +85,26 @@ curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | ba
 
 The installer checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup): your Spotify app, its client ID, and signing in. cloofy offers new releases itself, see [updates](#updates).
 
+With Homebrew, on macOS and Linux:
+
+```sh
+brew install parda21/cloofy/cloofy
+```
+
+With [mise](https://mise.jdx.dev), anywhere:
+
+```sh
+mise use -g ubi:parda21/cloofy
+```
+
+On Arch Linux, as a package built from the PKGBUILD that comes with each release:
+
+```sh
+curl -LO https://github.com/parda21/cloofy/releases/latest/download/PKGBUILD && makepkg -si
+```
+
+Installed with a package manager, go through the [setup](#setup) yourself. The package manager keeps cloofy up to date.
+
 <details>
 <summary>Installer options, building from source</summary>
 
@@ -166,6 +186,8 @@ cloofy update               # update to the latest release
 ## Updates
 
 When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
+
+Installed with Homebrew, mise, a system package or Nix, cloofy leaves its updates to that tool: the button shows the new version, and clicking it or `cloofy update` tells you how to update, such as `brew upgrade cloofy`.
 
 ## Settings
 

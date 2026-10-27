@@ -84,6 +84,10 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
 fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
     let (icon, labels) = match app.update.as_ref()? {
         Update::Available(release) => (icons().update, [format!("Update to v{}", release.version()), "Update".into()]),
+        // Nothing to install here: the button says what's out, and a click how to update.
+        Update::Managed { release, .. } => {
+            (icons().update, [format!("v{} is out", release.version()), format!("v{}", release.version())])
+        }
         Update::Installing { percent, .. } => {
             let percent = percent.map(|percent| format!("{percent}%")).unwrap_or_default();
             (text::spinner(app.frame()), [format!("Updating {percent}").trim_end().to_owned(), percent])
