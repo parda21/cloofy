@@ -10,6 +10,8 @@ use serde_json::Value;
 
 /// Cover size for lists and cards, in pixels.
 pub(crate) const IMAGE_SIZE: u32 = 300;
+/// Cover size for the Now Playing screen.
+pub(crate) const LARGE_IMAGE_SIZE: u32 = 800;
 
 pub(crate) const TRACK: &str = "ytmusic:track:";
 pub(crate) const ALBUM: &str = "ytmusic:album:";
@@ -297,6 +299,11 @@ pub(crate) fn resize(url: &str, size: u32) -> Option<String> {
         options.split('-').filter(|o| !(o.starts_with('w') || o.starts_with('h') || o.starts_with('s'))).collect();
     let rest = if rest.is_empty() { String::new() } else { format!("-{}", rest.join("-")) };
     Some(format!("{base}=w{size}-h{size}{rest}"))
+}
+
+/// The large version of a cover picked for lists.
+pub(crate) fn large(url: &str) -> String {
+    resize(url, LARGE_IMAGE_SIZE).unwrap_or_else(|| url.to_owned())
 }
 
 /// The ID in a URI of the given prefix, e.g. the video ID in `ytmusic:track:…`.

@@ -11,6 +11,7 @@ mod library;
 mod lyrics;
 mod pages;
 mod parse;
+mod player;
 mod search;
 mod watch;
 
@@ -26,6 +27,7 @@ use cloofy_core::{
 };
 use futures::Stream;
 
+pub use crate::player::Player;
 use crate::{innertube::InnerTube, library::Library};
 
 /// What `tracks` lists.
