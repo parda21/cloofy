@@ -51,6 +51,9 @@ pub struct Icons {
     pub update: &'static str,
     /// Start the installed update.
     pub restart: &'static str,
+    /// The music services, in the switch between them; none in plain text.
+    pub spotify: &'static str,
+    pub youtube: &'static str,
 }
 
 const NERD: Icons = Icons {
@@ -90,6 +93,8 @@ const NERD: Icons = Icons {
     dj: "\u{F147D}",
     update: "\u{F0CE1}",
     restart: "\u{F0709}",
+    spotify: "\u{F04C7}",
+    youtube: "\u{F05C3}",
 };
 
 const TEXT: Icons = Icons {
@@ -129,6 +134,8 @@ const TEXT: Icons = Icons {
     dj: "DJ",
     update: "↑",
     restart: "↻",
+    spotify: "",
+    youtube: "",
 };
 
 static NERD_ICONS: AtomicBool = AtomicBool::new(false);
@@ -153,6 +160,14 @@ fn terminal_bundles_nerd_font() -> bool {
     matches!(var("TERM_PROGRAM").as_str(), "ghostty" | "WezTerm")
         || var("TERM").contains("kitty")
         || std::env::var_os("KITTY_WINDOW_ID").is_some()
+}
+
+/// The icon of a music service, empty without Nerd Font glyphs.
+pub fn service(service: cloofy_core::service::Service) -> &'static str {
+    match service {
+        cloofy_core::service::Service::Spotify => icons().spotify,
+        cloofy_core::service::Service::YouTubeMusic => icons().youtube,
+    }
 }
 
 /// The icon for a Spotify Connect device type.

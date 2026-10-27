@@ -139,7 +139,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             buf.set_string(info.x, info.y + 1, text::truncate(hint, info.width as usize), Style::new().fg(p.muted));
         }
-        None => match &app.player_error {
+        None => match app.player_error() {
             Some(err) => {
                 buf.set_string(info.x, info.y, "Playback unavailable", Style::new().fg(p.danger).bold());
                 buf.set_string(info.x, info.y + 1, text::truncate(err, info.width as usize), Style::new().fg(p.muted));
@@ -159,7 +159,7 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
     let Some(track) = &app.now.track else {
         let (status, style) = if app.is_connected() {
             ("Nothing playing".to_owned(), Style::new().fg(p.muted))
-        } else if app.player_error.is_some() {
+        } else if app.player_error().is_some() {
             ("Playback unavailable".to_owned(), Style::new().fg(p.danger))
         } else {
             (format!("{}  Connecting to {}…", text::spinner(app.frame()), app.service_name()), Style::new().fg(p.muted))

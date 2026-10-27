@@ -30,14 +30,17 @@ pub enum Command {
     Help,
     Settings,
     Update,
+    /// Shows the next music service's pages, with two or more in use.
+    SwitchService,
     Quit,
 }
 
 impl Command {
     /// Commands offered in the palette, in display order.
-    pub const PALETTE: [Command; 25] = [
+    pub const PALETTE: [Command; 26] = [
         Command::Home,
         Command::Library,
+        Command::SwitchService,
         Command::PlayPause,
         Command::Next,
         Command::Previous,
@@ -90,6 +93,7 @@ impl Command {
             Command::Help => "Keyboard shortcuts",
             Command::Settings => "Settings",
             Command::Update => "Check for updates",
+            Command::SwitchService => "Switch service",
             Command::Quit => "Quit cloofy",
         }
     }
@@ -121,6 +125,7 @@ impl Command {
             Command::Help => "?",
             Command::Settings => ",",
             Command::Update => "U",
+            Command::SwitchService => "S",
             Command::Quit => "^C",
         }
     }
@@ -155,6 +160,7 @@ impl Command {
             KeyCode::Char('D') => Command::Dj,
             KeyCode::Char('X') => Command::Crossfade,
             KeyCode::Char('U') => Command::Update,
+            KeyCode::Char('S') => Command::SwitchService,
             KeyCode::Char('.') => Command::Menu,
             KeyCode::Char('H') => Command::SeekBack,
             KeyCode::Char('L') => Command::SeekForward,

@@ -28,6 +28,7 @@ const NAVIGATION: Section = (
         ("PgUp PgDn", "Page up / down"),
         ("^U  ^D", "Half a page up / down"),
         ("1  2  3", "Home, Search, Library"),
+        ("S", "Switch music service"),
         ("<  >", "Filter (Library page)"),
         ("esc", "Back"),
     ],
@@ -51,8 +52,7 @@ const PLAYBACK: Section = (
 const LIBRARY: Section = (
     "LIBRARY",
     &[
-        ("f", "Like / save"),
-        ("F", "Follow artist"),
+        ("f  F", "Like, save / follow artist"),
         ("q  Q", "Add to queue / show queue"),
         ("a", "Add to playlist"),
         (".", "Actions menu"),
@@ -86,11 +86,12 @@ const PADDING: u16 = 3;
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let p = theme::palette();
     // Keys of commands for what the service lacks, like DJ, are left out.
-    let hidden: Vec<&str> = [Command::Dj, Command::Crossfade, Command::Devices, Command::Update]
-        .into_iter()
-        .filter(|command| !app.offers(*command))
-        .map(Command::key)
-        .collect();
+    let hidden: Vec<&str> =
+        [Command::Dj, Command::Crossfade, Command::Devices, Command::Update, Command::SwitchService]
+            .into_iter()
+            .filter(|command| !app.offers(*command))
+            .map(Command::key)
+            .collect();
     let fits = height(ONE_COLUMN, &hidden) <= area.height || area.width < TWO_COLUMN_MIN_WIDTH;
     let (columns, width) = if fits { (ONE_COLUMN, ONE_COLUMN_WIDTH) } else { (TWO_COLUMNS, TWO_COLUMN_WIDTH) };
     let height = height(columns, &hidden);

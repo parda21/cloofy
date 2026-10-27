@@ -71,6 +71,8 @@ pub enum Graphic {
 }
 
 pub enum DataEvent {
+    /// What arrived for `service`'s pages, which may no longer be the ones shown.
+    For(Service, Box<DataEvent>),
     Me(Result<User, String>),
     Home {
         view: u64,
@@ -184,8 +186,12 @@ pub enum DataEvent {
 
 #[derive(Clone)]
 pub struct Loader {
+    /// The services in use, in the order the config lists them.
+    services: Arc<[Service]>,
     /// What each service started has to show, asked by the URI's service.
     catalogs: Arc<[Catalog]>,
+    /// Why the services that couldn't start didn't, such as a missing sign-in.
+    problems: Arc<[(Service, String)]>,
     /// The service whose Home, Library and Search show.
     service: Option<Service>,
     tx: UnboundedSender<AppEvent>,
@@ -217,9 +223,10 @@ enum ImageSource {
 }
 
 impl Loader {
-    /// `service` is the one whose Home, Library and Search show first.
+    /// `started` has each service in use, started or why it couldn't; `service` is the one
+    /// whose Home, Library and Search show first.
     pub fn new(
-        catalogs: Vec<Catalog>,
+        started: Vec<(Service, Result<Catalog, String>)>,
         service: Option<Service>,
         tx: UnboundedSender<AppEvent>,
         image_terminal: ImageTerminal,
@@ -230,8 +237,12 @@ impl Loader {
         // Leave cores for the interface and audio.
         let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
         let picker = image_terminal.picker(ImageProtocol::Auto);
+        let services = started.iter().map(|(service, _)| *service).collect();
+        let (catalogs, problems): (Vec<_>, Vec<_>) = started.into_iter().partition(|(_, started)| started.is_ok());
         Self {
-            catalogs: catalogs.into(),
+            services,
+            catalogs: catalogs.into_iter().filter_map(|(_, started)| started.ok()).collect(),
+            problems: problems.into_iter().filter_map(|(service, started)| Some((service, started.err()?))).collect(),
             service,
             tx,
             http,
@@ -244,6 +255,18 @@ impl Loader {
             frames_drawn: Arc::default(),
             demo: None,
         }
+    }
+
+    /// A loader for `services`, none of them started, so that what it is asked for fails or
+    /// never arrives; `problems` say why some couldn't start.
+    #[cfg(test)]
+    pub fn for_tests(services: &[Service], problems: &[(Service, &str)], tx: UnboundedSender<AppEvent>) -> Self {
+        let images = std::env::temp_dir().join("cloofy-test-images");
+        let mut loader =
+            Self::new(Vec::new(), services.first().copied(), tx, ImageTerminal::halfblocks(), images, false);
+        loader.services = services.into();
+        loader.problems = problems.iter().map(|(service, problem)| (*service, problem.to_string())).collect();
+        loader
     }
 
     /// Answers every request from the demo's sample instead of Spotify.
@@ -281,9 +304,19 @@ impl Loader {
         self.service
     }
 
-    /// The services started, in the order the config lists them.
+    /// The services in use, started or not, in the order the config lists them.
     pub fn services(&self) -> Vec<Service> {
-        self.catalogs.iter().map(Catalog::service).collect()
+        self.services.to_vec()
+    }
+
+    /// Why `service` couldn't start, if it couldn't.
+    pub fn problem(&self, service: Service) -> Option<&str> {
+        self.problems.iter().find(|(s, _)| *s == service).map(|(_, problem)| problem.as_str())
+    }
+
+    /// Shows `service`'s Home, Library and Search from now on.
+    pub fn set_service(&mut self, service: Option<Service>) {
+        self.service = service;
     }
 
     /// Whether the service shown knows who listens; without, it has no library to load.
@@ -294,6 +327,9 @@ impl Loader {
     /// The catalog of `service`, if it was started.
     fn catalog(&self, service: Option<Service>) -> Result<Catalog> {
         let service = service.context("No music service to ask")?;
+        if let Some(problem) = self.problem(service) {
+            anyhow::bail!("{problem}");
+        }
         let catalog = self.catalogs.iter().find(|catalog| catalog.service() == service);
         catalog.cloned().with_context(|| format!("{} isn't enabled", service.name()))
     }
@@ -318,6 +354,14 @@ impl Loader {
         let _ = self.tx.send(AppEvent::Data(event));
     }
 
+    /// Sends what was loaded for the service shown when it was asked for.
+    fn send_for(&self, event: DataEvent) {
+        match self.service {
+            Some(service) => self.send(DataEvent::For(service, Box::new(event))),
+            None => self.send(event),
+        }
+    }
+
     /// Runs `task` in the background and reports its error, if any.
     fn spawn<F>(&self, task: impl FnOnce(Self) -> F + Send + 'static)
     where
@@ -336,11 +380,11 @@ impl Loader {
 
     pub fn me(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Me(Ok(demo.user.clone())));
+            return self.send_for(DataEvent::Me(Ok(demo.user.clone())));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.me().await }.await;
-            this.send(DataEvent::Me(result.map_err(|e| format!("{e:#}"))));
+            this.send_for(DataEvent::Me(result.map_err(|e| format!("{e:#}"))));
         });
     }
 
@@ -387,11 +431,11 @@ impl Loader {
 
     pub fn home(&self, view: u64) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Home { view, result: Ok(demo.home.clone()) });
+            return self.send_for(DataEvent::Home { view, result: Ok(demo.home.clone()) });
         }
         self.spawn(move |this| async move {
             let result = async { this.shown()?.home().await }.await;
-            this.send(DataEvent::Home { view, result: result.map_err(|e| format!("{e:#}")) });
+            this.send_for(DataEvent::Home { view, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
 
@@ -459,51 +503,51 @@ impl Loader {
 
     pub fn liked_count(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::LikedCount(Ok(demo.liked.len() as u32)));
+            return self.send_for(DataEvent::LikedCount(Ok(demo.liked.len() as u32)));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.liked_count().await }.await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::LikedCount(result));
+            this.send_for(DataEvent::LikedCount(result));
         });
     }
 
     pub fn albums(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Albums(Ok(demo.albums.clone())));
+            return self.send_for(DataEvent::Albums(Ok(demo.albums.clone())));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.saved_albums().await }.await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::Albums(result));
+            this.send_for(DataEvent::Albums(result));
         });
     }
 
     pub fn artists(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Artists(Ok(demo.artists.clone())));
+            return self.send_for(DataEvent::Artists(Ok(demo.artists.clone())));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.followed_artists().await }.await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::Artists(result));
+            this.send_for(DataEvent::Artists(result));
         });
     }
 
     pub fn shows(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Shows(Ok(demo.shows.clone())));
+            return self.send_for(DataEvent::Shows(Ok(demo.shows.clone())));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.saved_shows().await }.await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::Shows(result));
+            this.send_for(DataEvent::Shows(result));
         });
     }
 
     pub fn playlists(&self) {
         if let Some(demo) = self.demo() {
-            return self.send(DataEvent::Playlists(Ok(demo.playlists.clone())));
+            return self.send_for(DataEvent::Playlists(Ok(demo.playlists.clone())));
         }
         self.spawn(|this| async move {
             let result = async { this.shown()?.playlists().await }.await.map_err(|e| format!("{e:#}"));
-            this.send(DataEvent::Playlists(result));
+            this.send_for(DataEvent::Playlists(result));
         });
     }
 
@@ -893,7 +937,7 @@ impl Loader {
             let added = async { this.catalog_of(&playlist_uri)?.add_to_playlist(&playlist_id, &uris).await };
             if let Err(err) = added.await {
                 let error = format!("Playlist: {err:#}");
-                this.send(DataEvent::AddFailed { playlist_id, count: uris.len() as u32, error });
+                this.send_for(DataEvent::AddFailed { playlist_id, count: uris.len() as u32, error });
             }
         });
     }

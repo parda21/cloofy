@@ -13,10 +13,14 @@ use crate::{
 };
 
 impl App {
-    /// Opens the queue page, or goes back from it, like Spotify's queue button.
+    /// Opens the queue page, or goes back from it, like Spotify's queue button. It opens among
+    /// the pages of the service that plays.
     pub(super) fn toggle_queue(&mut self) {
         if !self.zen && matches!(self.view, View::Queue(_)) {
             return self.back();
+        }
+        if let Some(active) = self.active {
+            self.show_service(active);
         }
         self.zen = false;
         if !matches!(self.view, View::Queue(_)) {

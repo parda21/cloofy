@@ -149,8 +149,11 @@ fn tracks(
         TrackSource::Playlist(p) => {
             ("PLAYLIST", p.name.clone(), format!("By {} · {count} songs · {length}", p.owner_name))
         }
+        // An album opened from a link may not know its year yet.
         TrackSource::Album(a) => {
-            ("ALBUM", a.name.clone(), format!("{} · {} · {count} songs · {length}", a.artists.join(", "), a.year))
+            let parts = [a.artists.join(", "), a.year.clone(), format!("{count} songs"), length];
+            let meta = parts.into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+            ("ALBUM", a.name.clone(), meta)
         }
     };
     // The header and its divider need seven rows; below six list rows they are not worth it.

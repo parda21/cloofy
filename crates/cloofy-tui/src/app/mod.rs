@@ -1,3 +1,4 @@
+mod browsing;
 mod library;
 mod menu;
 mod persist;
@@ -269,6 +270,8 @@ pub enum Hit {
     Header(HeaderButton),
     /// The heart next to the playing track.
     LikePlaying,
+    /// A service in the switch of the top bar.
+    Service(Service),
     SearchInput,
     Command(Command),
     Seek {
@@ -390,6 +393,12 @@ pub struct App {
     /// The service whose player is the one that plays, or played last. Only one plays at a
     /// time: starting playback on another one pauses this one.
     active: Option<Service>,
+    /// Why a service's player couldn't start or connect, by service.
+    player_errors: HashMap<Service, String>,
+    /// The pages of the services not shown; see [`browsing`].
+    parked: HashMap<Service, browsing::Browsing>,
+    /// Pages of the last run for services not shown yet, reopened when they first show.
+    saved_pages: HashMap<Service, crate::state::Page>,
     /// cloofy's own device ID among the account's devices.
     device_id: Option<String>,
     /// cloofy's own device is the active one. Until something activates it, Spirc ignores
@@ -418,7 +427,6 @@ pub struct App {
     last_push: Option<(ConnectPush, Instant)>,
     /// Where the data cache and the state file live.
     paths: Paths,
-    pub player_error: Option<String>,
     pub now: NowPlaying,
     /// When the shown track last changed.
     track_changed_at: Instant,
@@ -468,6 +476,10 @@ pub struct App {
     pub library_filter: LibraryFilter,
     /// The service browses and plays without an account, so there is no library to show.
     pub signed_out: bool,
+    /// Why the service couldn't start; its pages say so instead.
+    pub problem: Option<String>,
+    /// The service's pages were filled already: it showed before in this run.
+    shown_before: bool,
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
     home_fetched_at: Option<Instant>,
@@ -503,8 +515,8 @@ pub struct App {
     /// Items taken out of the library before Spotify confirmed it, and where they were, to
     /// put them back should it fail.
     unsaved: HashMap<String, (usize, library::LibraryItem)>,
-    /// Library lists to load again after confirmed changes, and when.
-    library_reloads: HashMap<library::LibraryPart, Instant>,
+    /// Library lists of each service to load again after confirmed changes, and when.
+    library_reloads: HashMap<(Service, library::LibraryPart), Instant>,
     pub focus: Focus,
     pub nav: ListCursor,
     pub view: View,
@@ -571,13 +583,6 @@ impl App {
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
     ) -> Self {
-        let signed_out = !loader.signed_in();
-        if !signed_out {
-            loader.me();
-            loader.playlists();
-            loader.library();
-        }
-        loader.home(0);
         let system_settings = cloofy_os::settings::current();
         let mut accent = Accent::new();
         if let Some(color) = prefs.accent.fixed() {
@@ -593,6 +598,9 @@ impl App {
             volume_sync: VolumeSync::default(),
             players: HashMap::new(),
             active: None,
+            player_errors: HashMap::new(),
+            parked: HashMap::new(),
+            saved_pages: HashMap::new(),
             device_id: None,
             local_active: false,
             remote_active: false,
@@ -609,7 +617,6 @@ impl App {
             poll_started: Instant::now(),
             last_push: None,
             paths,
-            player_error: None,
             now: NowPlaying::new(),
             track_changed_at: Instant::now(),
             queue: Queue::default(),
@@ -630,15 +637,17 @@ impl App {
             cover_accent: None,
             me: None,
             playlists: Vec::new(),
-            playlists_loading: !signed_out,
+            playlists_loading: true,
             albums: Vec::new(),
             artists: Vec::new(),
             shows: Vec::new(),
             liked_total: None,
-            library_loading: !signed_out,
-            library_pending: if signed_out { 0 } else { LIBRARY_PARTS },
+            library_loading: true,
+            library_pending: LIBRARY_PARTS,
             library_filter: LibraryFilter::All,
-            signed_out,
+            signed_out: false,
+            problem: None,
+            shown_before: false,
             home_cache: None,
             home_fetched_at: None,
             data_dirty: false,
@@ -698,14 +707,13 @@ impl App {
             demo: matches!(start, Start::Demo(_)),
         };
         match start {
-            Start::Restore(state) => {
-                app.load_cache();
-                app.restore(*state);
-            }
+            Start::Restore(state) => app.restore(*state),
             // A showcase starts fresh, and never touches the account's saved session.
-            Start::Demo(demo) => app.start_demo(demo),
+            Start::Demo(demo) => {
+                app.open_browsing();
+                app.start_demo(demo);
+            }
         }
-        app.cached_tracks = None;
         app
     }
 
@@ -757,6 +765,11 @@ impl App {
         self.active.or(self.loader.service())
     }
 
+    /// Why the player of the service playing, or else shown, isn't there.
+    pub fn player_error(&self) -> Option<&str> {
+        self.player_errors.get(&self.service()?).map(String::as_str)
+    }
+
     /// The name of the service playing or shown, for messages about it.
     pub fn service_name(&self) -> &'static str {
         self.service().map_or("your music service", Service::name)
@@ -784,6 +797,7 @@ impl App {
             Command::Dj => self.supports_dj(),
             Command::Devices => self.supports_devices(),
             Command::Crossfade => self.supports_crossfade(),
+            Command::SwitchService => self.next_service().is_some(),
             // A build without a service is never released.
             Command::Update => backend::VARIANT.is_some(),
             _ => true,
@@ -815,6 +829,7 @@ impl App {
         if self.data_dirty {
             self.save_library(false);
         }
+        self.save_parked();
         self.save_open_tracks(false);
         for player in self.players.values() {
             player.shutdown();
@@ -936,14 +951,18 @@ impl App {
 
     fn on_player_ready(&mut self, player: Player) {
         let service = player.service();
-        self.player_error = None;
-        self.active.get_or_insert(service);
-        if self.is_active(service) {
-            self.device_id = player.device_id();
-        }
+        self.player_errors.remove(&service);
         player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
         self.players.insert(service, player);
-        self.reload_failed_view();
+        // Until something plays, the player of the service shown is the one that would.
+        if self.active.is_none() || (self.now.track.is_none() && self.loader.service() == Some(service)) {
+            self.take_over(service);
+        } else if self.is_active(service) {
+            self.device_id = self.players.get(&service).and_then(Player::device_id);
+        }
+        if self.loader.service() == Some(service) {
+            self.reload_failed_view();
+        }
     }
 
     /// The new connection starts out idle; what played gets ready to continue, as after a restart.
@@ -1043,10 +1062,8 @@ impl App {
 
     /// The player keeps trying to connect and reports back with `PlayerReady`.
     fn on_player_failed(&mut self, service: Service, err: String) {
-        tracing::warn!("player: {err}");
-        if self.is_active(service) {
-            self.player_error = Some(err);
-        }
+        tracing::warn!("{} player: {err}", service.name());
+        self.player_errors.insert(service, err);
     }
 
     /// Loads the open page again once the session is up, if it failed without one.
@@ -1282,6 +1299,11 @@ impl App {
             self.trim_due = Some(Instant::now() + TRIM_DELAY);
         }
         match event {
+            DataEvent::For(service, event) => {
+                let mut redraw = false;
+                self.with_service(service, |app| redraw = app.on_data(*event));
+                return redraw;
+            }
             DataEvent::Me(result) => match result {
                 Ok(user) => {
                     // The data cache belongs to whoever was logged in last time.
@@ -1491,7 +1513,7 @@ impl App {
                 self.saving.remove(&uri);
                 if !self.pending_saves.contains_key(&uri) {
                     self.saved.insert(uri.clone(), saved);
-                    self.show_library_change(&uri, saved);
+                    self.show_library_change_of(&uri, saved);
                     self.error(error);
                 }
             }
@@ -1788,7 +1810,7 @@ impl App {
             || lyrics_loading
             || self.playlists_loading
             || self.library_loading
-            || (!self.is_connected() && self.player_error.is_none())
+            || (!self.is_connected() && self.player_error().is_none())
     }
 
     /// Requests the big cover once the Now Playing layout knows its size.
@@ -2398,6 +2420,7 @@ impl App {
                 }
             }
             Hit::SearchInput => self.run(Command::Search),
+            Hit::Service(service) => self.show_service(service),
             Hit::PageChip(filter) => self.set_page_filter(filter),
             Hit::Chip(filter) => {
                 let filter = if self.library_filter == filter { LibraryFilter::All } else { filter };
@@ -2597,6 +2620,7 @@ impl App {
             }
             Command::Palette => self.open_palette(),
             Command::Help => self.open_overlay(Overlay::Help),
+            Command::SwitchService => self.switch_service(),
         }
     }
 
@@ -2628,6 +2652,10 @@ impl App {
                 label: match command {
                     Command::Dj if self.dj_playing() => "Ask DJ…".to_owned(),
                     Command::Update => self.update_label(),
+                    Command::SwitchService => match self.next_service() {
+                        Some(next) => format!("Switch to {}", next.name()),
+                        None => command.label().to_owned(),
+                    },
                     _ => command.label().to_owned(),
                 },
                 detail: command.key().to_owned(),
@@ -2744,8 +2772,17 @@ impl App {
     pub(super) fn toggle_library(&mut self, uri: String, name: String) {
         let saved = !self.is_saved(&uri);
         self.saved.insert(uri.clone(), saved);
-        self.show_library_change(&uri, saved);
+        self.show_library_change_of(&uri, saved);
         self.pending_saves.insert(uri, (saved, name, Instant::now()));
+    }
+
+    /// Shows a library change in the library of the service `uri` belongs to, such as a like
+    /// of the song that plays while another service shows.
+    fn show_library_change_of(&mut self, uri: &str, saved: bool) {
+        match Service::of(uri) {
+            Some(service) => self.with_service(service, |app| app.show_library_change(uri, saved)),
+            None => self.show_library_change(uri, saved),
+        }
     }
 
     /// Sends settled library changes, one request per item at a time.
@@ -2845,7 +2882,7 @@ impl App {
     pub fn library_entries_for(&self, filter: LibraryFilter) -> Vec<LibraryEntry> {
         let mut entries = Vec::new();
         if filter.shows(LibraryFilter::Playlists) {
-            if !self.signed_out {
+            if self.library_note().is_none() {
                 entries.push(LibraryEntry::Liked);
             }
             entries.extend((0..self.playlists.len()).map(LibraryEntry::Playlist));
@@ -2862,15 +2899,20 @@ impl App {
         entries
     }
 
-    /// What the library says instead of its entries: how to sign in, where the service plays
-    /// without an account.
+    /// What the library says instead of its entries: why the service couldn't start, or how
+    /// to sign in where it plays without an account.
     pub fn library_note(&self) -> Option<String> {
-        let service = self.loader.service().filter(|_| self.signed_out)?;
-        Some(format!(
-            "Sign in to {} to see your library here: run `cloofy login {}` in a terminal.",
-            service.name(),
-            service.key()
-        ))
+        let service = self.loader.service()?;
+        if let Some(problem) = &self.problem {
+            return Some(format!("{} isn't available: {problem}", service.name()));
+        }
+        self.signed_out.then(|| {
+            format!(
+                "Sign in to {} to see your library here: run `cloofy login {}` in a terminal.",
+                service.name(),
+                service.key()
+            )
+        })
     }
 
     /// The sidebar list; Home and Search are in the top bar.
@@ -3225,6 +3267,13 @@ impl App {
     }
 
     fn open_tracks(&mut self, source: TrackSource) {
+        // A page opens among its own service's pages.
+        match &source {
+            TrackSource::Liked => {}
+            TrackSource::Playlist(PlaylistInfo { uri, .. }) | TrackSource::Album(AlbumInfo { uri, .. }) => {
+                self.show_service_of(uri)
+            }
+        }
         if let View::Tracks(v) = &self.view
             && v.source.same(&source)
         {
@@ -3331,8 +3380,10 @@ impl App {
         self.next_view_id
     }
 
+    /// The view with `id`, of whichever service.
     fn view_mut(&mut self, id: u64) -> Option<&mut View> {
-        std::iter::once(&mut self.view).chain(self.history.iter_mut()).find(|v| v.id() == id)
+        let shown = std::iter::once(&mut self.view).chain(self.history.iter_mut());
+        shown.chain(self.parked.values_mut().flat_map(browsing::Browsing::views_mut)).find(|v| v.id() == id)
     }
 
     // ── Playback ─────────────────────────────────────────────────────────────────────────
@@ -3434,6 +3485,7 @@ impl App {
     }
 
     fn open_artist(&mut self, uri: String, name: String) {
+        self.show_service_of(&uri);
         if let View::Artist(v) = &self.view
             && v.uri == uri
         {
@@ -3761,7 +3813,7 @@ impl App {
             Some(service) if self.players.contains_key(&service) => self.take_over(service),
             // Another service's player must not get it, while this one's isn't connected.
             Some(service) if !self.is_active(service) => {
-                self.not_connected();
+                self.not_connected_to(Some(service));
                 return false;
             }
             _ => {}
@@ -3772,17 +3824,21 @@ impl App {
     /// Makes `service`'s player the one that plays. Only one plays at a time, so the one that
     /// played before pauses, wherever it played.
     fn take_over(&mut self, service: Service) {
-        let Some(previous) = self.active.replace(service).filter(|previous| *previous != service) else { return };
+        let previous = self.active.replace(service);
+        self.device_id = self.players.get(&service).and_then(Player::device_id);
+        let Some(previous) = previous.filter(|previous| *previous != service) else { return };
         if self.remote_active {
             self.loader.remote(Some(previous), Remote::Pause);
         } else if let Some(player) = self.players.get(&previous) {
             let _ = player.pause();
         }
-        self.device_id = self.players.get(&service).and_then(Player::device_id);
         self.local_active = false;
         self.remote_active = false;
         self.active_device = None;
         self.now.device = None;
+        // The slider shows the volume of the player before, which this one takes on once it plays.
+        self.volume_sync = VolumeSync::default();
+        self.volume_sync.defer(self.now.volume);
     }
 
     /// Whether `uri` plays on the service that plays now, rather than on another one.
@@ -3798,10 +3854,17 @@ impl App {
     }
 
     fn not_connected(&mut self) {
-        let text = match &self.player_error {
+        self.not_connected_to(self.service());
+    }
+
+    /// Says why `service`'s player can't take a command.
+    fn not_connected_to(&mut self, service: Option<Service>) {
+        let error =
+            service.and_then(|service| self.problem_of(service).or_else(|| self.player_errors.get(&service).cloned()));
+        let text = match error {
             Some(err) => format!("Playback unavailable: {err}"),
             None if self.demo => "This is the demo: nothing plays here".into(),
-            None => format!("Still connecting to {}…", self.service_name()),
+            None => format!("Still connecting to {}…", service.map_or("your music service", Service::name)),
         };
         self.error(text);
     }

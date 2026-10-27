@@ -14,7 +14,7 @@ use cloofy_core::{
 
 use super::{App, NavItem};
 use crate::{
-    backend,
+    backend::{self, Service},
     overlay::{Overlay, PaletteAction},
     views::{QueueRow, SearchEntry, TrackSource, View},
 };
@@ -298,7 +298,7 @@ impl App {
         listed.or_else(|| self.now.track.as_ref().filter(|t| t.uri == uri).map(CurrentTrack::to_track))
     }
 
-    /// Loads the list a confirmed change touched again, as Spotify's final word on it.
+    /// Loads the list a confirmed change touched again, as the service's final word on it.
     pub(super) fn schedule_reload(&mut self, uri: &str) {
         let part = match uri.split(':').nth(1) {
             Some("playlist") => LibraryPart::Playlists,
@@ -306,20 +306,21 @@ impl App {
             Some("artist") => LibraryPart::Artists,
             _ => return,
         };
-        self.library_reloads.insert(part, Instant::now() + RELOAD_DELAY);
+        let Some(service) = Service::of(uri) else { return };
+        self.library_reloads.insert((service, part), Instant::now() + RELOAD_DELAY);
     }
 
     pub(super) fn reload_library(&mut self) {
         let now = Instant::now();
-        let due: Vec<LibraryPart> =
-            self.library_reloads.iter().filter(|(_, at)| **at <= now).map(|(p, _)| *p).collect();
-        for part in due {
-            self.library_reloads.remove(&part);
-            match part {
-                LibraryPart::Playlists => self.loader.playlists(),
-                LibraryPart::Albums => self.loader.albums(),
-                LibraryPart::Artists => self.loader.artists(),
-            }
+        let due: Vec<(Service, LibraryPart)> =
+            self.library_reloads.iter().filter(|(_, at)| **at <= now).map(|(due, _)| *due).collect();
+        for (service, part) in due {
+            self.library_reloads.remove(&(service, part));
+            self.with_service(service, |app| match part {
+                LibraryPart::Playlists => app.loader.playlists(),
+                LibraryPart::Albums => app.loader.albums(),
+                LibraryPart::Artists => app.loader.artists(),
+            });
         }
     }
 }

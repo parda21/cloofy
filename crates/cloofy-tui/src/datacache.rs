@@ -1,5 +1,5 @@
 //! The library, Home and the open track list as the last run left them, kept on disk so the
-//! next start shows them at once while fresh data loads.
+//! next start shows them at once while fresh data loads. Each service has files of its own.
 
 use std::{
     fs, io,
@@ -11,6 +11,7 @@ use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, Track, User},
     home::Home,
     paths::write_private,
+    service::Service,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -52,12 +53,20 @@ struct Header {
     version: u32,
 }
 
-pub fn library_path(cache: &Path) -> PathBuf {
-    cache.join("library.json")
+pub fn library_path(cache: &Path, service: Service) -> PathBuf {
+    cache.join(file_name("library", service))
 }
 
-pub fn tracks_path(cache: &Path) -> PathBuf {
-    cache.join("tracks.json")
+pub fn tracks_path(cache: &Path, service: Service) -> PathBuf {
+    cache.join(file_name("tracks", service))
+}
+
+/// Spotify's files keep the names they had before there was another service.
+fn file_name(name: &str, service: Service) -> String {
+    match service {
+        Service::Spotify => format!("{name}.json"),
+        other => format!("{name}-{}.json", other.key()),
+    }
 }
 
 /// Cached data and how old it is; `None` when missing, unreadable, of another version or
@@ -97,9 +106,18 @@ mod tests {
     }
 
     #[test]
+    fn keeps_each_service_apart() {
+        let cache = Path::new("/cache");
+        assert_eq!(library_path(cache, Service::Spotify), Path::new("/cache/library.json"));
+        assert_eq!(tracks_path(cache, Service::Spotify), Path::new("/cache/tracks.json"));
+        assert_eq!(library_path(cache, Service::YouTubeMusic), Path::new("/cache/library-ytmusic.json"));
+        assert_eq!(tracks_path(cache, Service::YouTubeMusic), Path::new("/cache/tracks-ytmusic.json"));
+    }
+
+    #[test]
     fn reads_back_what_it_saved() {
         let dir = dir("roundtrip");
-        let path = tracks_path(&dir);
+        let path = tracks_path(&dir, Service::Spotify);
         let tracks = Tracks { key: "liked".into(), total: 0, tracks: Vec::new() };
         save(&path, &tracks).unwrap();
         let (loaded, age) = load::<Tracks>(&path).unwrap();
@@ -111,7 +129,7 @@ mod tests {
     #[test]
     fn ignores_other_versions_and_old_files() {
         let dir = dir("versions");
-        let path = tracks_path(&dir);
+        let path = tracks_path(&dir, Service::YouTubeMusic);
         fs::create_dir_all(&dir).unwrap();
         let data = r#"{"key":"liked","total":0,"tracks":[]}"#;
         fs::write(&path, format!(r#"{{"version":{},"saved_at":{},"data":{data}}}"#, VERSION + 1, now())).unwrap();

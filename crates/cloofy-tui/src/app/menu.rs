@@ -11,7 +11,7 @@ use cloofy_core::{
 
 use super::{App, Focus, LibraryEntry, NavItem};
 use crate::{
-    backend::{self, Player},
+    backend::{self, Player, Service},
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
     queue::Provider,
@@ -201,7 +201,8 @@ impl App {
         self.library_target(entry).map(|target| target.uri)
     }
 
-    /// A short name for a playing context, like “Playlist · Deep Focus”.
+    /// A short name for a playing context, like “Playlist · Deep Focus”, from the pages of the
+    /// service it belongs to, shown or not.
     pub fn context_label(&self, uri: &str) -> Option<String> {
         if Some(uri) == self.liked_uri().as_deref() || backend::is_liked_context(uri) {
             return Some("Liked Songs".into());
@@ -209,36 +210,8 @@ impl App {
         if backend::is_dj(uri) {
             return Some("DJ".into());
         }
-        let label = |kind: &str, name: &str| Some(format!("{kind} · {name}"));
-        if let Some(p) = self.playlists.iter().find(|p| p.uri == uri) {
-            return label("Playlist", &p.name);
-        }
-        if let Some(a) = self.albums.iter().find(|a| a.uri == uri) {
-            return label("Album", &a.name);
-        }
-        if let Some(a) = self.artists.iter().find(|a| a.uri == uri) {
-            return label("Artist", &a.name);
-        }
-        let item = self.home_cache.iter().flat_map(|home| &home.shelves).flat_map(|s| &s.items).find(|i| i.uri == uri);
-        if let Some(item) = item {
-            let kind = match item.kind {
-                ItemKind::Album => "Album",
-                ItemKind::Artist => "Artist",
-                _ => "Playlist",
-            };
-            return label(kind, &item.title);
-        }
-        // A page it was played from, such as an album found by searching.
-        let (kind, name) = std::iter::once(&self.view).chain(&self.history).find_map(|view| match view {
-            View::Tracks(v) if v.source.key() == uri => match &v.source {
-                TrackSource::Album(a) => Some(("Album", &a.name)),
-                TrackSource::Playlist(p) => Some(("Playlist", &p.name)),
-                TrackSource::Liked => None,
-            },
-            View::Artist(v) if v.uri == uri => Some(("Artist", &v.name)),
-            _ => None,
-        })?;
-        label(kind, name).filter(|_| !name.is_empty())
+        let (kind, name) = self.known(Service::of(uri)).name(uri)?;
+        (!name.is_empty()).then(|| format!("{kind} · {name}"))
     }
 
     /// Opens the page of a playlist, album or artist known only by its URI.

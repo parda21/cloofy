@@ -83,8 +83,24 @@ pub async fn run(paths: &Paths) -> Result<Option<PathBuf>> {
         bail!("{}", no_service(paths));
     }
     let mut accounts = Vec::new();
+    let mut first_error = None;
     for service in services {
-        accounts.push(Account::open(service, paths, &config).await?);
+        let account = match Account::open(service, paths, &config).await {
+            Ok(account) => Ok(account),
+            Err(err) => {
+                tracing::warn!("{}: {err:#}", service.name());
+                let problem = format!("{err:#}");
+                first_error.get_or_insert(err);
+                Err(problem)
+            }
+        };
+        accounts.push((service, account));
+    }
+    // A service that can't start leaves the others to use; with none, there is nothing to show.
+    if accounts.iter().all(|(_, account)| account.is_err())
+        && let Some(err) = first_error
+    {
+        return Err(err);
     }
     run_ui(paths, config, accounts, None).await
 }
@@ -110,10 +126,13 @@ pub async fn demo(paths: &Paths) -> Result<Option<PathBuf>> {
     run_ui(paths, config, Vec::new(), Some(demo)).await
 }
 
+/// Each service's account, or why it couldn't open.
+type Accounts = Vec<(Service, Result<Account, String>)>;
+
 async fn run_ui(
     paths: &Paths,
     config: Config,
-    accounts: Vec<Account>,
+    accounts: Accounts,
     demo: Option<Arc<demo::Demo>>,
 ) -> Result<Option<PathBuf>> {
     #[cfg(unix)]
@@ -148,7 +167,7 @@ async fn run_ui(
 async fn run_app(
     terminal: &mut Term,
     paths: &Paths,
-    accounts: Vec<Account>,
+    accounts: Accounts,
     images: ImageTerminal,
     image_protocol: ImageProtocol,
     prefs: Preferences,
@@ -182,28 +201,29 @@ async fn run_app(
             let _ = tx.send(app::AppEvent::Power(event));
         }
     });
-    let (start, catalogs) = match &demo {
+    let (start, started) = match &demo {
         Some(demo) => (app::Start::Demo(demo), Vec::new()),
         None => {
             let saved = state::load(&paths.state_file());
             let crossfade = Duration::from_secs(prefs.crossfade);
-            let catalogs: Vec<Catalog> = accounts
+            let started: Vec<(Service, Result<Catalog, String>)> = accounts
                 .into_iter()
                 .zip(retries)
-                .map(|(account, retry_now)| {
+                .map(|((service, account), retry_now)| {
                     let (paths, tx, volume) = (paths.clone(), tx.clone(), saved.volume);
-                    account.start(Launch { paths, crossfade, volume, retry_now, tx })
+                    (service, account.map(|account| account.start(Launch { paths, crossfade, volume, retry_now, tx })))
                 })
                 .collect();
-            (app::Start::Restore(Box::new(saved)), catalogs)
+            (app::Start::Restore(Box::new(saved)), started)
         }
     };
-    // The demo's sample comes from Spotify.
+    // The demo's sample comes from Spotify. The app picks the service to show from the last
+    // session.
     let service = match &demo {
         Some(demo) => Service::of(&demo.playing.track.uri),
-        None => catalogs.first().map(Catalog::service),
+        None => started.first().map(|(service, _)| *service),
     };
-    let loader = Loader::new(catalogs, service, tx.clone(), images, paths.cache.join("images"), snapshotter.is_some())
+    let loader = Loader::new(started, service, tx.clone(), images, paths.cache.join("images"), snapshotter.is_some())
         .with_demo(demo.clone());
     loader.set_image_protocol(image_protocol);
     loader.prune_image_cache();

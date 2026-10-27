@@ -1,5 +1,6 @@
-//! The top bar: wordmark, home button and the search field, like the official client, and an
-//! update button while there is a newer cloofy.
+//! The top bar: wordmark, home button and the search field, like the official client, the
+//! switch between music services when there are several, and an update button while there is
+//! a newer cloofy.
 
 use ratatui::{
     buffer::Buffer,
@@ -12,8 +13,9 @@ use unicode_width::UnicodeWidthStr;
 use super::{text, wordmark};
 use crate::{
     app::{App, Focus, HintAction, Hit, NavItem, Update},
+    backend::Service,
     commands::Command,
-    icons::icons,
+    icons::{self, icons},
     theme,
     views::View,
 };
@@ -49,10 +51,13 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let search = Rect::new(home.right() + 1, row, width, 1);
     search_field(buf, app, search, 2);
 
-    // Right of the search field: the update button, then the user's name.
+    // Right of the search field: the update button, the service switch, then the user's name.
     let mut right = area.right().saturating_sub(3);
     if let Some(button) = update_button(buf, app, right, row, 2, right.saturating_sub(search.right() + 2)) {
         right = button.x.saturating_sub(2);
+    }
+    if let Some(switch) = service_switch(buf, app, right, row, 2, right.saturating_sub(search.right() + 2)) {
+        right = switch.x.saturating_sub(2);
     }
     if let Some(me) = &app.me
         && wide
@@ -73,8 +78,12 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
         button(buf, app, area.x + 1, area.y, 1, icons().chevron_left, Hit::Hint(HintAction::Back), app.can_go_back());
     let home = button(buf, app, back.right() + 1, area.y, 1, icons().home, Hit::Command(Command::Home), true);
     let end = area.right().saturating_sub(1);
-    let room = end.saturating_sub(home.right() + 1 + COMPACT_SEARCH_MIN);
-    let search_end = update_button(buf, app, end, area.y, 1, room).map_or(end, |button| button.x);
+    let room = |end: u16| end.saturating_sub(home.right() + 1 + COMPACT_SEARCH_MIN);
+    let mut search_end = update_button(buf, app, end, area.y, 1, room(end)).map_or(end, |button| button.x);
+    let switch_end = search_end.saturating_sub(1);
+    if let Some(switch) = service_switch(buf, app, switch_end, area.y, 1, room(switch_end)) {
+        search_end = switch.x.saturating_sub(1);
+    }
     let search = Rect::new(home.right() + 1, area.y, search_end.saturating_sub(home.right() + 1), 1);
     search_field(buf, app, search, 1);
 }
@@ -109,6 +118,58 @@ fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u
     buf.set_string(area.x + padding, y, content, Style::new().fg(app.accent.color()).bold());
     app.hits.push((area, Hit::Command(Command::Update)));
     Some(area)
+}
+
+/// The music services in use side by side, the one shown lit, each a button that shows its
+/// pages; its right edge at `right`, as wide as fits into `room` columns: names with their
+/// icons, else short names, else icons alone. Draws nothing with a single service.
+fn service_switch(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
+    let p = theme::palette();
+    let services = app.services();
+    if services.len() < 2 {
+        return None;
+    }
+    let shown = app.shown_service();
+    let labels = |service: Service| {
+        let icon = icons::service(service);
+        let short = match service {
+            Service::Spotify => "Spotify",
+            Service::YouTubeMusic => "YouTube",
+        };
+        let initials = match service {
+            Service::Spotify => "S",
+            Service::YouTubeMusic => "YT",
+        };
+        let with_icon = |label: &str| if icon.is_empty() { label.to_owned() } else { format!("{icon}  {label}") };
+        let bare = if icon.is_empty() { initials } else { icon };
+        [with_icon(service.name()), with_icon(short), bare.to_owned()]
+    };
+    let level = (0..3).find(|&level| {
+        let widths = services.iter().map(|&service| labels(service)[level].width() as u16 + 2 * padding + 1);
+        widths.sum::<u16>().saturating_sub(1) <= room
+    })?;
+    let mut x = right;
+    let mut first = right;
+    for &service in services.iter().rev() {
+        let label = labels(service)[level].clone();
+        let width = label.width() as u16 + 2 * padding;
+        let area = Rect::new(x.saturating_sub(width), y, width, 1).intersection(buf.area);
+        let style = if Some(service) == shown {
+            Style::new().fg(app.accent.color()).bold()
+        } else if app.failed_to_start(service) {
+            Style::new().fg(p.faint)
+        } else {
+            Style::new().fg(p.muted)
+        };
+        buf.set_style(area, Style::new().bg(p.raised));
+        buf.set_string(area.x + padding, y, label, style);
+        if Some(service) != shown {
+            app.hits.push((area, Hit::Service(service)));
+        }
+        first = area.x;
+        x = area.x.saturating_sub(1);
+    }
+    Some(Rect::new(first, y, right.saturating_sub(first), 1))
 }
 
 /// A filled button with `icon` centered, `padding` cells either side; dimmed and inert unless
