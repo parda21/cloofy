@@ -225,6 +225,9 @@ impl App {
         if self.controller.is_none() {
             return self.not_connected();
         }
+        if self.local_active && !self.remote_active {
+            return self.skip_here(track, entry);
+        }
         let device = match (self.remote_active, self.local_active) {
             (true, _) => self.active_device.clone(),
             (false, true) => self.device_id.clone(),
@@ -237,6 +240,42 @@ impl App {
         self.last_command = Instant::now();
         self.loader.skip_to(device, entry);
         self.now.start(Some(track.uri.clone()));
+        self.show_early(&track, track.image_url.clone());
+    }
+
+    /// Skips ahead on cloofy's own player, with its own commands rather than a command sent
+    /// through Spotify to the device it comes from.
+    fn skip_here(&mut self, track: Track, entry: Upcoming) {
+        if entry.provider == Provider::Queue {
+            // The queued songs before it are passed over; the ones after it stay queued.
+            let playing = self.now.track.as_ref().map(|t| t.uri.as_str());
+            let queued: Vec<String> = self
+                .queue
+                .after(playing)
+                .iter()
+                .filter(|t| t.provider == Provider::Queue)
+                .map(|t| t.uri.clone())
+                .collect();
+            let Some(index) = queued.iter().position(|uri| *uri == entry.uri) else {
+                return self.error("This song isn't in the queue any more.".into());
+            };
+            let sent = self.control(|c| {
+                c.clear_queue()?;
+                queued[index..].iter().try_for_each(|uri| c.add_to_queue(uri))?;
+                c.next()
+            });
+            if !sent {
+                return;
+            }
+            self.now.start(Some(track.uri.clone()));
+        } else {
+            // A song of the playlist or album starts there, as a click on its page does. The
+            // queued songs stay queued.
+            let Some(context) = self.queue_context() else {
+                return self.error("Spotify hasn't said yet what plays next.".into());
+            };
+            self.play(context, Some(track.uri.clone()));
+        }
         self.show_early(&track, track.image_url.clone());
     }
 
