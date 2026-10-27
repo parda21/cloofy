@@ -33,7 +33,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Your library.** Playlists, albums, artists and podcasts, in a sidebar or as a full page with covers.
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
-- **Cover art.** Real images in terminals that speak the Kitty graphics protocol, and block art everywhere else.
+- **Cover art.** Real images in terminals that show pictures through the Kitty, Sixel or iTerm2 protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
 - **At home on macOS.** Media keys, AirPods and Control Center, headphones that pause when they disconnect, Reduce Motion and Low Power Mode.
@@ -185,10 +185,11 @@ cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `
 | Terminal | Cover art | Icons | Notifications |
 | --- | --- | --- | --- |
 | Ghostty, kitty, WezTerm | Real images | Built in | Yes |
-| iTerm2 | Blocks | With a Nerd Font | Yes |
-| Others | Blocks | With a Nerd Font | No |
+| iTerm2 | Real images | With a Nerd Font | Yes |
+| foot, Windows Terminal, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | No |
+| Others | Real images with Sixel, else blocks | With a Nerd Font | No |
 
-Every terminal needs true color. Without a Nerd Font, set `icons = "text"`.
+Every terminal needs true color. Without a Nerd Font, set `icons = "text"`. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time.
 
 ## FAQ
 
