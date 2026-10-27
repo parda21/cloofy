@@ -10,6 +10,7 @@ use std::{
     path::PathBuf,
     process,
     sync::{Arc, Mutex, PoisonError},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -70,7 +71,7 @@ impl Drop for Controls {
 async fn connect(on_command: Callback) -> Option<Connection> {
     let connected = async {
         let connection = connection::Builder::session()?
-            .serve_at(PATH, Root)?
+            .serve_at(PATH, Root { can_raise: env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() })?
             .serve_at(PATH, Player { on_command, shown: Shown::new(Instant::now()) })?
             .build()
             .await?;
@@ -104,13 +105,20 @@ async fn serve(connection: Connection, mut states: watch::Receiver<State>, mut c
     }
 }
 
-/// `org.mpris.MediaPlayer2`: cloofy as an application, which lives in a terminal that clients
-/// can't raise.
-struct Root;
+/// `org.mpris.MediaPlayer2`: cloofy as an application. It lives in a terminal, which only
+/// Hyprland lets it bring to the front.
+struct Root {
+    can_raise: bool,
+}
 
 #[interface(name = "org.mpris.MediaPlayer2")]
 impl Root {
-    fn raise(&self) {}
+    fn raise(&self) {
+        if self.can_raise {
+            // hyprctl takes a moment, which the bus shouldn't wait for.
+            let _ = thread::Builder::new().name("cloofy-raise".into()).spawn(raise_window);
+        }
+    }
 
     fn quit(&self) {}
 
@@ -121,7 +129,7 @@ impl Root {
 
     #[zbus(property(emits_changed_signal = "const"))]
     fn can_raise(&self) -> bool {
-        false
+        self.can_raise
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -131,6 +139,12 @@ impl Root {
 
     #[zbus(property(emits_changed_signal = "const"))]
     fn identity(&self) -> &str {
+        "cloofy"
+    }
+
+    /// Lets clients find cloofy's name and icon in `cloofy.desktop`.
+    #[zbus(property(emits_changed_signal = "const"))]
+    fn desktop_entry(&self) -> &str {
         "cloofy"
     }
 
@@ -223,6 +237,18 @@ impl Player {
         1.0
     }
 
+    #[zbus(property)]
+    fn volume(&self) -> f64 {
+        fraction(self.shown.volume)
+    }
+
+    #[zbus(property)]
+    fn set_volume(&mut self, volume: f64) {
+        // MPRIS allows more than 1 to amplify, which cloofy doesn't.
+        let volume = (volume.clamp(0.0, 1.0) * f64::from(u16::MAX)).round() as u16;
+        self.request(Some(Command::Volume(volume)));
+    }
+
     #[zbus(property(emits_changed_signal = "const"))]
     fn minimum_rate(&self) -> f64 {
         1.0
@@ -275,6 +301,7 @@ struct Shown {
     /// Where playback was at `at`.
     position: Duration,
     at: Instant,
+    volume: u16,
     /// Tracks shown so far, which numbers their IDs.
     tracks: u64,
 }
@@ -297,7 +324,7 @@ struct Changes {
 
 impl Shown {
     fn new(now: Instant) -> Self {
-        Self { track: None, playing: false, position: Duration::ZERO, at: now, tracks: 0 }
+        Self { track: None, playing: false, position: Duration::ZERO, at: now, volume: 0, tracks: 0 }
     }
 
     fn status(&self) -> &'static str {
@@ -323,6 +350,9 @@ impl Shown {
         if let Some(url) = art_url {
             metadata.insert("mpris:artUrl", Value::from(url.clone()));
         }
+        if let Some(link) = &track.link {
+            metadata.insert("xesam:url", Value::from(link.clone()));
+        }
         metadata
     }
 
@@ -335,7 +365,7 @@ impl Shown {
 
     /// Shows `state`, and returns what clients need to hear about it.
     fn show(&mut self, state: State, art_url: Option<String>, now: Instant) -> Changes {
-        let (status, metadata) = (self.status(), self.metadata());
+        let (status, metadata, volume) = (self.status(), self.metadata(), self.volume);
         let had_track = self.track.is_some();
         let expected = self.position(now);
         let same = match (&self.track, &state.track) {
@@ -353,6 +383,7 @@ impl Shown {
         self.playing = state.playing;
         self.position = state.position;
         self.at = now;
+        self.volume = state.volume;
 
         let mut changes = Changes { seeked: seeked.then_some(state.position), ..Changes::default() };
         if self.status() != status {
@@ -361,6 +392,9 @@ impl Shown {
         let new_metadata = self.metadata();
         if new_metadata != metadata {
             changes.properties.insert("Metadata", Value::from(new_metadata));
+        }
+        if self.volume != volume {
+            changes.properties.insert("Volume", Value::from(fraction(self.volume)));
         }
         if self.track.is_some() != had_track {
             let can = self.track.is_some();
@@ -408,6 +442,50 @@ fn same_track(a: &Track, b: &Track) -> bool {
 
 fn track_id(number: u64) -> OwnedObjectPath {
     OwnedObjectPath::from(ObjectPath::from_string_unchecked(format!("/cloofy/track/{number}")))
+}
+
+/// Brings cloofy's window to the front on Hyprland: the one Omarchy started it in, or else
+/// the terminal it runs in, found by walking up from cloofy's process.
+fn raise_window() {
+    // A pattern without backslashes, which would need escaping twice on the way to Hyprland.
+    let omarchy = String::from("class:^(org.omarchy.cloofy)$");
+    let terminal = ancestors().map(|pid| format!("pid:{pid}"));
+    for window in std::iter::once(omarchy).chain(terminal) {
+        if focus(&window) {
+            return;
+        }
+    }
+}
+
+/// Asks Hyprland to focus `window`, the way its Lua configuration takes dispatches and then the
+/// way older versions do. It answers "ok" only when it found the window.
+fn focus(window: &str) -> bool {
+    let lua = format!("hl.dsp.focus({{ window = \"{window}\" }})");
+    [vec![lua.as_str()], vec!["focuswindow", window]].into_iter().any(|args| {
+        process::Command::new("hyprctl")
+            .arg("dispatch")
+            .args(args)
+            .output()
+            .is_ok_and(|output| output.status.success() && output.stdout.trim_ascii() == b"ok")
+    })
+}
+
+/// The processes cloofy runs under, nearest first: its shell, then the terminal.
+fn ancestors() -> impl Iterator<Item = u32> {
+    std::iter::successors(parent(process::id()), |&pid| parent(pid)).take(8)
+}
+
+fn parent(pid: u32) -> Option<u32> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // The process name before it sits in parentheses and may hold spaces; the parent is the
+    // second field after them.
+    let ppid = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+    (ppid > 1).then_some(ppid)
+}
+
+/// A volume as MPRIS has it, from 0 to 1.
+fn fraction(volume: u16) -> f64 {
+    f64::from(volume) / f64::from(u16::MAX)
 }
 
 /// Durations as MPRIS has them.
@@ -465,11 +543,11 @@ impl CoverFile {
 }
 
 /// The user's runtime directory, which lives in memory and goes at logout.
-fn cover_dir() -> PathBuf {
+pub(super) fn cover_dir() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|dir| dir.is_absolute()).unwrap_or_else(env::temp_dir)
 }
 
-fn extension(image: &[u8]) -> &'static str {
+pub(super) fn extension(image: &[u8]) -> &'static str {
     if image.starts_with(b"\x89PNG") {
         "png"
     } else if image.starts_with(b"RIFF") && image.get(8..12) == Some(b"WEBP") {
@@ -490,11 +568,12 @@ mod tests {
             album: "Discovery".into(),
             duration: Duration::from_secs(320),
             artwork: None,
+            link: Some("https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV".into()),
         }
     }
 
     fn playing(title: &str, position: u64) -> State {
-        State { track: Some(track(title)), playing: true, position: Duration::from_secs(position) }
+        State { track: Some(track(title)), playing: true, position: Duration::from_secs(position), volume: 32768 }
     }
 
     /// A player that showed `state` at `start`.
@@ -516,6 +595,7 @@ mod tests {
         assert_eq!(metadata["xesam:artist"], Value::from(vec!["Daft Punk, Romanthony"]));
         assert_eq!(metadata["xesam:album"], Value::from("Discovery"));
         assert_eq!(metadata["mpris:artUrl"], Value::from("file:///run/cover.jpg"));
+        assert_eq!(metadata["xesam:url"], Value::from("https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV"));
         assert_eq!(shown.status(), "Playing");
         // The cover came later: the same track, with new metadata.
         assert_eq!(changes.properties.keys().collect::<Vec<_>>(), [&"Metadata"]);
@@ -526,11 +606,30 @@ mod tests {
     fn leaves_out_what_is_missing() {
         let mut episode = track("Episode");
         episode.album.clear();
-        let shown = showing(State { track: Some(episode), playing: false, position: Duration::ZERO }, Instant::now());
+        let shown = showing(State { track: Some(episode), ..State::default() }, Instant::now());
         let metadata = shown.metadata();
         assert!(!metadata.contains_key("xesam:album"));
         assert!(!metadata.contains_key("mpris:artUrl"));
         assert_eq!(shown.status(), "Paused");
+    }
+
+    #[test]
+    fn tells_clients_when_the_volume_changes() {
+        let start = Instant::now();
+        let mut shown = showing(playing("One More Time", 0), start);
+        assert!(shown.show(playing("One More Time", 0), None, start).properties.is_empty());
+        let quieter = State { volume: 16384, ..playing("One More Time", 0) };
+        let changes = shown.show(quieter, None, start);
+        assert_eq!(changes.properties.keys().collect::<Vec<_>>(), [&"Volume"]);
+        assert_eq!(changes.properties["Volume"], Value::F64(16384.0 / 65535.0));
+    }
+
+    #[test]
+    fn finds_the_parent_process() {
+        let expected = Some(std::os::unix::process::parent_id()).filter(|&pid| pid > 1);
+        assert_eq!(parent(process::id()), expected);
+        assert_eq!(ancestors().next(), expected);
+        assert_eq!(parent(1), None, "init has no parent worth focusing");
     }
 
     #[test]

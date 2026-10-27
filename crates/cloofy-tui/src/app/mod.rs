@@ -1010,6 +1010,7 @@ impl App {
             Media::Next => self.run(Command::Next),
             Media::Previous => self.run(Command::Previous),
             Media::Seek(position) => self.seek_to(position.as_millis().try_into().unwrap_or(u32::MAX)),
+            Media::Volume(volume) => self.set_volume(volume),
         }
     }
 

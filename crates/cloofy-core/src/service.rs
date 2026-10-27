@@ -39,6 +39,23 @@ impl Service {
     }
 }
 
+/// The page of the item a URI names on the service's website, for sharing, and for desktop
+/// widgets that tell services apart by it.
+pub fn web_link(uri: &str) -> Option<String> {
+    let (kind, id) = uri.split_once(':').map(|(_, rest)| rest)?.split_once(':')?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(match (Service::of(uri)?, kind) {
+        (Service::Spotify, _) => format!("https://open.spotify.com/{kind}/{id}"),
+        (Service::YouTubeMusic, "track") => format!("https://music.youtube.com/watch?v={id}"),
+        (Service::YouTubeMusic, "playlist") => format!("https://music.youtube.com/playlist?list={id}"),
+        (Service::YouTubeMusic, "album") => format!("https://music.youtube.com/browse/{id}"),
+        (Service::YouTubeMusic, "artist") => format!("https://music.youtube.com/channel/{id}"),
+        (Service::YouTubeMusic, _) => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +78,24 @@ mod tests {
         }
         assert_eq!(Service::from_key("youtube"), None);
         assert_eq!(Service::YouTubeMusic.name(), "YouTube Music");
+    }
+
+    #[test]
+    fn links_to_the_item_on_the_web() {
+        assert_eq!(
+            web_link("spotify:track:4uLU6hMCjMI75M1A2tKUQC").unwrap(),
+            "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"
+        );
+        assert_eq!(
+            web_link("spotify:episode:512ojhOuo1ktJprKbVcKyQ").unwrap(),
+            "https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ"
+        );
+        assert_eq!(web_link("ytmusic:track:dQw4w9WgXcQ").unwrap(), "https://music.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert_eq!(web_link("ytmusic:album:MPREb_abc").unwrap(), "https://music.youtube.com/browse/MPREb_abc");
+        assert_eq!(web_link("ytmusic:playlist:PL123").unwrap(), "https://music.youtube.com/playlist?list=PL123");
+        assert_eq!(web_link("ytmusic:artist:UC123").unwrap(), "https://music.youtube.com/channel/UC123");
+        assert_eq!(web_link("spotify:track:"), None);
+        assert_eq!(web_link("spotify:user"), None);
+        assert_eq!(web_link("file:track:1"), None);
     }
 }
