@@ -5,6 +5,7 @@
 
 pub mod auth;
 mod cookies;
+pub mod doctor;
 mod home;
 mod innertube;
 mod library;
@@ -26,6 +27,7 @@ use cloofy_core::{
     paths::{Paths, Secret},
 };
 use futures::Stream;
+use serde_json::Value;
 
 pub use crate::player::Player;
 use crate::{innertube::InnerTube, library::Library};
@@ -158,6 +160,18 @@ impl YtMusic {
 
     pub async fn add_to_playlist(&self, playlist_uri: &str, uris: &[String]) -> Result<()> {
         library::add_to_playlist(&self.inner.api, playlist_uri, uris).await
+    }
+
+    /// A raw InnerTube call, for diagnostics and the `ytm` example.
+    #[doc(hidden)]
+    pub async fn raw(&self, endpoint: &str, body: Value) -> Result<Value> {
+        self.inner.api.call(endpoint, body).await
+    }
+
+    /// [`YtMusic::raw`] as the Android app, which gets time-synced lyrics.
+    #[doc(hidden)]
+    pub async fn raw_android(&self, endpoint: &str, body: Value) -> Result<Value> {
+        self.inner.api.call_as(innertube::ClientKind::Android, endpoint, body).await
     }
 
     pub(crate) fn api(&self) -> &InnerTube {
