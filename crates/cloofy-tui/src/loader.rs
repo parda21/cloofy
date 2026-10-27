@@ -34,7 +34,7 @@ use tokio::sync::{Semaphore, mpsc::UnboundedSender, watch};
 use crate::{
     app::AppEvent,
     art,
-    backend::{Catalog, Listed, Remote, Service},
+    backend::{self, Catalog, Listed, Remote, Service},
     demo::Demo,
     graphics::{ImageProtocol, ImageTerminal, Inline},
     queue::Upcoming,
@@ -352,10 +352,13 @@ impl Loader {
 
     /// Downloads `release` and puts it in place of the running binary.
     pub fn install_update(&self, release: Release) {
+        let Some(variant) = backend::VARIANT else {
+            return self.send(DataEvent::UpdateFailed("This cloofy has no release to update to".into()));
+        };
         self.spawn(move |this| async move {
             let tx = this.tx.clone();
             let mut shown = None;
-            let result = update::install(&release, |done, total| {
+            let result = update::install(&release, variant, |done, total| {
                 let percent = total.filter(|total| *total > 0).map(|total| (done * 100 / total) as u8);
                 if percent != shown {
                     shown = percent;

@@ -778,6 +778,8 @@ impl App {
             Command::Dj => self.supports_dj(),
             Command::Devices => self.supports_devices(),
             Command::Crossfade => self.supports_crossfade(),
+            // A build without a service is never released.
+            Command::Update => backend::VARIANT.is_some(),
             _ => true,
         }
     }
@@ -817,7 +819,9 @@ impl App {
 
     /// Looks for a newer cloofy; one the user `asked` for reports what it finds either way.
     pub fn check_for_update(&mut self, asked: bool) {
-        self.loader.check_update(self.paths.clone(), asked);
+        if self.offers(Command::Update) {
+            self.loader.check_update(self.paths.clone(), asked);
+        }
     }
 
     fn on_update_available(&mut self, release: Release) {

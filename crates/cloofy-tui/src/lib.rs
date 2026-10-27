@@ -54,6 +54,9 @@ use crate::{
 
 /// The music services this build has.
 pub const SERVICES: &[Service] = backend::COMPILED;
+/// The release this build belongs to, which updates download again: `spotify`, `ytmusic` or
+/// `full`. None without a service, which leaves nothing to update to.
+pub const VARIANT: Option<&str> = backend::VARIANT;
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);

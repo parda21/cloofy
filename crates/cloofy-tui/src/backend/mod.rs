@@ -40,6 +40,16 @@ pub const COMPILED: &[Service] = &[
     Service::Spotify,
 ];
 
+/// The release this build belongs to, as its archive is named: `spotify`, `ytmusic`, or `full`
+/// with both. None without a service: such a build runs the demo only and is never released,
+/// so there is nothing to update it to.
+pub const VARIANT: Option<&str> = match (cfg!(feature = "spotify"), cfg!(feature = "ytmusic")) {
+    (true, true) => Some("full"),
+    (true, false) => Some("spotify"),
+    (false, true) => Some("ytmusic"),
+    (false, false) => None,
+};
+
 /// Runs `$body` with `$inner` bound to the service's own value inside `$value`, an `&` of one of
 /// the enums below, whichever service it is. With no service built in, the `match` has no arms
 /// and never returns.

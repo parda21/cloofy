@@ -170,10 +170,18 @@ fn target() -> Option<&'static str> {
     })
 }
 
-/// Downloads `release` for this machine, checks it against its published checksum and puts it
-/// in place of the running binary, which carries on until restarted. `progress` hears the bytes
-/// that arrived so far and the total, when known. Returns where the new binary is.
-pub async fn install(release: &Release, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
+/// The release archive of the `variant` build for `target`. Each variant has the services it is
+/// named after: `spotify`, `ytmusic`, or both in `full`.
+fn archive_name(variant: &str, target: &str) -> String {
+    format!("cloofy-{variant}-{target}.tar.gz")
+}
+
+/// Downloads the `variant` build of `release` for this machine, checks it against its published
+/// checksum and puts it in place of the running binary, which carries on until restarted. The
+/// running binary names its own variant, so an update keeps the services it has. `progress`
+/// hears the bytes that arrived so far and the total, when known. Returns where the new binary
+/// is.
+pub async fn install(release: &Release, variant: &str, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
     if let Some(manager) = PackageManager::of_running() {
         bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update())
     }
@@ -186,12 +194,12 @@ pub async fn install(release: &Release, mut progress: impl FnMut(u64, Option<u64
     // Before downloading anything, make sure the binary can be replaced at all.
     let mut staged = Staged::create(dir)?;
 
-    let archive_name = format!("cloofy-{target}.tar.gz");
+    let archive_name = archive_name(variant, target);
     let base = format!("https://github.com/{REPO}/releases/download/{}", release.tag);
     let http = crate::http::client(USER_AGENT).timeout(DOWNLOAD_TIMEOUT).build()?;
     let mut response = http.get(format!("{base}/{archive_name}")).send().await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        bail!("cloofy {} has no build for {target}", release.version());
+        bail!("cloofy {} has no {variant} build for {target}", release.version());
     }
     response = response.error_for_status()?;
     let total = response.content_length();
@@ -320,6 +328,15 @@ mod tests {
         assert_eq!(of("/home/me/.cargo/bin/cloofy"), None);
         assert_eq!(of("/home/me/cloofy/target/release/cloofy"), None);
         assert_eq!(of("/usr/bin-old/cloofy"), None);
+    }
+
+    #[test]
+    fn each_variant_downloads_its_own_archive() {
+        assert_eq!(
+            archive_name("spotify", "x86_64-unknown-linux-gnu"),
+            "cloofy-spotify-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(archive_name("full", "aarch64-apple-darwin"), "cloofy-full-aarch64-apple-darwin.tar.gz");
     }
 
     #[test]

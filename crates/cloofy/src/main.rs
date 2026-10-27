@@ -39,6 +39,7 @@ enum Command {
     /// Check what each of your music services can reach
     Doctor,
     /// Update cloofy to the latest release
+    #[cfg_attr(not(any(feature = "spotify", feature = "ytmusic")), command(hide = true))]
     Update,
     /// Play a song, album, playlist or artist directly in cloofy
     Play {
