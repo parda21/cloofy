@@ -1,6 +1,7 @@
 # Made for each release from packaging/aur/cloofy/PKGBUILD in https://github.com/parda21/cloofy.
 # Maintainer: parda21 <36790116+parda21@users.noreply.github.com>
 
+# The Spotify build, from source; cloofy-ytmusic-bin and cloofy-full-bin bring the others.
 pkgname=cloofy
 pkgver=@VERSION@
 pkgrel=1
@@ -35,15 +36,16 @@ build() {
   cd "$pkgname"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release --package cloofy
+  # Spotify only, named rather than left to the default features, which have both services.
+  cargo build --frozen --release --package cloofy --no-default-features --features spotify
 }
 
 check() {
   cd "$pkgname"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  # In release mode, to reuse what build() compiled.
-  cargo test --frozen --release --workspace
+  # In release mode and with the same features, to reuse what build() compiled.
+  cargo test --frozen --release --workspace --no-default-features --features spotify
 }
 
 package() {

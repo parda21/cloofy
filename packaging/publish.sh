@@ -15,11 +15,21 @@ if [ $# -ne 1 ]; then
 fi
 packages=$1
 tap="parda21/homebrew-cloofy"
-aur_packages=(cloofy-bin cloofy)
+# One per build: Spotify, YouTube Music, both. Each installs a cloofy binary and conflicts with
+# the others.
+formulas=(cloofy cloofy-ytmusic cloofy-full)
+aur_packages=(cloofy-bin cloofy-ytmusic-bin cloofy-full-bin cloofy)
 # aur.archlinux.org's key, SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4 as listed on the AUR's home page.
 aur_host_key="aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN"
 
-for file in homebrew/cloofy.rb aur/cloofy-bin/PKGBUILD aur/cloofy-bin/.SRCINFO aur/cloofy/PKGBUILD aur/cloofy/.SRCINFO; do
+files=()
+for formula in "${formulas[@]}"; do
+	files+=("homebrew/$formula.rb")
+done
+for package in "${aur_packages[@]}"; do
+	files+=("aur/$package/PKGBUILD" "aur/$package/.SRCINFO")
+done
+for file in "${files[@]}"; do
 	if [ ! -f "$packages/$file" ]; then
 		echo "Missing $packages/$file; run render.sh first" >&2
 		exit 1
@@ -59,7 +69,9 @@ publish_homebrew() {
 	else
 		git clone -q "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/$tap.git" "$tmp/homebrew-cloofy"
 		mkdir -p "$tmp/homebrew-cloofy/Formula"
-		cp "$packages/homebrew/cloofy.rb" "$tmp/homebrew-cloofy/Formula/cloofy.rb"
+		for formula in "${formulas[@]}"; do
+			cp "$packages/homebrew/$formula.rb" "$tmp/homebrew-cloofy/Formula/$formula.rb"
+		done
 		# The tap's default branch, also while the tap is still empty.
 		commit_and_push "$tmp/homebrew-cloofy" "cloofy $version" "$(git -C "$tmp/homebrew-cloofy" symbolic-ref --short HEAD)"
 	fi
