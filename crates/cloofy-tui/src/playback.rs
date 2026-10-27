@@ -8,12 +8,12 @@ use std::{
 
 use anyhow::Result;
 use cloofy_player::Engine;
-use cloofy_spotify::connect::Playback;
+use cloofy_spotify::{catalog::Track, connect::Playback};
 use cloofy_spotify::{paths::Paths, session};
 use futures::StreamExt;
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
-    core::{dealer::protocol::Message, session::Session},
+    core::{SpotifyUri, dealer::protocol::Message, session::Session},
     metadata::audio::{AudioItem, UniqueFields},
     playback::player::PlayerEvent,
     protocol::connect::ClusterUpdate,
@@ -23,7 +23,7 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender},
 };
 
-use crate::app::AppEvent;
+use crate::{app::AppEvent, queue::Queue};
 
 const DEVICE_NAME: &str = "cloofy";
 /// How long a change made in cloofy wins over reports the player sent before it got there.
@@ -86,6 +86,22 @@ pub struct CurrentTrack {
     pub cover_url: Option<String>,
     /// The largest available cover, for the Now Playing screen.
     pub cover_url_large: Option<String>,
+}
+
+impl CurrentTrack {
+    /// The track as a row of a track list.
+    pub fn to_track(&self) -> Track {
+        Track {
+            uri: self.uri.clone(),
+            name: self.name.clone(),
+            artists: self.artists.clone(),
+            artist_uris: self.artist_uris.clone(),
+            album: self.album.clone(),
+            album_uri: self.album_uri.clone().unwrap_or_default(),
+            duration_ms: self.duration_ms,
+            image_url: self.cover_url.clone(),
+        }
+    }
 }
 
 pub struct Cover {
@@ -689,6 +705,16 @@ impl Controller {
         Ok(())
     }
 
+    /// Empties the queue; the rest of the context stays.
+    pub fn clear_queue(&self) -> Result<()> {
+        Ok(self.spirc.clear_queue()?)
+    }
+
+    /// Adds a track after the ones queued before.
+    pub fn add_to_queue(&self, uri: &str) -> Result<()> {
+        Ok(self.spirc.add_to_queue(SpotifyUri::from_uri(uri)?)?)
+    }
+
     /// Jumps DJ to its next segment of picks, as the DJ button does in Spotify's apps.
     pub fn next_segment(&self) -> Result<()> {
         Ok(self.spirc.next_segment()?)
@@ -842,6 +868,8 @@ pub struct ConnectPush {
     /// The playlist, album or artist it plays from, or empty.
     pub context: String,
     pub playing: bool,
+    /// What plays next there.
+    pub queue: Queue,
 }
 
 impl ConnectPush {
@@ -863,7 +891,8 @@ impl ConnectPush {
 }
 
 /// Spotify pushes every change of what plays where to all of the user's devices, cloofy
-/// included. The details still come from a poll; the push says when one is worth it.
+/// included. The details still come from a poll; the push says when one is worth it. What
+/// plays next comes straight from the push.
 fn forward_pushes(session: &Session, tx: UnboundedSender<AppEvent>) {
     let pushes = session.dealer().listen_for("hm://connect-state/v1/cluster", Message::from_raw::<ClusterUpdate>);
     let mut pushes = match pushes {
@@ -886,6 +915,7 @@ fn forward_pushes(session: &Session, tx: UnboundedSender<AppEvent>) {
                 track: state.track.uri.clone(),
                 context: state.context_uri.clone(),
                 playing: state.is_playing && !state.is_paused,
+                queue: Queue::from_player_state(state),
             };
             if tx.send(AppEvent::Pushed(push)).is_err() {
                 break;
@@ -1252,6 +1282,7 @@ mod tests {
             track: track.into(),
             context: "spotify:playlist:abc".into(),
             playing,
+            queue: Queue::default(),
         }
     }
 

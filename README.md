@@ -32,6 +32,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Home and the DJ.** Your shelves, Made For You mixes, and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify's apps, or let it pick something different. Crossfade if you like.
 - **Your library.** Playlists, albums, artists and podcasts, in a sidebar or as a full page with covers.
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.
+- **The queue.** See what plays next, on cloofy or the device it controls: the songs you queued, then the rest of the playlist or album. Skip ahead to any of them, or take a queued song out again.
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
 - **Cover art.** Real images in terminals that speak the Kitty graphics protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
@@ -142,6 +143,7 @@ On Linux the build needs the ALSA and PulseAudio headers:
 | <kbd>q</kbd> <kbd>a</kbd> | Add to queue, add to a playlist |
 | <kbd>.</kbd> | Actions for the selection |
 | <kbd>z</kbd> | Now playing and lyrics |
+| <kbd>Q</kbd> | Queue |
 | <kbd>d</kbd> | Devices |
 | <kbd>D</kbd> | Start the DJ; while it plays, ask it for something |
 | <kbd>,</kbd> | Settings |

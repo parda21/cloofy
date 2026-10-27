@@ -204,17 +204,22 @@ impl App {
     }
 
     pub(super) fn snapshot(&self) -> State {
-        // Settings is a detour: the page it was opened from is the one to come back to.
-        let shown = match &self.view {
-            View::Settings(_) => self.history.last().unwrap_or(&self.view),
-            view => view,
+        // The queue and Settings are detours: the next start opens the page they were opened from.
+        let page = match &self.view {
+            View::Queue(_) | View::Settings(_) => {
+                self.history.iter().rev().find(|view| !matches!(view, View::Queue(_) | View::Settings(_)))
+            }
+            view => Some(view),
         };
-        let (view, selection) = match shown {
-            View::Home(v) => (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() }),
-            View::Library(v) => {
+        let (view, selection) = match page {
+            None | Some(View::Queue(_) | View::Settings(_)) => (SavedView::Home, Selection::default()),
+            Some(View::Home(v)) => {
+                (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() })
+            }
+            Some(View::Library(v)) => {
                 (SavedView::Library { filter: v.filter }, Selection { index: v.cursor, ..Selection::default() })
             }
-            View::Tracks(v) => {
+            Some(View::Tracks(v)) => {
                 let view = match &v.source {
                     TrackSource::Liked => SavedView::Liked,
                     TrackSource::Playlist(p) => SavedView::Playlist {
@@ -236,12 +241,11 @@ impl App {
                 };
                 (view, Selection { index: v.list.selected, ..Selection::default() })
             }
-            View::Artist(v) => (
+            Some(View::Artist(v)) => (
                 SavedView::Artist { uri: v.uri.clone(), name: v.name.clone() },
                 Selection { index: v.row, item: v.item, ..Selection::default() },
             ),
-            View::Search(v) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
-            View::Settings(_) => (SavedView::Home, Selection::default()),
+            Some(View::Search(v)) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
         };
         let last_track = self.now.track.as_ref().map(|t| LastTrack {
             uri: t.uri.clone(),

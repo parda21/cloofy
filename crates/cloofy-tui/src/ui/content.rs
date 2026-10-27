@@ -17,7 +17,7 @@ use crate::{
     art::LIKED_COVER,
     icons::icons,
     theme::{DANGER, FAINT, MUTED, RAISED, TEXT},
-    views::{SearchEntry, SearchView, TrackSource, TrackView, View},
+    views::{QueueRow, QueueView, SearchEntry, SearchView, TrackSource, TrackView, View},
 };
 
 /// Rows down to the column header: label, title, meta line, buttons, gap and the header.
@@ -117,6 +117,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.page_height = match &mut app.view {
         View::Tracks(view) => tracks(buf, view, inner, &style, &mut app.hits, cover_url.is_some(), page_saved),
         View::Search(view) => search(buf, view, inner, &style, searching, &mut app.hits, &mut thumbs),
+        View::Queue(view) => queue(buf, view, inner, &style, &mut app.hits, &mut thumbs),
         View::Home(_) | View::Artist(_) | View::Library(_) | View::Settings(_) => 0,
     };
     for (slot, url, round) in thumbs {
@@ -281,7 +282,7 @@ fn search(
     for (slot, index) in visible.enumerate() {
         let y = list.y + slot as u16 * grid.rows;
         let entry = &view.entries[index];
-        let Some(result) = Summary::of(entry) else {
+        let Some(mut result) = Summary::of(entry) else {
             if let SearchEntry::Header(title) = entry {
                 // A blank row above each section title, where results have room to breathe.
                 let y = if grid.thumbnails { y + 1 } else { y };
@@ -289,6 +290,7 @@ fn search(
             }
             continue;
         };
+        result.playing = style.playing_uri.as_deref() == Some(result.uri);
         let row = Rect::new(list.x, y, list.width, grid.rows.min(THUMB.height));
         highlight(buf, list, y, row.height, index == view.list.selected && !typing, style);
         hits.push((row_band(list, y, row.height), Hit::Row(index)));
@@ -299,11 +301,73 @@ fn search(
     fitting
 }
 
+/// Draws the queue page and returns how many rows fit on a page. Laid out like the search
+/// results, so a song looks the same in both. Thumbnails are left in `thumbs` for the caller.
+fn queue(
+    buf: &mut Buffer,
+    view: &mut QueueView,
+    area: Rect,
+    style: &RowStyle,
+    hits: &mut Vec<(Rect, Hit)>,
+    thumbs: &mut Vec<Thumb>,
+) -> usize {
+    buf.set_string(area.x, area.y, "Queue", Style::new().fg(TEXT).bold());
+    // A blank row under the page title; with thumbnails, section titles bring another one, as
+    // they do between sections.
+    let list = Rect { y: area.y + 2, height: area.height.saturating_sub(2), ..area };
+    let grid = ResultGrid::new(list.width, list.height >= RESULT_THUMBS_MIN_HEIGHT);
+    if view.rows.is_empty() {
+        buf.set_string(list.x, area.y + 2, "Nothing is playing.", Style::new().fg(MUTED));
+        let hint = "What plays next shows here once something plays.";
+        buf.set_string(list.x, area.y + 3, text::truncate(hint, list.width as usize), Style::new().fg(FAINT));
+        return list.height as usize;
+    }
+
+    view.entry_rows = grid.rows;
+    let fitting = (list.height / grid.rows) as usize;
+    let visible = view.list.visible(fitting, view.rows.len());
+    let shown = visible.len();
+    for (slot, index) in visible.enumerate() {
+        let y = list.y + slot as u16 * grid.rows;
+        let (track, playing) = match &view.rows[index] {
+            QueueRow::Header(title) => {
+                let y = if grid.thumbnails { y + 1 } else { y };
+                buf.set_string(list.x, y, text::truncate(title, list.width as usize), Style::new().fg(TEXT).bold());
+                continue;
+            }
+            QueueRow::Playing(track) => (track, true),
+            QueueRow::Next { track, .. } => (track, false),
+        };
+        let result = Summary { playing, ..Summary::track(track) };
+        let row = Rect::new(list.x, y, list.width, grid.rows.min(THUMB.height));
+        highlight(buf, list, y, row.height, index == view.list.selected, style);
+        hits.push((row_band(list, y, row.height), Hit::Row(index)));
+        grid.draw(buf, row, index, &result, style, hits, thumbs);
+    }
+
+    // With nothing after the playing song, say why, where the next section would start.
+    let has_next = view.rows.iter().any(|row| matches!(row, QueueRow::Next { .. }));
+    let y = list.y + shown as u16 * grid.rows + u16::from(grid.thumbnails);
+    if !has_next && y < list.bottom() {
+        let message = if view.loading {
+            Span::styled(format!("{}  Loading what plays next…", text::spinner(style.frame)), MUTED)
+        } else {
+            Span::styled("Nothing comes next yet. Add songs with q from any list.", MUTED)
+        };
+        buf.set_line(list.x, y, &Line::from(message), list.width);
+    }
+    let offset = view.list.offset;
+    super::scrollbar(buf, list.right() + 1, list.y, list.height, view.rows.len(), offset, fitting);
+    fitting
+}
+
 /// What a search result shows, whatever its kind.
 struct Summary<'a> {
     uri: &'a str,
     name: &'a str,
     song: bool,
+    /// The song that plays now, marked like in every other list.
+    playing: bool,
     /// Under the name, or beside it in one-row results.
     meta: String,
     /// The names in `meta` that lead to artist pages: a song's artists.
@@ -318,12 +382,29 @@ struct Summary<'a> {
 }
 
 impl<'a> Summary<'a> {
+    fn track(t: &'a Track) -> Self {
+        Summary {
+            uri: &t.uri,
+            name: &t.name,
+            song: true,
+            playing: false,
+            meta: t.artists.join(", "),
+            linked: &t.artists[..t.artist_uris.len().min(t.artists.len())],
+            album: Some((&t.album, !t.album_uri.is_empty())),
+            field: text::duration(t.duration_ms),
+            icon: icons().note,
+            image_url: t.image_url.as_deref(),
+            round: false,
+        }
+    }
+
     fn of(entry: &'a SearchEntry) -> Option<Self> {
         let icons = icons();
         let plain = |uri: &'a str, name: &'a str, meta: String, icon, image_url: &'a Option<String>| Summary {
             uri,
             name,
             song: false,
+            playing: false,
             meta,
             linked: &[],
             album: None,
@@ -334,13 +415,7 @@ impl<'a> Summary<'a> {
         };
         Some(match entry {
             SearchEntry::Header(_) => return None,
-            SearchEntry::Track(t) => Summary {
-                song: true,
-                linked: &t.artists[..t.artist_uris.len().min(t.artists.len())],
-                album: Some((&t.album, !t.album_uri.is_empty())),
-                field: text::duration(t.duration_ms),
-                ..plain(&t.uri, &t.name, t.artists.join(", "), icons.note, &t.image_url)
-            },
+            SearchEntry::Track(t) => Summary::track(t),
             SearchEntry::Artist(a) => {
                 Summary { round: true, ..plain(&a.uri, &a.name, "Artist".into(), icons.artist, &a.image_url) }
             }
@@ -406,7 +481,7 @@ impl ResultGrid {
         }
 
         // The playing song shows in the accent color with a moving equalizer, as in the sidebar.
-        let current = style.playing_uri.as_deref() == Some(result.uri);
+        let current = result.playing;
         let name = text::truncate(result.name, self.name.saturating_sub(if current { 5 } else { 0 }));
         let name_style = if current { Style::new().fg(style.accent).bold() } else { Style::new().fg(TEXT) };
         buf.set_string(x, y, &name, name_style);

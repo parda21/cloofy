@@ -64,6 +64,7 @@ pub enum MenuAction {
     Play,
     Shuffle,
     Queue,
+    RemoveFromQueue,
     Save,
     AddToPlaylist,
     GoToAlbum,
@@ -97,6 +98,8 @@ pub struct ContextTarget {
     /// Playlists the user owns (or Liked Songs) can't be followed.
     pub owned: bool,
     pub liked_songs: bool,
+    /// The queue entry a track of the queue page stands for: playing it skips ahead to it.
+    pub upcoming: Option<crate::queue::Upcoming>,
 }
 
 impl Overlay {

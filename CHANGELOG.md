@@ -7,6 +7,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 ### Added
 
 - **Settings.** `,`, the command palette or a click on your name in the top bar opens a Settings page: crossfade, cover art, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and are saved to `config.toml`, so nobody has to edit it by hand.
+- **Queue.** See what plays next, as in Spotify's apps: the song playing now, the songs you queued under "Next in queue" and the rest of the playlist or album under "Next from". `Q`, the queue button next to the volume or the command palette opens it. It keeps up as songs change and as you add songs with `q`, on cloofy and on the device it controls. Enter or a double click skips ahead to a song, and Delete or its menu takes a song you queued out again.
 - **Cover art off.** For slower computers: without cover art, cloofy loads and draws no covers at all. Pages show plain tiles in their place, and Now Playing gives the lyrics the whole screen.
 - **Power saving, your way.** Power saving can stay on or off for good; Auto follows the system as before.
 - **Accent color.** The accent can stay one color instead of following the cover.

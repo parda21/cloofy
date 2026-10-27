@@ -17,6 +17,8 @@ pub enum Command {
     Repeat,
     Search,
     NowPlaying,
+    /// The queue page: what plays next.
+    ShowQueue,
     Like,
     Queue,
     AddToPlaylist,
@@ -33,13 +35,14 @@ pub enum Command {
 
 impl Command {
     /// Commands offered in the palette, in display order.
-    pub const PALETTE: [Command; 24] = [
+    pub const PALETTE: [Command; 25] = [
         Command::Home,
         Command::Library,
         Command::PlayPause,
         Command::Next,
         Command::Previous,
         Command::NowPlaying,
+        Command::ShowQueue,
         Command::Like,
         Command::Queue,
         Command::AddToPlaylist,
@@ -75,6 +78,7 @@ impl Command {
             Command::Repeat => "Toggle repeat",
             Command::Search => "Search",
             Command::NowPlaying => "Now playing & lyrics",
+            Command::ShowQueue => "Queue",
             Command::Like => "Like / save",
             Command::Queue => "Add to queue",
             Command::AddToPlaylist => "Add to playlist…",
@@ -105,6 +109,7 @@ impl Command {
             Command::Repeat => "r",
             Command::Search => "/",
             Command::NowPlaying => "z",
+            Command::ShowQueue => "Q",
             Command::Like => "f",
             Command::Queue => "q",
             Command::AddToPlaylist => "a",
@@ -144,6 +149,7 @@ impl Command {
             KeyCode::Char('z') => Command::NowPlaying,
             KeyCode::Char('f') => Command::Like,
             KeyCode::Char('q') => Command::Queue,
+            KeyCode::Char('Q') => Command::ShowQueue,
             KeyCode::Char('a') => Command::AddToPlaylist,
             KeyCode::Char('d') => Command::Devices,
             KeyCode::Char('D') => Command::Dj,

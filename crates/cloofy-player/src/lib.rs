@@ -58,15 +58,21 @@ impl Engine {
 
     /// Registers the player as a Spotify Connect device. Spirc connects the session itself,
     /// which is why it takes a pending session. It starts at `initial_volume` (0 to 65535):
-    /// Spirc ignores volume changes until the device is first activated.
+    /// Spirc ignores volume changes until the device is first activated. The player reports
+    /// what plays next whenever a context loads or the queue changes.
     pub async fn connect_device(
         &self,
         pending: PendingSession,
         name: String,
         initial_volume: u16,
     ) -> Result<(Spirc, impl Future<Output = ()> + use<>)> {
-        let config =
-            ConnectConfig { name, device_type: DeviceType::Computer, initial_volume, ..ConnectConfig::default() };
+        let config = ConnectConfig {
+            name,
+            device_type: DeviceType::Computer,
+            initial_volume,
+            emit_set_queue_events: true,
+            ..ConnectConfig::default()
+        };
         Ok(Spirc::new(config, pending.session, pending.credentials, self.player.clone(), self.mixer.clone()).await?)
     }
 }

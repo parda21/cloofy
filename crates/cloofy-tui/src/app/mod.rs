@@ -1,6 +1,7 @@
 mod library;
 mod menu;
 mod persist;
+mod queue;
 mod settings;
 
 use std::{
@@ -37,10 +38,11 @@ use crate::{
     overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
     playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     preferences::{AccentChoice, Preferences, Setting},
+    queue::Queue,
     snapshot::Placement,
     theme::{Accent, BG, RAISED, Rgb},
     views::{
-        ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, SearchEntry, SearchView, TrackSource,
+        ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, QueueRow, SearchEntry, SearchView, TrackSource,
         TrackView, View,
     },
 };
@@ -92,6 +94,9 @@ const TRACK_END_SLACK: Duration = Duration::from_millis(300);
 const CONFIRM_DELAY: Duration = Duration::from_millis(300);
 /// How long the device label shows a transfer that the device hasn't confirmed.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long after a track change Spotify may take to say what plays next, before the queue
+/// page asks the Web API instead.
+const QUEUE_GRACE: Duration = Duration::from_secs(2);
 /// Session state is also saved periodically, in case cloofy gets killed.
 const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 /// Rapid like/unlike toggles collapse into one request after this pause.
@@ -120,8 +125,8 @@ const LONG_SLEEP: Duration = Duration::from_secs(60);
 pub enum Start<'a> {
     /// The last session: the page, the selection and the track to resume.
     Restore(Box<crate::state::State>),
-    /// The demo's playing track, with nothing of an account restored.
-    Demo(&'a crate::demo::Playing),
+    /// The demo's playing track and queue, with nothing of an account restored.
+    Demo(&'a crate::demo::Demo),
 }
 
 /// A newer cloofy, offered in the top bar.
@@ -381,6 +386,8 @@ pub struct App {
     local_active: bool,
     /// Playback runs on another device; commands go through Spotify Connect.
     remote_active: bool,
+    /// The Spotify Connect device that plays, by ID, as Spotify last said.
+    active_device: Option<String>,
     /// Changes sent to the other device that Spotify doesn't show yet.
     remote_intent: RemoteIntent,
     /// When the last command went to another device; polls started before show older state.
@@ -403,6 +410,24 @@ pub struct App {
     paths: Paths,
     pub player_error: Option<String>,
     pub now: NowPlaying,
+    /// When the shown track last changed.
+    track_changed_at: Instant,
+    /// What plays next on the device that plays, as Spotify or cloofy's player last said.
+    queue: Queue,
+    /// Details of the tracks in the queue by URI; `None` while they load, or where Spotify has
+    /// none.
+    queue_tracks: HashMap<String, Option<Track>>,
+    /// Counts the reports of what plays next, so a slower answer can tell it is outdated.
+    queue_version: u64,
+    /// The track the Web API was last asked what plays after, and the report it was asked
+    /// about, so it is asked once per report.
+    upcoming_asked: Option<(String, u64)>,
+    /// The Web API's answer is on its way.
+    upcoming_pending: bool,
+    /// When to ask the Web API what plays next.
+    upcoming_due: Option<Instant>,
+    /// cloofy's player shuffled what plays next and hasn't said how.
+    queue_reshuffled: bool,
     /// The system's media controls, where there are any.
     media: Option<MediaSync>,
     /// Announces new tracks while cloofy is in the background, in terminals that can.
@@ -553,6 +578,7 @@ impl App {
             device_id: None,
             local_active: false,
             remote_active: false,
+            active_device: None,
             remote_intent: RemoteIntent::default(),
             last_command: Instant::now(),
             devices_cache: None,
@@ -568,6 +594,14 @@ impl App {
             paths,
             player_error: None,
             now: NowPlaying::new(),
+            track_changed_at: Instant::now(),
+            queue: Queue::default(),
+            queue_tracks: HashMap::new(),
+            queue_version: 0,
+            upcoming_asked: None,
+            upcoming_pending: false,
+            upcoming_due: None,
+            queue_reshuffled: false,
             media: media.map(MediaSync::new),
             notifier,
             focused: true,
@@ -649,14 +683,15 @@ impl App {
                 app.restore(*state);
             }
             // A showcase starts fresh, and never touches the account's saved session.
-            Start::Demo(playing) => app.start_demo(playing),
+            Start::Demo(demo) => app.start_demo(demo),
         }
         app.cached_tracks = None;
         app
     }
 
-    /// Shows the demo's track as playing. Nothing plays: there is no player.
-    fn start_demo(&mut self, playing: &crate::demo::Playing) {
+    /// Shows the demo's track as playing, with its queue. Nothing plays: there is no player.
+    fn start_demo(&mut self, demo: &crate::demo::Demo) {
+        let playing = &demo.playing;
         let track = &playing.track;
         let last = crate::state::LastTrack {
             uri: track.uri.clone(),
@@ -679,6 +714,8 @@ impl App {
             self.load_cover(url.clone());
         }
         self.after_track_change(None);
+        let (queued, rest) = demo.upcoming();
+        self.start_demo_queue(queued, rest);
     }
 
     /// The last session's track is shown and ␣ would continue it.
@@ -795,9 +832,8 @@ impl App {
         match event {
             AppEvent::Player(event) => return self.on_player(event),
             AppEvent::Pushed(push) => {
-                // A push only brings the next poll forward; nothing on screen changes yet.
-                self.on_push(push);
-                return false;
+                // A push brings the next poll forward; only the queue page shows it at once.
+                return self.on_push(push);
             }
             AppEvent::PlayerReady(controller) => {
                 self.player_error = None;
@@ -931,6 +967,19 @@ impl App {
     }
 
     fn on_player(&mut self, event: PlayerEvent) -> bool {
+        // What plays next, as cloofy's own player has it; while another device plays, it has
+        // nothing to say.
+        if let PlayerEvent::SetQueue { context_uri, current_track, next_tracks, .. } = event {
+            if !self.remote_active {
+                self.set_queue(Queue::from_player(context_uri, current_track, &next_tracks));
+            }
+            return matches!(self.view, View::Queue(_));
+        }
+        if matches!(event, PlayerEvent::ShuffleChanged { shuffle } if shuffle != self.now.shuffle)
+            && !self.remote_active
+        {
+            self.queue_reshuffled();
+        }
         match &event {
             PlayerEvent::SessionConnected { .. } => {
                 self.local_active = true;
@@ -983,11 +1032,15 @@ impl App {
     }
 
     /// Spotify pushed a change of what plays where; a poll brings the details.
-    fn on_push(&mut self, push: ConnectPush) {
+    /// What plays next comes with the push. Returns whether the screen shows it.
+    fn on_push(&mut self, push: ConnectPush) -> bool {
         if push.worth_polling(self.device_id.as_deref(), self.remote_active, self.last_context.as_deref()) {
             self.next_poll = self.next_poll.min(Instant::now() + PUSH_DELAY);
         }
+        self.active_device = Some(push.active_device.clone()).filter(|id| !id.is_empty());
+        self.set_queue(push.queue.clone());
         self.last_push = Some((push, Instant::now()));
+        matches!(self.view, View::Queue(_))
     }
 
     /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
@@ -1014,6 +1067,7 @@ impl App {
                 return false;
             }
         }
+        self.active_device = playback.as_ref().map(|p| p.device.id.clone());
         match playback {
             Some(p) if Some(p.device.id.as_str()) == self.device_id.as_deref() => {
                 let changed = self.remote_active || (p.context.is_some() && p.context != self.last_context);
@@ -1084,6 +1138,10 @@ impl App {
             if track.artist_uris.is_empty() {
                 track.artist_uris = listed.artist_uris.clone();
             }
+        }
+        if before.as_deref() != self.now.track.as_ref().map(|t| t.uri.as_str()) {
+            self.track_changed_at = Instant::now();
+            self.check_queue();
         }
         let Some(track) = &self.now.track else { return };
         if before.as_deref() == Some(track.uri.as_str()) {
@@ -1378,6 +1436,12 @@ impl App {
                     self.error(format!("Transfer: {err}"));
                 }
             },
+            DataEvent::QueueTracks(tracks) => {
+                self.on_queue_tracks(tracks);
+                return matches!(self.view, View::Queue(_));
+            }
+            DataEvent::Upcoming { playing, result } => self.on_upcoming(playing, result),
+            DataEvent::SkippedTo(result) => self.on_skipped_to(result),
             DataEvent::DjSuggestions(result) => {
                 let Some(Overlay::Dj { picker, suggestions, loading }) = &mut self.overlay else { return true };
                 *loading = false;
@@ -1568,6 +1632,11 @@ impl App {
             self.loader.playback();
         }
 
+        if self.upcoming_due.is_some_and(|due| Instant::now() >= due) {
+            self.ask_upcoming();
+            redraw = true;
+        }
+
         if self.zen {
             self.request_zen_cover();
             redraw |= self.scroll_lyrics();
@@ -1588,6 +1657,7 @@ impl App {
             View::Artist(v) => v.page.is_none() && v.error.is_none(),
             View::Tracks(v) => v.loading,
             View::Search(v) => v.loading,
+            View::Queue(v) => v.loading,
         };
         let lyrics_loading = self.zen && self.lyrics.as_ref().is_some_and(|l| l.result.is_none());
         self.now.playing
@@ -1813,6 +1883,9 @@ impl App {
             KeyCode::Enter => self.activate(),
             KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
             KeyCode::Esc => self.back(),
+            KeyCode::Delete | KeyCode::Backspace if matches!(self.view, View::Queue(_)) => {
+                self.remove_selected_from_queue();
+            }
             _ => {}
         }
     }
@@ -1823,6 +1896,10 @@ impl App {
             View::Tracks(v) => v.list.scroll(delta),
             View::Search(v) => {
                 // Results with thumbnails are three rows tall; scroll by about as many rows.
+                let rows = v.entry_rows.max(1) as usize;
+                v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
+            }
+            View::Queue(v) => {
                 let rows = v.entry_rows.max(1) as usize;
                 v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
             }
@@ -1854,6 +1931,7 @@ impl App {
             View::Tracks(v) => v.list.move_by(delta, v.tracks.len()),
             View::Search(v) => v.move_by(delta),
             View::Settings(v) => v.move_by(delta.signum()),
+            View::Queue(v) => v.move_by(delta),
         }
     }
 
@@ -2095,6 +2173,11 @@ impl App {
                     View::Tracks(v) => v.list.selected = index,
                     View::Search(v) => {
                         if !matches!(v.entries.get(index), Some(SearchEntry::Header(_)) | None) {
+                            v.list.selected = index;
+                        }
+                    }
+                    View::Queue(v) => {
+                        if !matches!(v.rows.get(index), Some(QueueRow::Header(_)) | None) {
                             v.list.selected = index;
                         }
                     }
@@ -2346,6 +2429,7 @@ impl App {
                 self.open_search();
             }
             Command::NowPlaying => self.toggle_zen(),
+            Command::ShowQueue => self.toggle_queue(),
             Command::Like => self.toggle_saved(),
             Command::Queue => match self.target() {
                 Some(target) if target.is_track => self.queue(target.uri, target.name),
@@ -2568,6 +2652,7 @@ impl App {
                     SearchEntry::Header(_) => None,
                 }),
                 View::Settings(_) => None,
+                View::Queue(v) => v.selected().and_then(QueueRow::track).map(|t| track(&t.uri, &t.name, true)),
             };
             if selected.is_some() {
                 return selected;
@@ -2678,6 +2763,7 @@ impl App {
                 Some(SearchEntry::Track(track)) => Some(track),
                 _ => None,
             },
+            View::Queue(v) => v.rows.get(row).and_then(QueueRow::track),
             _ => None,
         }
     }
@@ -3035,6 +3121,7 @@ impl App {
                     self.next_view_id += 1;
                     v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
                 }
+                self.check_queue();
                 self.focus = Focus::Content;
                 // A page seen before comes back at once, without the rest of a transition.
                 self.last_nav = Some(Instant::now());
@@ -3113,6 +3200,11 @@ impl App {
             View::Settings(v) => {
                 let setting = v.setting();
                 self.change_setting(setting, true);
+            }
+            View::Queue(v) => {
+                if let Some(row) = v.selected().cloned() {
+                    self.play_queue_row(row);
+                }
             }
         }
     }

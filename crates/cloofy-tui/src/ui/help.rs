@@ -52,7 +52,7 @@ const LIBRARY: Section = (
     &[
         ("f", "Like / save"),
         ("F", "Follow artist"),
-        ("q", "Add to queue"),
+        ("q  Q", "Add to queue / show queue"),
         ("a", "Add to playlist"),
         (".", "Actions menu"),
     ],

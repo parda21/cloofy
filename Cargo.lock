@@ -570,6 +570,7 @@ dependencies = [
  "librespot",
  "open",
  "protobuf",
+ "protobuf-json-mapping",
  "rand 0.10.3",
  "reqwest 0.13.5",
  "serde",

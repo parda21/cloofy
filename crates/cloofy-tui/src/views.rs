@@ -6,7 +6,7 @@ use cloofy_spotify::{
     home::{Home, HomeItem},
 };
 
-use crate::{loader::Fetch, preferences::Setting};
+use crate::{loader::Fetch, preferences::Setting, queue::Upcoming};
 
 /// Cursor and scroll position of a list.
 #[derive(Debug, Default, Clone)]
@@ -230,20 +230,99 @@ impl SearchView {
 
     /// Moves the cursor, skipping section headers.
     pub fn move_by(&mut self, delta: isize) {
-        let len = self.entries.len();
-        let step = if delta < 0 { -1 } else { 1 };
-        self.list.move_by(delta, len);
-        while matches!(self.entries.get(self.list.selected), Some(SearchEntry::Header(_))) {
-            let before = self.list.selected;
-            self.list.move_by(step, len);
-            if self.list.selected == before {
-                // Stuck at the top on a header: go the other way instead.
-                self.list.move_by(-step, len);
-                if self.list.selected == before {
-                    break;
-                }
+        let entries = &self.entries;
+        move_past_headers(&mut self.list, delta, entries.len(), |index| {
+            matches!(entries.get(index), Some(SearchEntry::Header(_)))
+        });
+    }
+}
+
+/// Moves a list's cursor by `delta`, on past the rows `is_header` names.
+fn move_past_headers(list: &mut ListCursor, delta: isize, len: usize, is_header: impl Fn(usize) -> bool) {
+    let step = if delta < 0 { -1 } else { 1 };
+    list.move_by(delta, len);
+    while is_header(list.selected) {
+        let before = list.selected;
+        list.move_by(step, len);
+        if list.selected == before {
+            // Stuck at the top on a header: go the other way instead.
+            list.move_by(-step, len);
+            if list.selected == before {
+                break;
             }
         }
+    }
+}
+
+/// A row of the queue page.
+#[derive(Debug, Clone)]
+pub enum QueueRow {
+    Header(String),
+    /// The song that plays now.
+    Playing(Track),
+    Next {
+        track: Track,
+        entry: Upcoming,
+    },
+}
+
+impl QueueRow {
+    pub fn track(&self) -> Option<&Track> {
+        match self {
+            QueueRow::Header(_) => None,
+            QueueRow::Playing(track) | QueueRow::Next { track, .. } => Some(track),
+        }
+    }
+
+    /// What names the row from one list of what plays next to another.
+    fn key(&self) -> Option<(&str, &str)> {
+        match self {
+            QueueRow::Header(_) => None,
+            QueueRow::Playing(_) => Some(("", "")),
+            QueueRow::Next { entry, .. } => Some((&entry.uri, &entry.uid)),
+        }
+    }
+}
+
+/// What plays next: the playing song, the songs the user queued, then the rest of the context.
+pub struct QueueView {
+    pub id: u64,
+    pub rows: Vec<QueueRow>,
+    pub list: ListCursor,
+    /// Spotify hasn't said yet what plays next.
+    pub loading: bool,
+    /// Screen rows per entry at the last draw, so the mouse wheel scrolls by rows.
+    pub entry_rows: u16,
+}
+
+impl QueueView {
+    pub fn new(id: u64) -> Self {
+        Self { id, rows: Vec::new(), list: ListCursor::default(), loading: false, entry_rows: 1 }
+    }
+
+    /// Shows the queue as it is now, keeping the cursor on the song it was on.
+    pub fn set_rows(&mut self, rows: Vec<QueueRow>) {
+        let selected =
+            self.rows.get(self.list.selected).and_then(QueueRow::key).map(|(a, b)| (a.to_owned(), b.to_owned()));
+        let found = selected.and_then(|(uri, uid)| rows.iter().position(|r| r.key() == Some((&uri, &uid))));
+        self.rows = rows;
+        if let Some(index) = found {
+            self.list.offset = (self.list.offset + index).saturating_sub(self.list.selected);
+            self.list.selected = index;
+        }
+        self.move_by(0);
+    }
+
+    pub fn selected(&self) -> Option<&QueueRow> {
+        self.rows.get(self.list.selected).filter(|row| !matches!(row, QueueRow::Header(_)))
+    }
+
+    /// Moves the cursor, skipping section headers.
+    pub fn move_by(&mut self, delta: isize) {
+        let rows = &self.rows;
+        move_past_headers(&mut self.list, delta, rows.len(), |index| {
+            matches!(rows.get(index), Some(QueueRow::Header(_)))
+        });
     }
 }
 
@@ -529,6 +608,7 @@ pub enum View {
     Tracks(TrackView),
     Search(SearchView),
     Settings(SettingsView),
+    Queue(QueueView),
 }
 
 impl View {
@@ -540,6 +620,7 @@ impl View {
             View::Tracks(v) => v.id,
             View::Search(v) => v.id,
             View::Settings(v) => v.id,
+            View::Queue(v) => v.id,
         }
     }
 }
@@ -615,6 +696,51 @@ mod tests {
         view.set_home(home(vec![shelf("new", &["0"]), shelf("b", &["6", "3", "4", "5"]), shelf("a", &["1"])]));
         assert_eq!((view.shelf, view.item), (1, 3));
         assert_eq!(view.offsets, [0, 1, 0]);
+    }
+
+    fn next(n: u32, provider: crate::queue::Provider) -> QueueRow {
+        let entry = Upcoming { uri: format!("spotify:track:{n}"), uid: format!("u{n}"), provider };
+        QueueRow::Next { track: track(n), entry }
+    }
+
+    fn queue_rows(queued: &[u32], rest: &[u32]) -> Vec<QueueRow> {
+        use crate::queue::Provider;
+        let mut rows = vec![QueueRow::Header("Now playing".into()), QueueRow::Playing(track(0))];
+        if !queued.is_empty() {
+            rows.push(QueueRow::Header("Next in queue".into()));
+            rows.extend(queued.iter().map(|&n| next(n, Provider::Queue)));
+        }
+        rows.push(QueueRow::Header("Next from: Late Night Coding".into()));
+        rows.extend(rest.iter().map(|&n| next(n, Provider::Context)));
+        rows
+    }
+
+    #[test]
+    fn the_queue_cursor_passes_over_section_titles() {
+        let mut view = QueueView::new(1);
+        view.set_rows(queue_rows(&[1], &[2, 3]));
+        // It starts on the playing song, under the first title.
+        assert!(matches!(view.selected(), Some(QueueRow::Playing(_))));
+        view.move_by(1);
+        assert_eq!(view.selected().and_then(QueueRow::track).map(|t| t.uri.as_str()), Some("spotify:track:1"));
+        view.move_by(1);
+        assert_eq!(view.selected().and_then(QueueRow::track).map(|t| t.uri.as_str()), Some("spotify:track:2"));
+        view.move_by(isize::MIN / 2);
+        assert!(matches!(view.selected(), Some(QueueRow::Playing(_))));
+    }
+
+    #[test]
+    fn a_newer_queue_keeps_the_cursor_on_its_song() {
+        let mut view = QueueView::new(1);
+        view.set_rows(queue_rows(&[1, 4], &[2, 3]));
+        view.move_by(4);
+        assert_eq!(view.selected().and_then(QueueRow::track).map(|t| t.uri.as_str()), Some("spotify:track:2"));
+        // The first queued song started playing: the rest moves up, the cursor stays on its song.
+        view.set_rows(queue_rows(&[4], &[2, 3]));
+        assert_eq!(view.selected().and_then(QueueRow::track).map(|t| t.uri.as_str()), Some("spotify:track:2"));
+        // A song that's gone leaves the cursor on a song nearby, never on a title.
+        view.set_rows(queue_rows(&[], &[3]));
+        assert!(view.selected().is_some());
     }
 
     #[test]

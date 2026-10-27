@@ -118,6 +118,16 @@ fn hints(app: &App) -> &'static [Hint] {
             ("^K", "commands", Some(Run(Palette))),
             ("?", "help", Some(Run(Help))),
         ],
+        (Focus::Content, View::Queue(_)) => &[
+            ("enter", "play", Some(Activate)),
+            (".", "actions", Some(Run(Menu))),
+            ("del", "remove", Some(Key(KeyCode::Delete))),
+            ("f", "like", Some(Run(Like))),
+            ("a", "add to playlist", Some(Run(AddToPlaylist))),
+            ("esc", "back", Some(Back)),
+            ("^K", "commands", Some(Run(Palette))),
+            ("?", "help", Some(Run(Help))),
+        ],
         (Focus::Content, View::Tracks(_)) => &[
             ("enter", "play", Some(Activate)),
             (".", "actions", Some(Run(Menu))),
