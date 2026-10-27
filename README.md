@@ -36,7 +36,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Cover art.** Real images in terminals that speak the Kitty graphics protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
-- **At home on macOS.** Media keys, AirPods and Control Center, headphones that pause when they disconnect, Reduce Motion and Low Power Mode.
+- **At home on macOS and Linux.** Media keys and the system's media controls: Control Center on macOS, and on Linux GNOME, KDE, Waybar and playerctl. cloofy pauses before the computer sleeps, reconnects when it wakes, and moves less when the system asks for less motion or saves power. On macOS, AirPods and headphones pause playback when they disconnect.
 
 ## A closer look
 

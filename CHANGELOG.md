@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **At home on Linux.** Media keys, playerctl and the media controls of GNOME, KDE and Waybar play, pause, skip and seek, and show the track with its cover, in `cloofy play` and `cloofy connect` too. cloofy pauses before the computer sleeps and reconnects as soon as it wakes. With animations turned off in the desktop's settings, slides become fades, lyrics jump to the current line and the equalizer stands still. In Power Saver mode animations stop and cloofy wakes the computer less often.
+
 ## [0.3.0] - 2026-10-16
 
 The DJ takes requests, and cloofy updates itself.
