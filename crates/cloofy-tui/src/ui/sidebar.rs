@@ -14,7 +14,7 @@ use crate::{
     art::LIKED_COVER,
     commands::Command,
     icons::icons,
-    theme::{FAINT, MUTED, SURFACE, TEXT},
+    theme,
     views::{ListCursor, View},
 };
 
@@ -25,7 +25,8 @@ const ENTRY_ROWS: u16 = 3;
 const LIST_TOP: u16 = 5;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
-    frame.buffer_mut().set_style(area, Style::new().bg(SURFACE));
+    let p = theme::palette();
+    frame.buffer_mut().set_style(area, Style::new().bg(p.surface));
     app.hits.push((area, Hit::NavArea));
     if area.height < LIST_TOP + ENTRY_ROWS {
         return;
@@ -33,14 +34,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let accent = app.accent.color();
     let page_open = matches!(app.view, View::Library(_));
 
-    let mut title = vec![Span::styled(format!("{}  Your Library", icons().library), Style::new().fg(TEXT).bold())];
+    let mut title = vec![Span::styled(format!("{}  Your Library", icons().library), Style::new().fg(p.text).bold())];
     if app.playlists_loading || app.library_loading {
-        title.push(Span::styled(format!("  {}", text::spinner(app.frame())), FAINT));
+        title.push(Span::styled(format!("  {}", text::spinner(app.frame())), p.faint));
     }
     let buf = frame.buffer_mut();
     buf.set_line(area.x + 3, area.y + 1, &Line::from(title), area.width.saturating_sub(8));
     let expand = Rect::new(area.right().saturating_sub(4), area.y + 1, 2, 1);
-    let expand_style = if page_open { Style::new().fg(accent) } else { Style::new().fg(MUTED) };
+    let expand_style = if page_open { Style::new().fg(accent) } else { Style::new().fg(p.muted) };
     buf.set_string(expand.x, expand.y, icons().expand, expand_style);
     app.hits.push((expand, Hit::Command(Command::Library)));
 
@@ -86,6 +87,7 @@ pub(super) fn tabs(
     active: LibraryFilter,
     accent: Color,
 ) -> Vec<(Rect, LibraryFilter)> {
+    let p = theme::palette();
     const GAP: u16 = 2;
     /// A chevron plus the gap between it and the tabs.
     const CHEVRON: u16 = 2;
@@ -115,7 +117,7 @@ pub(super) fn tabs(
     let mut x = x;
     let icons = icons();
     if start > 0 {
-        buf.set_string(x, y, icons.chevron_left, Style::new().fg(MUTED));
+        buf.set_string(x, y, icons.chevron_left, Style::new().fg(p.muted));
         hits.push((Rect::new(x, y, CHEVRON, 1), filters[start - 1]));
         x += CHEVRON;
     }
@@ -124,14 +126,14 @@ pub(super) fn tabs(
         let limit = if x + span(index..filters.len()) <= right { right } else { right.saturating_sub(CHEVRON) };
         let width = widths[index];
         if x + width > limit {
-            buf.set_string(right.saturating_sub(1), y, icons.chevron_right, Style::new().fg(MUTED));
+            buf.set_string(right.saturating_sub(1), y, icons.chevron_right, Style::new().fg(p.muted));
             hits.push((Rect::new(right.saturating_sub(CHEVRON), y, CHEVRON, 1), filter));
             break;
         }
         let style = if filter == active {
-            Style::new().fg(TEXT).bold().underlined().underline_color(accent)
+            Style::new().fg(p.text).bold().underlined().underline_color(accent)
         } else {
-            Style::new().fg(MUTED)
+            Style::new().fg(p.muted)
         };
         buf.set_string(x, y, filter.label(), style);
         hits.push((Rect::new(x, y, width, 1), filter));
@@ -141,6 +143,7 @@ pub(super) fn tabs(
 }
 
 fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, entry: LibraryEntry) {
+    let p = theme::palette();
     let (title, subtitle, image_url, round) = describe(app, entry);
     let cursor = app.focus == Focus::Nav && app.nav.selected == index;
     let open = app.is_open(NavItem::Library(entry));
@@ -166,8 +169,8 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
     let title_width = area.right().saturating_sub(x + if playing { 6 } else { 1 }) as usize;
     let title_style = match (playing, open) {
         (true, _) => Style::new().fg(app.accent.color()).bold(),
-        (false, true) => Style::new().fg(TEXT).bold(),
-        (false, false) => Style::new().fg(TEXT),
+        (false, true) => Style::new().fg(p.text).bold(),
+        (false, false) => Style::new().fg(p.text),
     };
     let equalizer = if app.now.playing { super::equalizer(app) } else { icons().volume };
     let buf = frame.buffer_mut();
@@ -175,7 +178,7 @@ fn entry(frame: &mut Frame, app: &mut App, area: Rect, y: u16, index: usize, ent
     if playing {
         buf.set_string(area.right().saturating_sub(5), y, equalizer, Style::new().fg(app.accent.color()));
     }
-    buf.set_string(x, y + 1, text::truncate(&subtitle, width), Style::new().fg(MUTED));
+    buf.set_string(x, y + 1, text::truncate(&subtitle, width), Style::new().fg(p.muted));
     app.hits.push((row, Hit::Nav(index)));
 }
 

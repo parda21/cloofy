@@ -11,7 +11,7 @@ use ratatui::{
 use super::{text, wordmark};
 use crate::{
     app::{App, Focus, Hit},
-    theme::{DANGER, FAINT, MUTED, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -82,6 +82,7 @@ pub(super) fn follow(offset: &mut usize, item: usize, cards: usize) {
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     app.content_area = area;
     app.hits.push((area, Hit::ContentArea));
     let inner = Rect {
@@ -99,8 +100,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let Some(home) = &view.home else {
         let message = match &view.error {
-            Some(err) => Span::styled(format!("✕  {err}"), DANGER),
-            None => Span::styled(format!("{}  Loading Home…", text::spinner(frame_no)), MUTED),
+            Some(err) => Span::styled(format!("✕  {err}"), p.danger),
+            None => Span::styled(format!("{}  Loading Home…", text::spinner(frame_no)), p.muted),
         };
         splash(frame, app, inner, message);
         return;
@@ -130,9 +131,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if scroll == 0 {
         let greeting = if home.greeting.is_empty() { "Hello".to_owned() } else { home.greeting.clone() };
-        let mut spans = vec![Span::styled(greeting, Style::new().fg(TEXT).bold())];
+        let mut spans = vec![Span::styled(greeting, Style::new().fg(p.text).bold())];
         if view.loading {
-            spans.push(Span::styled(format!("   {}", text::spinner(frame_no)), FAINT));
+            spans.push(Span::styled(format!("   {}", text::spinner(frame_no)), p.faint));
         }
         frame.buffer_mut().set_line(inner.x, inner.y, &Line::from(spans), inner.width);
     }
@@ -246,6 +247,7 @@ pub(super) fn draw_shelf(
     selected: Option<usize>,
     focused: bool,
 ) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
     for (url, round) in &layout.nearby {
@@ -256,11 +258,11 @@ pub(super) fn draw_shelf(
         let pageable = layout.total > layout.items.len();
         let title_width = area.width.saturating_sub(if pageable { 28 } else { 2 }) as usize;
         let buf = frame.buffer_mut();
-        buf.set_string(area.x, y, text::truncate(&layout.title, title_width), Style::new().fg(TEXT).bold());
+        buf.set_string(area.x, y, text::truncate(&layout.title, title_width), Style::new().fg(p.text).bold());
         if pageable {
             let last = layout.first + layout.items.len();
             let pager = format!("{}–{} of {}", layout.first + 1, last, layout.total);
-            let style = if selected.is_some() { Style::new().fg(MUTED) } else { Style::new().fg(FAINT) };
+            let style = if selected.is_some() { Style::new().fg(p.muted) } else { Style::new().fg(p.faint) };
             let next_x = area.right().saturating_sub(2);
             let prev_x = next_x.saturating_sub(4);
             buf.set_string(prev_x.saturating_sub(pager.chars().count() as u16 + 3), y, pager, style);
@@ -271,8 +273,8 @@ pub(super) fn draw_shelf(
             ];
             for (x, icon, forward, enabled) in arrows {
                 let arrow = Rect::new(x.saturating_sub(1), y, 3, 1);
-                let color = if enabled { TEXT } else { Color::Rgb(52, 52, 60) };
-                buf.set_style(arrow, Style::new().bg(RAISED));
+                let color = if enabled { p.text } else { Color::Rgb(52, 52, 60) };
+                buf.set_style(arrow, Style::new().bg(p.raised));
                 buf.set_string(x, y, icon, Style::new().fg(color));
                 if enabled {
                     app.hits.push((arrow, Hit::ShelfScroll { shelf: layout.index, forward }));
@@ -308,7 +310,7 @@ pub(super) fn draw_shelf(
             }
         }
         if let Some(y) = row(area, text_y + 1) {
-            buf.set_string(x, y, text::truncate(&item.subtitle, width), Style::new().fg(MUTED));
+            buf.set_string(x, y, text::truncate(&item.subtitle, width), Style::new().fg(p.muted));
         }
         if let Some(card) = card {
             app.hits.push((card, Hit::Card { shelf: layout.index, item: index }));
@@ -331,6 +333,7 @@ fn draw_shortcuts(
     selected: Option<usize>,
     focused: bool,
 ) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
     let marker = playing_marker(app);
@@ -342,10 +345,10 @@ fn draw_shortcuts(
         let x = area.x + column * (tile_width + TILE_GAP);
         let Some(tile) = clip(area, x, tile_width, tile_y, TILE_COVER.height) else { continue };
         let is_selected = selected == Some(index);
-        frame.buffer_mut().set_style(tile, Style::new().bg(if is_selected { selection } else { RAISED }));
+        frame.buffer_mut().set_style(tile, Style::new().bg(if is_selected { selection } else { p.raised }));
         draw_cover(frame, app, (x, tile_y), area, item, TILE_COVER);
         let playing = is_playing(app, item);
-        let style = if playing { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT).bold() };
+        let style = if playing { Style::new().fg(accent).bold() } else { Style::new().fg(p.text).bold() };
         let hovered = super::hovered(app, tile);
         // The end of the row holds the play button while hovered, else the playing tile's
         // equalizer; the name stops short of either.
@@ -379,10 +382,11 @@ fn draw_shortcuts(
 /// A card's title: the accent marks what plays, as in track lists. The selection shows as the
 /// background, so its title is only bold.
 pub(super) fn card_title_style(accent: Color, playing: bool, selected: bool) -> Style {
+    let p = theme::palette();
     match (playing, selected) {
         (true, _) => Style::new().fg(accent).bold(),
-        (false, true) => Style::new().fg(TEXT).bold(),
-        (false, false) => Style::new().fg(TEXT),
+        (false, true) => Style::new().fg(p.text).bold(),
+        (false, false) => Style::new().fg(p.text),
     }
 }
 
@@ -410,13 +414,14 @@ pub(super) fn draw_cover(
     item: &HomeItem,
     size: Size,
 ) {
+    let p = theme::palette();
     let round = item.kind == ItemKind::Artist;
     if super::cover_in(frame, app, item.image_url.as_deref(), size, round, (x, y), size, clip) {
         return;
     }
     let Some(part) = self::clip(clip, x, size.width, y, size.height) else { return };
     let buf = frame.buffer_mut();
-    buf.set_style(part, Style::new().bg(RAISED));
+    buf.set_style(part, Style::new().bg(p.raised));
     let icons = crate::icons::icons();
     let icon = match item.kind {
         ItemKind::Playlist => icons.playlist,
@@ -426,7 +431,7 @@ pub(super) fn draw_cover(
         ItemKind::Podcast | ItemKind::Episode => icons.podcast,
     };
     if let Some(row) = row(clip, y + (size.height / 2) as i32) {
-        buf.set_string(x + size.width / 2, row, icon, Style::new().fg(FAINT));
+        buf.set_string(x + size.width / 2, row, icon, Style::new().fg(p.faint));
     }
 }
 

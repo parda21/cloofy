@@ -8,20 +8,21 @@ use crate::{
     app::{App, Focus, HintAction, Hit},
     commands::Command,
     icons::icons,
-    theme::{DANGER, FAINT, MUTED},
+    theme,
     views::View,
 };
 
 type Hint = (&'static str, &'static str, Option<HintAction>);
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
+    let p = theme::palette();
     let device = match (app.transferring_to(), &app.now.device, app.is_connected()) {
         (Some(name), ..) => {
             Span::styled(format!("{}  → {name} …", crate::ui::text::spinner(app.frame())), app.accent.color())
         }
         (None, Some(name), _) => Span::styled(format!("{}  Playing on {name}", icons().speaker), app.accent.color()),
         (None, None, true) => Span::styled(format!("{}  cloofy", icons().computer), app.accent.color()),
-        (None, None, false) => Span::styled(format!("{}  cloofy", icons().computer), FAINT),
+        (None, None, false) => Span::styled(format!("{}  cloofy", icons().computer), p.faint),
     };
     let device_width = device.width() as u16;
     let device_x = area.right().saturating_sub(device_width + 2);
@@ -30,7 +31,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(device_width + 6);
 
     if let Some(status) = &app.status {
-        let color = if status.error { DANGER } else { app.accent.color() };
+        let color = if status.error { p.danger } else { app.accent.color() };
         let text = crate::ui::text::truncate(&status.text, width as usize);
         buf.set_string(area.x + 2, area.y, text, Style::new().fg(color));
         return;
@@ -42,8 +43,8 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         if x + len > area.x + width {
             break;
         }
-        buf.set_string(x, area.y, *key, Style::new().fg(MUTED).bold());
-        buf.set_string(x + key.width() as u16 + 1, area.y, *label, Style::new().fg(FAINT));
+        buf.set_string(x, area.y, *key, Style::new().fg(p.muted).bold());
+        buf.set_string(x + key.width() as u16 + 1, area.y, *label, Style::new().fg(p.faint));
         if let Some(action) = action {
             app.hits.push((Rect::new(x, area.y, len, 1), Hit::Hint(*action)));
         }

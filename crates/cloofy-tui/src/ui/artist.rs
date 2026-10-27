@@ -15,7 +15,7 @@ use super::{
 use crate::{
     app::{App, Focus, HeaderButton, Hit},
     icons::icons,
-    theme::{DANGER, FAINT, MUTED, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -25,6 +25,7 @@ const HEADER_ROWS: u16 = PORTRAIT.height + 1;
 const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     app.content_area = area;
     app.hits.push((area, Hit::ContentArea));
     let inner = Rect {
@@ -51,16 +52,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // portrait, the name beside it and the status where the stats will be.
         let buf = frame.buffer_mut();
         let portrait = Rect::new(inner.x, inner.y, PORTRAIT.width, PORTRAIT.height).intersection(inner);
-        buf.set_style(portrait, Style::new().bg(RAISED));
+        buf.set_style(portrait, Style::new().bg(p.raised));
         let text_x = inner.x + PORTRAIT.width + 3;
         let width = inner.right().saturating_sub(text_x) as usize;
         let status = match &view.error {
-            Some(err) => (format!("✕  {err}"), Style::new().fg(DANGER)),
-            None => (format!("{}  Loading…", text::spinner(frame_no)), Style::new().fg(MUTED)),
+            Some(err) => (format!("✕  {err}"), Style::new().fg(p.danger)),
+            None => (format!("{}  Loading…", text::spinner(frame_no)), Style::new().fg(p.muted)),
         };
         let lines = [
-            ("ARTIST".to_owned(), Style::new().fg(FAINT).bold()),
-            (view.name.clone(), Style::new().fg(TEXT).bold()),
+            ("ARTIST".to_owned(), Style::new().fg(p.faint).bold()),
+            (view.name.clone(), Style::new().fg(p.text).bold()),
             status,
         ];
         for (y, (line, style)) in (inner.y + 1..inner.bottom()).zip(lines) {
@@ -138,7 +139,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if !super::cover_in(frame, app, header.1.as_deref(), PORTRAIT, true, slot, PORTRAIT, inner) {
             let rows = (header_y + PORTRAIT.height as i32 - inner.y as i32).min(PORTRAIT.height as i32) as u16;
             let top = header_y.max(inner.y as i32) as u16;
-            frame.buffer_mut().set_style(Rect::new(inner.x, top, PORTRAIT.width, rows), Style::new().bg(RAISED));
+            frame.buffer_mut().set_style(Rect::new(inner.x, top, PORTRAIT.width, rows), Style::new().bg(p.raised));
         }
         let text_x = inner.x + PORTRAIT.width + 3;
         let width = inner.right().saturating_sub(text_x) as usize;
@@ -153,13 +154,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let visible = |offset: u16| screen_y(offset);
         let buf = frame.buffer_mut();
         if let Some(y) = visible(1) {
-            buf.set_string(text_x, y, "ARTIST", Style::new().fg(FAINT).bold());
+            buf.set_string(text_x, y, "ARTIST", Style::new().fg(p.faint).bold());
         }
         if let Some(y) = visible(2) {
-            buf.set_string(text_x, y, text::truncate(&header.0, width), Style::new().fg(TEXT).bold());
+            buf.set_string(text_x, y, text::truncate(&header.0, width), Style::new().fg(p.text).bold());
         }
         if let Some(y) = visible(3) {
-            buf.set_string(text_x, y, text::truncate(&stats.join(" · "), width), Style::new().fg(MUTED));
+            buf.set_string(text_x, y, text::truncate(&stats.join(" · "), width), Style::new().fg(p.muted));
         }
         let row = [
             (HeaderButton::Play, text::icon_label(icons().play, "Play"), true),
@@ -181,7 +182,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if let Some(y) = screen_y(tracks_top - 2) {
-        frame.buffer_mut().set_string(inner.x, y, "Popular", Style::new().fg(TEXT).bold());
+        frame.buffer_mut().set_string(inner.x, y, "Popular", Style::new().fg(p.text).bold());
     }
     let title_width = (inner.width as usize).saturating_sub(5 + 16 + 9);
     for (index, (track, playcount)) in tracks.iter().enumerate() {
@@ -199,11 +200,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             _ if loading_uri.as_deref() == Some(track.uri.as_str()) => {
                 Span::styled(fit(&right(text::spinner(frame_no), 3), 5), accent)
             }
-            (false, _) => Span::styled(fit(&right(&(index + 1).to_string(), 3), 5), FAINT),
+            (false, _) => Span::styled(fit(&right(&(index + 1).to_string(), 3), 5), p.faint),
             (true, true) => Span::styled(fit(&format!(" {}", equalizer), 5), accent),
             (true, false) => Span::styled(fit("  ▶", 5), accent),
         };
-        let title_style = if is_current { Style::new().fg(accent).bold() } else { Style::new().fg(TEXT) };
+        let title_style = if is_current { Style::new().fg(accent).bold() } else { Style::new().fg(p.text) };
         let plays = playcount.map(text::grouped).unwrap_or_default();
         let heart = if app.is_saved(&track.uri) {
             Span::styled(format!("{} ", icons().saved), accent)
@@ -213,10 +214,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let line = Line::from(vec![
             number,
             Span::styled(fit(&track.name, title_width), title_style),
-            Span::styled(right(&plays, 16), MUTED),
+            Span::styled(right(&plays, 16), p.muted),
             Span::raw("  "),
             heart,
-            Span::styled(right(&text::duration(track.duration_ms), 5), FAINT),
+            Span::styled(right(&text::duration(track.duration_ms), 5), p.faint),
         ]);
         frame.buffer_mut().set_line(inner.x, y, &line, inner.width);
         app.hits.push((content::row_band(inner, y, 1), Hit::Row(index)));

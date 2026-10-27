@@ -33,7 +33,7 @@ use crate::{
     loader::{Graphic, Picture},
     overlay::Overlay,
     snapshot::Placement,
-    theme::{BG, FAINT, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -45,12 +45,13 @@ const PLAYER_HEIGHT: u16 = 5;
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let p = theme::palette();
     app.begin_frame();
     let area = frame.area();
     app.screen = area;
     app.hits.clear();
     app.placements.clear();
-    frame.buffer_mut().set_style(area, Style::new().bg(BG).fg(TEXT));
+    frame.buffer_mut().set_style(area, Style::new().bg(p.bg).fg(p.text));
     // Small windows get compact bars so there is room left for the content.
     let top_height = match area.height {
         30.. => topbar::HEIGHT,
@@ -157,6 +158,7 @@ pub(super) fn cover_in(
 /// Stands in for a cover with cover art off: one flat color and an icon, which costs nothing to
 /// load or to send to the terminal.
 fn tile(buf: &mut Buffer, (x, y): (u16, i32), size: Size, slot: Size, clip: Rect, round: bool) {
+    let p = theme::palette();
     let left = x + slot.width.saturating_sub(size.width) / 2;
     let top = y + (slot.height.saturating_sub(size.height) / 2) as i32;
     let visible_top = top.max(clip.y as i32);
@@ -166,11 +168,11 @@ fn tile(buf: &mut Buffer, (x, y): (u16, i32), size: Size, slot: Size, clip: Rect
     }
     let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
     let area = area.intersection(buf.area);
-    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_style(area, Style::new().bg(p.raised));
     let icon = if round { icons().artist } else { icons().note };
     let middle = top + (size.height / 2) as i32;
     if area.width >= 2 && (visible_top..visible_bottom).contains(&middle) {
-        buf.set_string(left + (size.width - 1) / 2, middle as u16, icon, Style::new().fg(FAINT));
+        buf.set_string(left + (size.width - 1) / 2, middle as u16, icon, Style::new().fg(p.faint));
     }
 }
 
@@ -258,16 +260,17 @@ pub(super) const PLAY_BUTTON_WIDTH: u16 = 3;
 /// The play button of a hovered card, ending at column `right` in row `y`. On a cover, a dark
 /// cell to its left sets it off from covers in the accent color.
 pub(super) fn play_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, hit: Hit, on_cover: bool) {
+    let p = theme::palette();
     let icons = icons();
     let area = Rect::new(right.saturating_sub(PLAY_BUTTON_WIDTH), y, PLAY_BUTTON_WIDTH, 1).intersection(buf.area);
     let accent = app.accent.color();
     if on_cover && let Some(edge) = area.x.checked_sub(1) {
-        buf.set_string(edge, y, " ", Style::new().bg(BG));
+        buf.set_string(edge, y, " ", Style::new().bg(p.bg));
     }
     // Blank the cells rather than only recoloring them: over a cover they hold image cells,
     // which would keep showing pieces of the picture around the icon.
     buf.set_string(area.x, y, " ".repeat(area.width as usize), Style::new().bg(accent));
-    buf.set_string(area.x + 1, y, icons.play, Style::new().fg(BG).bg(accent));
+    buf.set_string(area.x + 1, y, icons.play, Style::new().fg(p.bg).bg(accent));
     app.hits.push((area, hit));
 }
 
@@ -299,6 +302,7 @@ pub(super) fn hovered(app: &App, area: Rect) -> bool {
 
 /// A slim scrollbar in column `x`, shown only when the content is longer than the view.
 pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: usize, offset: usize, visible: usize) {
+    let p = theme::palette();
     if total <= visible || height < 3 || x >= buf.area.right() {
         return;
     }
@@ -307,11 +311,8 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
     let max_offset = total - visible;
     let start = (rows - thumb) * offset.min(max_offset) / max_offset;
     for row in 0..rows {
-        let (symbol, color) = if (start..start + thumb).contains(&row) {
-            ("┃", Color::Rgb(96, 96, 108))
-        } else {
-            ("│", Color::Rgb(30, 30, 37))
-        };
+        let (symbol, color) =
+            if (start..start + thumb).contains(&row) { ("┃", Color::Rgb(96, 96, 108)) } else { ("│", p.raised) };
         buf.set_string(x, y + row as u16, symbol, Style::new().fg(color));
     }
 }
@@ -319,6 +320,7 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
 /// Lightens whatever clickable thing the mouse is over, and more so what was just clicked;
 /// links get underlined instead.
 fn hover(buf: &mut Buffer, app: &App) {
+    let p = theme::palette();
     // Only while the target is still there: a click that opened another page leaves none.
     let pressed = app.pressed().map(|(hit, area)| (area, hit)).filter(|pressed| app.hits.contains(pressed));
     if let Some((area, _)) = pressed {
@@ -331,7 +333,7 @@ fn hover(buf: &mut Buffer, app: &App) {
         return;
     }
     if let Hit::Link(_) = hit {
-        buf.set_style(area.intersection(buf.area), Style::new().fg(TEXT).add_modifier(Modifier::UNDERLINED));
+        buf.set_style(area.intersection(buf.area), Style::new().fg(p.text).add_modifier(Modifier::UNDERLINED));
     } else if pressed.is_none_or(|(pressed, _)| pressed != *area) {
         tint(buf, app, *area, 0.06);
     }
@@ -339,6 +341,7 @@ fn hover(buf: &mut Buffer, app: &App) {
 
 /// Mixes some white into the background of `area`.
 fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
+    let p = theme::palette();
     let area = area.intersection(buf.area);
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
@@ -351,7 +354,7 @@ fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
             }
             let base = match cell.bg {
                 Color::Rgb(r, g, b) => crate::theme::Rgb(r, g, b),
-                _ => crate::theme::Rgb(13, 13, 16),
+                _ => crate::theme::Rgb::of(p.bg),
             };
             cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), amount).into();
         }

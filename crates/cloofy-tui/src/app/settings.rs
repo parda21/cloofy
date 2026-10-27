@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use super::{App, COVER_SIZE, Focus, ImageSlot};
 use crate::{
     preferences::{AccentChoice, Setting},
-    theme::DEFAULT_ACCENT,
+    theme,
     views::{SettingsView, View},
 };
 
@@ -77,7 +77,7 @@ impl App {
             Setting::Covers => self.drop_covers(),
             Setting::Images => self.set_image_protocol(self.prefs.images),
             Setting::Accent => {
-                let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(DEFAULT_ACCENT);
+                let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
                 if self.settings.low_power {
                     self.accent.jump(color);
                 } else {
@@ -133,7 +133,7 @@ impl App {
         self.zen_cover_pending = None;
         self.cover_accent = None;
         if self.prefs.accent == AccentChoice::Cover {
-            self.accent.set(DEFAULT_ACCENT);
+            self.accent.set(theme::palette().accent);
         }
         crate::release_freed_memory();
     }

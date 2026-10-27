@@ -4,7 +4,10 @@
 use cloofy_core::config::{Config, Value};
 use cloofy_os::settings::Settings;
 
-use crate::{graphics::ImageProtocol, theme::Rgb};
+use crate::{
+    graphics::ImageProtocol,
+    theme::{Palette, Rgb},
+};
 
 const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 
@@ -257,7 +260,8 @@ impl NamedColor {
     /// Bright enough to read on the dark background, like the colors taken from covers.
     fn rgb(self) -> Rgb {
         match self {
-            NamedColor::Green => crate::theme::DEFAULT_ACCENT,
+            // cloofy's own green, whatever accent the palette has.
+            NamedColor::Green => Palette::DEFAULT.accent,
             NamedColor::Violet => Rgb(167, 139, 250),
             NamedColor::Pink => Rgb(255, 143, 177),
             NamedColor::Blue => Rgb(96, 165, 250),

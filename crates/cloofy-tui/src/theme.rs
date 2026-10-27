@@ -1,19 +1,66 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::{PoisonError, RwLock},
+    time::{Duration, Instant},
+};
 
 use image::DynamicImage;
 use ratatui::style::Color;
 
-pub const BG: Color = Color::Rgb(13, 13, 16);
-pub const SURFACE: Color = Color::Rgb(19, 19, 23);
-pub const PLAYER: Color = Color::Rgb(17, 17, 21);
-pub const RAISED: Color = Color::Rgb(30, 30, 37);
-pub const TEXT: Color = Color::Rgb(236, 236, 241);
-pub const MUTED: Color = Color::Rgb(140, 140, 152);
-pub const FAINT: Color = Color::Rgb(78, 78, 88);
-pub const DANGER: Color = Color::Rgb(255, 99, 99);
-
-pub(crate) const DEFAULT_ACCENT: Rgb = Rgb(30, 215, 96);
 const ACCENT_FADE: Duration = Duration::from_millis(600);
+
+/// The colors the interface is drawn with. They can change while cloofy runs, so drawing code
+/// reads them with [`palette`] as it draws rather than keeping them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    /// Behind everything.
+    pub bg: Color,
+    /// The sidebar.
+    pub surface: Color,
+    /// The player bar.
+    pub player: Color,
+    /// Cards, menus and anything else that sits on top.
+    pub raised: Color,
+    pub text: Color,
+    /// Secondary text, such as artists and counts.
+    pub muted: Color,
+    /// Hints, separators and what is disabled.
+    pub faint: Color,
+    /// Errors.
+    pub danger: Color,
+    /// The accent while no cover or setting picks another.
+    pub accent: Rgb,
+}
+
+impl Palette {
+    /// cloofy's own dark colors, with Spotify's green.
+    pub const DEFAULT: Palette = Palette {
+        bg: Color::Rgb(13, 13, 16),
+        surface: Color::Rgb(19, 19, 23),
+        player: Color::Rgb(17, 17, 21),
+        raised: Color::Rgb(30, 30, 37),
+        text: Color::Rgb(236, 236, 241),
+        muted: Color::Rgb(140, 140, 152),
+        faint: Color::Rgb(78, 78, 88),
+        danger: Color::Rgb(255, 99, 99),
+        accent: Rgb(30, 215, 96),
+    };
+}
+
+/// A lock rather than constants, so the colors can follow the system's theme. Drawing only
+/// reads it, which costs next to nothing while nobody writes.
+static PALETTE: RwLock<Palette> = RwLock::new(Palette::DEFAULT);
+
+/// The colors to draw with now.
+pub fn palette() -> Palette {
+    // A palette is plain data, so one left by a panicking writer is still whole.
+    *PALETTE.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Draws with `palette` from the next frame on.
+#[allow(dead_code)] // Until the system's theme feeds it.
+pub fn set_palette(palette: Palette) {
+    *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = palette;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -22,6 +69,14 @@ impl Rgb {
     pub fn mix(self, other: Rgb, t: f32) -> Rgb {
         let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
         Rgb(lerp(self.0, other.0), lerp(self.1, other.1), lerp(self.2, other.2))
+    }
+
+    /// The parts of a palette color, which is always RGB; anything else counts as black.
+    pub fn of(color: Color) -> Rgb {
+        match color {
+            Color::Rgb(r, g, b) => Rgb(r, g, b),
+            _ => Rgb(0, 0, 0),
+        }
     }
 }
 
@@ -40,7 +95,8 @@ pub struct Accent {
 
 impl Accent {
     pub fn new() -> Self {
-        Self { from: DEFAULT_ACCENT, to: DEFAULT_ACCENT, since: Instant::now() - ACCENT_FADE }
+        let accent = palette().accent;
+        Self { from: accent, to: accent, since: Instant::now() - ACCENT_FADE }
     }
 
     pub fn set(&mut self, target: Rgb) {
@@ -68,7 +124,7 @@ impl Accent {
 
     /// The selection background: a raised surface tinted with the accent.
     pub fn selection(&self) -> Color {
-        Rgb(30, 30, 37).mix(self.rgb(), 0.14).into()
+        Rgb::of(palette().raised).mix(self.rgb(), 0.14).into()
     }
 
     pub fn is_fading(&self) -> bool {
@@ -98,7 +154,7 @@ pub fn accent_from_image(image: &DynamicImage) -> Rgb {
     }
     let [r, g, b, weight] = buckets.into_iter().max_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or_default();
     if weight < 1.0 {
-        return DEFAULT_ACCENT;
+        return palette().accent;
     }
     let (h, s, l) = rgb_to_hsl(r / weight, g / weight, b / weight);
     let (r, g, b) = hsl_to_rgb(h, s.clamp(0.55, 0.85), l.clamp(0.58, 0.70));

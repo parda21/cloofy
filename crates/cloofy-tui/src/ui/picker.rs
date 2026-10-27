@@ -13,7 +13,7 @@ use super::text::{self, fit};
 use crate::{
     app::{App, Hit},
     overlay::{Overlay, Picker},
-    theme::{FAINT, MUTED, RAISED, TEXT},
+    theme,
 };
 
 const WIDTH: u16 = 64;
@@ -29,6 +29,7 @@ struct Row {
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let selection = app.accent.selection();
     let frame_no = app.frame();
@@ -68,8 +69,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     Clear.render(popup, buf);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(FAINT))
-        .style(Style::new().bg(RAISED))
+        .border_style(Style::new().fg(p.faint))
+        .style(Style::new().bg(p.raised))
         .render(popup, buf);
     let mut hits = vec![(popup, Hit::OverlayArea)];
     if popup.height < 5 {
@@ -81,20 +82,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let inner = Rect::new(popup.x + 2, popup.y + 1, popup.width.saturating_sub(4), popup.height.saturating_sub(2));
     let mut input = vec![Span::styled("›  ", accent)];
     if query.is_empty() {
-        input.push(Span::styled(title, FAINT));
+        input.push(Span::styled(title, p.faint));
     } else {
-        input.push(Span::styled(query, Style::new().fg(TEXT).bold()));
+        input.push(Span::styled(query, Style::new().fg(p.text).bold()));
     }
     input.push(Span::styled("▏", accent));
     buf.set_line(inner.x, inner.y, &Line::from(input), inner.width);
     if refreshing {
-        buf.set_string(inner.right().saturating_sub(1), inner.y, text::spinner(frame_no), Style::new().fg(FAINT));
+        buf.set_string(inner.right().saturating_sub(1), inner.y, text::spinner(frame_no), Style::new().fg(p.faint));
     }
     buf.set_string(
         popup.x + 1,
         inner.y + 1,
         "─".repeat(popup.width.saturating_sub(2) as usize),
-        Style::new().fg(FAINT),
+        Style::new().fg(p.faint),
     );
 
     let fitting = (list_height / row_height).max(1) as usize;
@@ -104,7 +105,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // Rows end above the bottom border even where the list had to be cut shorter.
     let list_bottom = list.bottom().min(popup.bottom().saturating_sub(1));
     if rows.is_empty() && list.y < list_bottom {
-        buf.set_string(list.x, list.y, "Nothing found.", Style::new().fg(MUTED));
+        buf.set_string(list.x, list.y, "Nothing found.", Style::new().fg(p.muted));
     }
     let visible = cursor.visible(fitting, rows.len());
     let (selected, offset) = (cursor.selected, cursor.offset);
@@ -121,12 +122,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             buf.set_style(row_area, Style::new().bg(selection));
             buf.set_string(popup.x + 1, y, "▌", Style::new().fg(accent));
         }
-        let label_style = if is_selected { Style::new().fg(TEXT).bold() } else { Style::new().fg(TEXT) };
+        let label_style = if is_selected { Style::new().fg(p.text).bold() } else { Style::new().fg(p.text) };
         if row_height > 1 {
             let x = list.x + THUMB.width + 2;
             let width = list.right().saturating_sub(x) as usize;
             buf.set_string(x, y, text::truncate(&row.label, width), label_style);
-            buf.set_string(x, y + 1, text::truncate(&row.detail, width), Style::new().fg(MUTED));
+            buf.set_string(x, y + 1, text::truncate(&row.detail, width), Style::new().fg(p.muted));
             thumbs.push((Rect::new(list.x, y, THUMB.width, THUMB.height), row.image_url.clone()));
         } else {
             let detail_width = row.detail.width().min(14);
@@ -134,7 +135,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             let line = Line::from(vec![
                 Span::styled(fit(&row.label, label_width), label_style),
                 Span::raw("  "),
-                Span::styled(text::truncate(&row.detail, detail_width), FAINT),
+                Span::styled(text::truncate(&row.detail, detail_width), p.faint),
             ]);
             buf.set_line(list.x, y, &line, list.width);
         }
@@ -143,7 +144,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     super::scrollbar(buf, inner.right(), list.y, list_bottom - list.y, rows.len(), offset, fitting);
     if popup.height >= 7 {
         let footer = "↑↓ move   enter select   esc close";
-        buf.set_string(inner.x, popup.bottom().saturating_sub(2), footer, Style::new().fg(FAINT));
+        buf.set_string(inner.x, popup.bottom().saturating_sub(2), footer, Style::new().fg(p.faint));
     }
 
     for (area, url) in thumbs {

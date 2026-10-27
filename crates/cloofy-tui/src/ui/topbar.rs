@@ -14,7 +14,7 @@ use crate::{
     app::{App, Focus, HintAction, Hit, NavItem, Update},
     commands::Command,
     icons::icons,
-    theme::{BG, FAINT, MUTED, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -27,7 +27,8 @@ const DISABLED: Color = Color::Rgb(58, 58, 68);
 const COMPACT_SEARCH_MIN: u16 = 30;
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
-    buf.set_style(area, Style::new().bg(BG));
+    let p = theme::palette();
+    buf.set_style(area, Style::new().bg(p.bg));
     if area.height < HEIGHT {
         return compact(buf, app, area);
     }
@@ -60,7 +61,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         let name = format!("{}  {}", icons().artist, me.name);
         let width = name.width() as u16;
         if right.saturating_sub(width) > search.right() + 2 {
-            buf.set_string(right - width, row, name, Style::new().fg(MUTED));
+            buf.set_string(right - width, row, name, Style::new().fg(p.muted));
             // Like the profile menu in Spotify's apps, the name leads to the settings.
             app.hits.push((Rect::new(right - width, row, width, 1), Hit::Command(Command::Settings)));
         }
@@ -82,6 +83,7 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
 /// The update button, its right edge at `right`, with as much of its label as fits into `room`
 /// columns and at least its icon. Draws nothing without an update.
 fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
+    let p = theme::palette();
     let (icon, labels) = match app.update.as_ref()? {
         Update::Available(release) => (icons().update, [format!("Update to v{}", release.version()), "Update".into()]),
         // Nothing to install here: the button says what's out, and a click how to update.
@@ -104,7 +106,7 @@ fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u
         .find(|content| content.width() as u16 + 2 * padding <= room)?;
     let width = content.width() as u16 + 2 * padding;
     let area = Rect::new(right.saturating_sub(width), y, width, 1).intersection(buf.area);
-    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_style(area, Style::new().bg(p.raised));
     buf.set_string(area.x + padding, y, content, Style::new().fg(app.accent.color()).bold());
     app.hits.push((area, Hit::Command(Command::Update)));
     Some(area)
@@ -114,12 +116,13 @@ fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u
 /// `enabled`. The home icon lights up while Home is open.
 #[allow(clippy::too_many_arguments)]
 fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &str, hit: Hit, enabled: bool) -> Rect {
+    let p = theme::palette();
     let area = Rect::new(x, y, 2 * padding + 1, 1).intersection(buf.area);
-    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_style(area, Style::new().bg(p.raised));
     let color = match hit {
         _ if !enabled => DISABLED,
         Hit::Command(Command::Home) if app.is_open(NavItem::Home) => app.accent.color(),
-        _ => TEXT,
+        _ => p.text,
     };
     buf.set_string(x + padding, y, icon, Style::new().fg(color));
     if enabled {
@@ -130,20 +133,21 @@ fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &
 
 /// The search field: icon, then the query or a prompt, and a spinner while results load.
 fn search_field(buf: &mut Buffer, app: &mut App, area: Rect, padding: u16) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let typing = app.focus == Focus::SearchInput && !app.zen;
-    buf.set_style(area, Style::new().bg(if typing { app.accent.selection() } else { RAISED }));
+    buf.set_style(area, Style::new().bg(if typing { app.accent.selection() } else { p.raised }));
     let (query, loading) = match &app.view {
         View::Search(v) => (v.query.clone(), v.loading),
         _ => (String::new(), false),
     };
-    let icon_style = Style::new().fg(if typing { accent } else { MUTED });
+    let icon_style = Style::new().fg(if typing { accent } else { p.muted });
     let mut spans = vec![Span::styled(format!("{}  ", icons().search), icon_style)];
     let room = area.width.saturating_sub(2 * padding + 6) as usize;
     if query.is_empty() && !typing {
-        spans.push(Span::styled(text::truncate("What do you want to play?", room), FAINT));
+        spans.push(Span::styled(text::truncate("What do you want to play?", room), p.faint));
     } else {
-        spans.push(Span::styled(tail(&query, room), Style::new().fg(TEXT).bold()));
+        spans.push(Span::styled(tail(&query, room), Style::new().fg(p.text).bold()));
         if typing {
             spans.push(Span::styled("▏", accent));
         }
@@ -154,7 +158,7 @@ fn search_field(buf: &mut Buffer, app: &mut App, area: Rect, padding: u16) {
             area.right().saturating_sub(padding + 1),
             area.y,
             text::spinner(app.frame()),
-            Style::new().fg(FAINT),
+            Style::new().fg(p.faint),
         );
     }
     app.hits.push((area, Hit::SearchInput));

@@ -9,7 +9,7 @@ use ratatui::{
 use super::{content, home, sidebar, text};
 use crate::{
     app::{App, Focus, Hit, LibraryEntry, LibraryFilter},
-    theme::{MUTED, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -22,6 +22,7 @@ const HEADER_ROWS: u16 = 5;
 const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     app.content_area = area;
     app.hits.push((area, Hit::ContentArea));
     let inner = Rect::new(area.x + 3, area.y + 1, area.width.saturating_sub(6), area.height.saturating_sub(1));
@@ -35,7 +36,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let filter = view.filter;
 
     let buf = frame.buffer_mut();
-    buf.set_string(inner.x, inner.y, "Your Library", Style::new().fg(TEXT).bold());
+    buf.set_string(inner.x, inner.y, "Your Library", Style::new().fg(p.text).bold());
     let filters: Vec<_> = std::iter::once(LibraryFilter::All).chain(app.library_filters()).collect();
     let tabs = sidebar::tabs(buf, inner.x, inner.y + 2, inner.right(), &filters, filter, accent);
     app.hits.extend(tabs.into_iter().map(|(rect, filter)| (rect, Hit::PageChip(filter))));
@@ -49,7 +50,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "Nothing here yet.".to_owned()
         };
-        frame.buffer_mut().set_string(grid.x, grid.y, message, Style::new().fg(MUTED));
+        frame.buffer_mut().set_string(grid.x, grid.y, message, Style::new().fg(p.muted));
         return;
     }
     // Too little room for covers: one entry per row instead.
@@ -110,7 +111,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 grid.x + (width / 2) as u16 + 2,
                 y,
                 text::truncate(&subtitle, width / 2 - 2),
-                Style::new().fg(MUTED),
+                Style::new().fg(p.muted),
             );
             app.hits.push((row, Hit::Row(index)));
         }
@@ -136,7 +137,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if !super::cover_in(frame, app, image_url.as_deref(), COVER, round, (x, y), COVER, grid)
             && let Some(part) = home::clip(grid, x, COVER.width, y, COVER.height)
         {
-            frame.buffer_mut().set_style(part, Style::new().bg(RAISED));
+            frame.buffer_mut().set_style(part, Style::new().bg(p.raised));
         }
         let playing = is_playing(app, entry);
         let title_style = home::card_title_style(accent, playing, selected);
@@ -151,7 +152,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
         if let Some(row) = home::row(grid, text_y + 1) {
-            buf.set_string(x, row, text::truncate(&subtitle, COVER.width as usize), Style::new().fg(MUTED));
+            buf.set_string(x, row, text::truncate(&subtitle, COVER.width as usize), Style::new().fg(p.muted));
         }
         if let Some(card) = card {
             app.hits.push((card, Hit::Row(index)));

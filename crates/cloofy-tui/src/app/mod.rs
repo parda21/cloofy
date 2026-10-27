@@ -42,7 +42,7 @@ use crate::{
     preferences::{AccentChoice, Preferences, Setting},
     queue::Queue,
     snapshot::Placement,
-    theme::{Accent, BG, RAISED, Rgb},
+    theme::{self, Accent, Rgb},
     views::{
         ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, QueueRow, SearchEntry, SearchView, TrackSource,
         TrackView, View,
@@ -2623,11 +2623,12 @@ impl App {
 
     /// Called by the first draw of an overlay, which knows where it ended up.
     pub fn animate_overlay(&mut self, area: Rect) {
+        let p = theme::palette();
         self.overlay_fx_pending = false;
         let effect = if self.settings.reduce_motion {
-            fx::fade_from_fg(RAISED, (150, Interpolation::QuadOut))
+            fx::fade_from_fg(p.raised, (150, Interpolation::QuadOut))
         } else {
-            fx::sweep_in(Motion::UpToDown, 6, 0, RAISED, (180, Interpolation::QuadOut))
+            fx::sweep_in(Motion::UpToDown, 6, 0, p.raised, (180, Interpolation::QuadOut))
         };
         self.animate(Fx::Overlay, effect.with_area(area));
     }
@@ -2702,9 +2703,10 @@ impl App {
     }
 
     fn toggle_zen(&mut self) {
+        let p = theme::palette();
         self.zen = !self.zen;
         let screen = self.screen;
-        self.animate(Fx::Screen, fx::fade_from_fg(BG, (320, Interpolation::QuadOut)).with_area(screen));
+        self.animate(Fx::Screen, fx::fade_from_fg(p.bg, (320, Interpolation::QuadOut)).with_area(screen));
     }
 
     /// Starts an animation; the next frame measures time from now. None in Low Power Mode.
@@ -3205,8 +3207,9 @@ impl App {
 
     /// A new page's text fades in briefly, while its backgrounds and covers are there at once.
     fn animate_content(&mut self) {
+        let p = theme::palette();
         let area = self.content_area;
-        let effect = fx::fade_from_fg(BG, (120, Interpolation::QuadOut)).with_area(area);
+        let effect = fx::fade_from_fg(p.bg, (120, Interpolation::QuadOut)).with_area(area);
         self.animate(Fx::Content, effect);
     }
 

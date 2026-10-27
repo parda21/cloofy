@@ -11,7 +11,7 @@ use crate::{
     app::{App, Focus, Hit},
     graphics::ImageProtocol,
     preferences::{SECTIONS, Setting},
-    theme::{BG, FAINT, MUTED, RAISED, TEXT},
+    theme,
     views::View,
 };
 
@@ -46,6 +46,7 @@ fn rows() -> Vec<Row> {
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     app.content_area = area;
     let inner = Rect {
         x: area.x + 3,
@@ -83,10 +84,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let y = inner.y + offset as u16;
         match *row {
             Row::Title => {
-                buf.set_string(inner.x, y, "Settings", Style::new().fg(TEXT).bold());
+                buf.set_string(inner.x, y, "Settings", Style::new().fg(p.text).bold());
             }
             Row::Section(title) => {
-                buf.set_string(inner.x, y, title, Style::new().fg(TEXT).bold());
+                buf.set_string(inner.x, y, title, Style::new().fg(p.text).bold());
             }
             Row::Name(index, setting) => {
                 // The band covers the name and the line under it, like a two-row list entry.
@@ -102,11 +103,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 app.hits.push((band, Hit::Row(index)));
                 let value_x = value(buf, app, index, setting, inner.right(), y);
                 let width = value_x.saturating_sub(inner.x + 2) as usize;
-                buf.set_string(inner.x, y, text::truncate(setting.label(), width), Style::new().fg(TEXT));
+                buf.set_string(inner.x, y, text::truncate(setting.label(), width), Style::new().fg(p.text));
             }
             Row::About(setting) => {
                 let about = about(app, setting);
-                buf.set_string(inner.x, y, text::truncate(&about, inner.width as usize), Style::new().fg(MUTED));
+                buf.set_string(inner.x, y, text::truncate(&about, inner.width as usize), Style::new().fg(p.muted));
             }
             Row::Blank => {}
             Row::Footer => {
@@ -116,7 +117,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     format!("Saved in {}", app.config_path())
                 };
                 let footer = format!("cloofy {} · {saved}", env!("CARGO_PKG_VERSION"));
-                buf.set_string(inner.x, y, text::truncate(&footer, inner.width as usize), Style::new().fg(FAINT));
+                buf.set_string(inner.x, y, text::truncate(&footer, inner.width as usize), Style::new().fg(p.faint));
             }
         }
     }
@@ -138,6 +139,7 @@ fn about(app: &App, setting: Setting) -> Cow<'static, str> {
 /// Draws the value of `setting` ending at column `right`, with its click targets. Returns
 /// where it starts.
 fn value(buf: &mut Buffer, app: &mut App, index: usize, setting: Setting, right: u16, y: u16) -> u16 {
+    let p = theme::palette();
     let accent = app.accent.color();
     let shown = app.prefs.value(setting);
     if let Some(on) = app.prefs.switch(setting) {
@@ -145,7 +147,7 @@ fn value(buf: &mut Buffer, app: &mut App, index: usize, setting: Setting, right:
         let label = format!(" {shown} ");
         let width = label.width() as u16;
         let x = right.saturating_sub(width);
-        let style = if on { Style::new().bg(accent).fg(BG).bold() } else { Style::new().bg(RAISED).fg(MUTED) };
+        let style = if on { Style::new().bg(accent).fg(p.bg).bold() } else { Style::new().bg(p.raised).fg(p.muted) };
         buf.set_string(x, y, &label, style);
         app.hits.push((Rect::new(x, y, width, 1), Hit::SettingStep { index, forward: true }));
         return x;
@@ -153,10 +155,10 @@ fn value(buf: &mut Buffer, app: &mut App, index: usize, setting: Setting, right:
     let choice = format!("{shown:^CHOICE_WIDTH$}");
     let width = choice.width() as u16 + 6;
     let x = right.saturating_sub(width);
-    let pill = Style::new().bg(RAISED);
-    buf.set_string(x, y, " ‹ ", pill.fg(MUTED));
-    buf.set_string(x + 3, y, &choice, pill.fg(TEXT));
-    buf.set_string(x + width - 3, y, " › ", pill.fg(MUTED));
+    let pill = Style::new().bg(p.raised);
+    buf.set_string(x, y, " ‹ ", pill.fg(p.muted));
+    buf.set_string(x + 3, y, &choice, pill.fg(p.text));
+    buf.set_string(x + width - 3, y, " › ", pill.fg(p.muted));
     app.hits.push((Rect::new(x, y, 3, 1), Hit::SettingStep { index, forward: false }));
     app.hits.push((Rect::new(x + 3, y, width - 3, 1), Hit::SettingStep { index, forward: true }));
     x

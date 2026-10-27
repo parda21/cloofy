@@ -13,7 +13,7 @@ use super::{player_bar, text};
 use crate::{
     app::{App, Hit},
     icons::icons,
-    theme::{FAINT, MUTED, RAISED, Rgb, TEXT},
+    theme::{self, Rgb},
 };
 
 /// Below this size the cover is left out and the lyrics get the whole screen.
@@ -24,15 +24,16 @@ const INFO_ROWS: u16 = 7;
 const LYRIC_SPACING: f32 = 2.0;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     let accent = app.accent.rgb();
-    let background: Color = Rgb(13, 13, 16).mix(accent, 0.09).into();
+    let background: Color = Rgb::of(p.bg).mix(accent, 0.09).into();
     frame.buffer_mut().set_style(area, Style::new().bg(background));
     app.zen_cover_want = None;
 
     let Some(track) = &app.now.track else {
         let message = "Nothing playing · z or esc to go back";
         let x = area.x + area.width.saturating_sub(message.width() as u16) / 2;
-        frame.buffer_mut().set_string(x, area.y + area.height / 2, message, Style::new().fg(MUTED));
+        frame.buffer_mut().set_string(x, area.y + area.height / 2, message, Style::new().fg(p.muted));
         return;
     };
     let title = track.name.clone();
@@ -69,8 +70,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let buf = frame.buffer_mut();
-    buf.set_string(info.x, info.y + 1, text::truncate(&title, info.width as usize), Style::new().fg(TEXT).bold());
-    buf.set_string(info.x, info.y + 2, text::truncate(&by, info.width as usize), Style::new().fg(MUTED));
+    buf.set_string(info.x, info.y + 1, text::truncate(&title, info.width as usize), Style::new().fg(p.text).bold());
+    buf.set_string(info.x, info.y + 2, text::truncate(&by, info.width as usize), Style::new().fg(p.muted));
     let bar = Rect { y: info.y + 4, height: 1, ..info };
     let seek =
         player_bar::progress(buf, bar, app.seek_preview.unwrap_or(app.now.position_ms()), duration_ms, accent_color);
@@ -91,6 +92,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_cover(frame: &mut Frame, app: &mut App, area: Rect) {
+    let p = theme::palette();
     app.zen_cover_want = Some(Size::new(area.width, area.height));
     let url = app.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
     let placed = match &app.zen_cover {
@@ -101,20 +103,21 @@ fn draw_cover(frame: &mut Frame, app: &mut App, area: Rect) {
         Some(placement) => app.placements.extend(placement),
         None => {
             let buf = frame.buffer_mut();
-            buf.set_style(area, Style::new().bg(RAISED));
-            buf.set_string(area.x + area.width / 2, area.y + area.height / 2, icons().note, Style::new().fg(FAINT));
+            buf.set_style(area, Style::new().bg(p.raised));
+            buf.set_string(area.x + area.width / 2, area.y + area.height / 2, icons().note, Style::new().fg(p.faint));
         }
     }
     app.hits.push((area, Hit::Cover));
 }
 
 fn draw_lyrics(buf: &mut Buffer, app: &App, area: Rect, accent: Color) {
+    let p = theme::palette();
     if area.width < 10 || area.height < 3 {
         return;
     }
     let center = area.y + area.height / 2;
     let message = |buf: &mut Buffer, text: String| {
-        buf.set_string(area.x, center, text, Style::new().fg(MUTED));
+        buf.set_string(area.x, center, text, Style::new().fg(p.muted));
     };
     let Some(state) = &app.lyrics else { return };
     let lyrics = match &state.result {
@@ -142,7 +145,7 @@ fn draw_lyrics(buf: &mut Buffer, app: &App, area: Rect, accent: Color) {
                 let color: Color = Rgb(200, 200, 210).mix(Rgb(70, 70, 80), fade).into();
                 Style::new().fg(color)
             }
-            None => Style::new().fg(MUTED),
+            None => Style::new().fg(p.muted),
         };
         let prefix = if current == Some(index) { "▸ " } else { "  " };
         let line =
@@ -152,5 +155,5 @@ fn draw_lyrics(buf: &mut Buffer, app: &App, area: Rect, accent: Color) {
 
     let source = format!("Lyrics · {}", lyrics.provider);
     let x = area.right().saturating_sub(source.width() as u16);
-    buf.set_string(x, area.bottom().saturating_sub(1), source, Style::new().fg(FAINT));
+    buf.set_string(x, area.bottom().saturating_sub(1), source, Style::new().fg(p.faint));
 }
