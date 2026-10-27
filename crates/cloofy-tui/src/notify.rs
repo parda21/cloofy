@@ -40,7 +40,7 @@ enum Channel {
         tmux: bool,
     },
     /// The desktop's notification server, under Omarchy: its notifications show the cover, and
-    /// a click on one finds cloofy's window by the app's name.
+    /// a click on one brings cloofy's window to the front.
     #[cfg(target_os = "linux")]
     Desktop(cloofy_os::notifications::Notifications),
 }

@@ -192,22 +192,6 @@ BarWidget {
       id: card
       width: parent.width
       spacing: Style.space(12)
-      focus: root.popupOpen
-
-      Keys.onPressed: function(event) {
-        var player = root.player
-        if (event.key === Qt.Key_Escape) root.close()
-        else if (event.key === Qt.Key_Space) root.playPause()
-        else if (event.key === Qt.Key_N || event.key === Qt.Key_Period) root.skip(1)
-        else if (event.key === Qt.Key_P || event.key === Qt.Key_Comma) root.skip(-1)
-        else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.showCloofy()
-        else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && player && player.canSeek)
-          player.position = Math.max(0, Math.min(player.length, player.position + (event.key === Qt.Key_Right ? 10 : -10)))
-        else if ((event.key === Qt.Key_Up || event.key === Qt.Key_Down) && player && player.volumeSupported)
-          player.volume = Math.max(0, Math.min(1, player.volume + (event.key === Qt.Key_Up ? 0.05 : -0.05)))
-        else return
-        event.accepted = true
-      }
 
       // The cover, as large as the card is wide, with the service in a corner.
       Item {
