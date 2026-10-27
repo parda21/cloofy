@@ -12,7 +12,7 @@ description = "A Spotify client for the terminal"
 [features]
 default = ["spotify", "ytmusic"]
 spotify = ["cloofy-tui/spotify", "dep:cloofy-spotify", "dep:cloofy-player", "dep:librespot"]
-ytmusic = ["cloofy-tui/ytmusic", "dep:cloofy-ytmusic"]
+ytmusic = ["cloofy-tui/ytmusic", "dep:cloofy-ytmusic", "dep:crossterm"]
 
 [dependencies]
 cloofy-core.workspace = true
@@ -23,6 +23,8 @@ cloofy-tui.workspace = true
 cloofy-os.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+# Picking the browser to sign in to YouTube Music with, by its arrow keys.
+crossterm = { workspace = true, optional = true }
 libc.workspace = true
 librespot = { workspace = true, optional = true }
 reqwest.workspace = true

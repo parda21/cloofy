@@ -1,15 +1,9 @@
 //! `cloofy play` and `cloofy connect`: Spotify without the interface.
 
-use std::{
-    io::Write,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use cloofy_core::{
-    paths::Paths,
-    player::{CurrentTrack, PlayerEvent},
-};
+use cloofy_core::{paths::Paths, player::PlayerEvent};
 use cloofy_os::media::Command;
 use cloofy_player::{DEFAULT_VOLUME, Engine, events};
 use cloofy_spotify::session;
@@ -19,9 +13,12 @@ use librespot::{
     metadata::{Metadata, Track},
 };
 
-use crate::{media::Media, style};
+use crate::{
+    headless::{Clock, describe, draw_progress},
+    media::Media,
+    style,
+};
 
-const BAR_WIDTH: usize = 40;
 const DEVICE_NAME: &str = "cloofy";
 
 /// Plays standalone: cloofy activates itself as the playing device and loads the context.
@@ -171,50 +168,4 @@ fn parse_uri(input: &str) -> Result<SpotifyUri> {
         None => input.to_owned(),
     };
     SpotifyUri::from_uri(&uri).with_context(|| format!("“{input}” is not a valid Spotify URI"))
-}
-
-fn describe(track: &CurrentTrack) -> String {
-    format!("{}  {}", style::bold(&track.name), style::dim(&track.artists.join(", ")))
-}
-
-fn draw_progress(position: Duration, duration: Duration) {
-    let ratio = if duration.is_zero() { 0.0 } else { position.as_secs_f64() / duration.as_secs_f64() };
-    let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
-    print!(
-        "\r\x1b[2K  {}  {}{}{}  {}",
-        style::dim(&clock(position)),
-        style::green(&"━".repeat(filled)),
-        style::green("●"),
-        style::dim(&"─".repeat(BAR_WIDTH - filled)),
-        style::dim(&clock(duration)),
-    );
-    let _ = std::io::stdout().flush();
-}
-
-fn clock(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    format!("{}:{:02}", secs / 60, secs % 60)
-}
-
-/// Playback position, extrapolated between player events.
-#[derive(Default)]
-struct Clock {
-    base_ms: u32,
-    since: Option<Instant>,
-}
-
-impl Clock {
-    fn resume(&mut self, position_ms: u32) {
-        self.base_ms = position_ms;
-        self.since = Some(Instant::now());
-    }
-
-    fn pause(&mut self, position_ms: u32) {
-        self.base_ms = position_ms;
-        self.since = None;
-    }
-
-    fn position(&self) -> Duration {
-        Duration::from_millis(self.base_ms.into()) + self.since.map_or(Duration::ZERO, |s| s.elapsed())
-    }
 }

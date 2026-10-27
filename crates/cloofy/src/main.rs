@@ -1,16 +1,25 @@
 // Without a service, the commands for one have nothing to hand their arguments to, and stop
 // at the first service they would go through.
-#![cfg_attr(not(feature = "spotify"), allow(unused_variables, clippy::never_loop))]
+#![cfg_attr(
+    not(any(feature = "spotify", feature = "ytmusic")),
+    allow(unused_variables, unreachable_code, clippy::never_loop)
+)]
 
 mod doctor;
-#[cfg(feature = "spotify")]
+#[cfg(any(feature = "spotify", feature = "ytmusic"))]
+mod headless;
+#[cfg(any(feature = "spotify", feature = "ytmusic"))]
 mod media;
 #[cfg(target_os = "linux")]
 mod omarchy;
+#[cfg(feature = "ytmusic")]
+mod prompt;
 #[cfg(feature = "spotify")]
 mod spotify;
 mod style;
 mod update;
+#[cfg(feature = "ytmusic")]
+mod ytmusic;
 
 use std::sync::LazyLock;
 
@@ -38,6 +47,12 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Sign out of YouTube Music; it browses and plays without an account then
+    #[cfg(feature = "ytmusic")]
+    Logout {
+        #[arg(value_parser = PossibleValuesParser::new([Service::YouTubeMusic.key()]))]
+        service: String,
+    },
     /// Check what each of your music services can reach
     Doctor,
     /// Update cloofy to the latest release
@@ -45,7 +60,8 @@ enum Command {
     Update,
     /// Play a song, album, playlist or artist directly in cloofy
     Play {
-        /// URI or link, e.g. https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc
+        /// URI or link, e.g. https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc or
+        /// https://music.youtube.com/watch?v=d7woYjGWs6k
         uri: String,
         /// Shuffle
         #[arg(short, long)]
@@ -144,6 +160,8 @@ async fn run() -> Result<()> {
     init_logging(&paths, matches!(cli.command, None | Some(Command::Demo)))?;
     match cli.command {
         Some(Command::Login { service, force }) => login(&paths, service.as_deref(), force).await,
+        #[cfg(feature = "ytmusic")]
+        Some(Command::Logout { .. }) => ytmusic::logout(&paths),
         Some(Command::Doctor) => doctor::run(&paths, &services(&paths, None)?).await,
         Some(Command::Update) => update::run().await,
         Some(Command::Play { uri, shuffle }) => play(&paths, &uri, shuffle).await,
@@ -193,18 +211,30 @@ fn init_logging(paths: &Paths, tui: bool) -> Result<()> {
     Ok(())
 }
 
+/// Signs in to the service `named`, or to every one in use; YouTube Music, which plays
+/// without an account too, only when asked to or when the user says yes.
 async fn login(paths: &Paths, named: Option<&str>, force: bool) -> Result<()> {
-    let config = Config::load(paths)?;
     let services = services(paths, named)?;
     for &service in &services {
         if services.len() > 1 {
             println!("\n  {}", style::bold(service.name()));
         }
-        match service {
+        let signed_in: bool = match service {
             #[cfg(feature = "spotify")]
-            Service::Spotify => spotify::login(paths, &config, force).await?,
+            Service::Spotify => spotify::login(paths, &Config::load(paths)?, force).await.map(|()| true)?,
+            #[cfg(feature = "ytmusic")]
+            Service::YouTubeMusic => {
+                if services.len() == 1 {
+                    println!();
+                }
+                ytmusic::login(paths, force, services.len() > 1).await?
+            }
             #[allow(unreachable_patterns)]
             other => bail!("{} isn't built into this cloofy", other.name()),
+        };
+        // Nothing to test after a sign-in that was called off.
+        if !signed_in && services.len() == 1 {
+            return Ok(());
         }
     }
     println!("  Done. Test everything with {}\n", style::bold("cloofy doctor"));
@@ -217,17 +247,21 @@ async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     match link_service(input).or(SERVICES.first().copied()) {
         #[cfg(feature = "spotify")]
         Some(Service::Spotify) => spotify::play(paths, input, shuffle).await,
+        #[cfg(feature = "ytmusic")]
+        Some(Service::YouTubeMusic) => ytmusic::play(paths, input, shuffle).await,
         #[allow(unreachable_patterns)]
         Some(other) => bail!("{} isn't built into this cloofy", other.name()),
         None => bail!("{}", cloofy_tui::no_service(paths)),
     }
 }
 
-/// The service of a URI, or of a link to its website.
+/// The service of a URI, or of a link to its website; YouTube's own play on YouTube Music.
 fn link_service(input: &str) -> Option<Service> {
+    let youtube = ["music.youtube.com/", "www.youtube.com/", "youtube.com/", "m.youtube.com/", "youtu.be/"];
+    let site = input.strip_prefix("https://").or_else(|| input.strip_prefix("http://"));
     if input.starts_with("https://open.spotify.com/") {
         Some(Service::Spotify)
-    } else if input.starts_with("https://music.youtube.com/") {
+    } else if site.is_some_and(|site| youtube.iter().any(|host| site.starts_with(host))) {
         Some(Service::YouTubeMusic)
     } else {
         Service::of(input)
@@ -245,6 +279,8 @@ mod tests {
         assert_eq!(link_service("https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc"), Some(Service::Spotify));
         assert_eq!(link_service("spotify:track:1"), Some(Service::Spotify));
         assert_eq!(link_service("https://music.youtube.com/watch?v=dQw4w9WgXcQ"), Some(Service::YouTubeMusic));
+        assert_eq!(link_service("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), Some(Service::YouTubeMusic));
+        assert_eq!(link_service("https://youtu.be/dQw4w9WgXcQ"), Some(Service::YouTubeMusic));
         assert_eq!(link_service("ytmusic:album:MPREb_1"), Some(Service::YouTubeMusic));
         assert_eq!(link_service("https://example.com/"), None);
     }
@@ -253,6 +289,7 @@ mod tests {
     fn says_which_services_are_built_in() {
         assert!(version().starts_with(env!("CARGO_PKG_VERSION")));
         assert_eq!(version().contains("spotify"), cfg!(feature = "spotify"));
+        assert_eq!(version().contains("ytmusic"), cfg!(feature = "ytmusic"));
         Cli::command().debug_assert();
     }
 }

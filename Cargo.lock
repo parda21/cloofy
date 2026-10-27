@@ -513,6 +513,7 @@ dependencies = [
  "cloofy-spotify",
  "cloofy-tui",
  "cloofy-ytmusic",
+ "crossterm",
  "libc",
  "librespot",
  "reqwest 0.13.5",

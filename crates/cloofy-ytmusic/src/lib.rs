@@ -9,6 +9,7 @@ pub mod doctor;
 mod home;
 mod innertube;
 mod library;
+mod link;
 mod lyrics;
 mod pages;
 mod parse;
@@ -29,8 +30,11 @@ use cloofy_core::{
 use futures::Stream;
 use serde_json::Value;
 
-pub use crate::player::Player;
 use crate::{innertube::InnerTube, library::Library};
+pub use crate::{
+    link::{Playable, playable},
+    player::Player,
+};
 
 /// What `tracks` lists.
 #[derive(Debug, Clone, PartialEq, Eq)]

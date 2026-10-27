@@ -2,7 +2,6 @@
 
 use anyhow::{Result, bail};
 use cloofy_core::{
-    config::Config,
     doctor::{self, Check, Expect, Outcome, Section},
     paths::Paths,
     service::Service,
@@ -16,22 +15,28 @@ pub async fn run(paths: &Paths, services: &[Service]) -> Result<()> {
     println!("\n  {}\n", style::bold("cloofy doctor"));
     let mut tally = Tally::default();
 
-    let config = Config::load(paths)?;
     for &service in services {
         let report = |section: Section| print_section(&section, &mut tally);
         match service {
             #[cfg(feature = "spotify")]
-            Service::Spotify => crate::spotify::doctor(paths, &config, report).await?,
+            Service::Spotify => {
+                crate::spotify::doctor(paths, &cloofy_core::config::Config::load(paths)?, report).await?
+            }
+            #[cfg(feature = "ytmusic")]
+            Service::YouTubeMusic => crate::ytmusic::doctor(paths, report).await?,
             #[allow(unreachable_patterns)]
             other => bail!("{} isn't built into this cloofy", other.name()),
         }
     }
     print_section(&doctor::external().await, &mut tally);
 
+    // Only Spotify removes what used to be there.
+    let removed =
+        (tally.removed > 0).then(|| format!(" · {} removed as expected", style::dim(&tally.removed.to_string())));
     println!(
-        "  {} available · {} removed as expected · {}\n",
+        "  {} available{} · {}\n",
         style::green(&tally.available.to_string()),
-        style::dim(&tally.removed.to_string()),
+        removed.unwrap_or_default(),
         if tally.problems == 0 {
             style::green("no problems")
         } else {
