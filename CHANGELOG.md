@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Homebrew and the AUR.** Install cloofy with `brew install parda21/cloofy/cloofy` on macOS and Linux, or on Arch Linux from the AUR, as `cloofy-bin` or built from source as `cloofy`. Installed this way, cloofy still tells you about new releases, and leaves installing them to the package manager.
+
 ## [0.3.0] - 2026-10-16
 
 The DJ takes requests, and cloofy updates itself.

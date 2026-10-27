@@ -83,6 +83,20 @@ curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | ba
 
 The installer checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup): your Spotify app, its client ID, and signing in. cloofy offers new releases itself, see [updates](#updates).
 
+With Homebrew, on macOS and Linux:
+
+```sh
+brew install parda21/cloofy/cloofy
+```
+
+On Arch Linux, from the AUR, as a prebuilt binary or built from source:
+
+```sh
+yay -S cloofy-bin   # or: yay -S cloofy
+```
+
+Installed with a package manager, go through the [setup](#setup) yourself. The package manager keeps cloofy up to date.
+
 <details>
 <summary>Installer options, building from source</summary>
 
