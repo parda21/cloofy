@@ -10,17 +10,16 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use cloofy_spotify::{
-    artist::{self, ArtistPage},
-    catalog::{self, AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User},
-    connect::{self, Device, Playback},
-    home::{self, Home},
-    lyrics::{self, Lyrics, LyricsQuery},
-    pathfinder::Pathfinder,
+use cloofy_core::{
+    artist::ArtistPage,
+    catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User},
+    connect::{Device, Playback},
+    home::Home,
+    lyrics::{Lyrics, LyricsQuery},
     paths::Paths,
     update::{self, Release},
-    webapi::WebApi,
 };
+use cloofy_spotify::{artist, catalog, connect, home, lyrics, pathfinder::Pathfinder, webapi::WebApi};
 use futures::{StreamExt, stream};
 use image::imageops::FilterType;
 use librespot::core::{SpotifyUri, session::Session};
@@ -252,8 +251,7 @@ impl Loader {
         image_cache: PathBuf,
         keep_sources: bool,
     ) -> Self {
-        let http =
-            cloofy_spotify::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default();
+        let http = cloofy_core::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default();
         // Leave cores for the interface and audio.
         let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
         let (remote, commands) = mpsc::unbounded_channel();

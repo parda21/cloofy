@@ -8,6 +8,7 @@ repository.workspace = true
 description = "A Spotify client for the terminal"
 
 [dependencies]
+cloofy-core.workspace = true
 cloofy-spotify.workspace = true
 cloofy-player.workspace = true
 cloofy-tui.workspace = true

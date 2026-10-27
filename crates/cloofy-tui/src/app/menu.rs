@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cloofy_spotify::{
+use cloofy_core::{
     catalog::{AlbumInfo, PlaylistInfo, Track},
     home::{HomeItem, ItemKind},
 };

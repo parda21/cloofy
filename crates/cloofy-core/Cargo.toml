@@ -1,0 +1,23 @@
+[package]
+name = "cloofy-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The parts of cloofy every music service shares: data model, files, settings and updates"
+
+[dependencies]
+cloofy-os.workspace = true
+anyhow.workspace = true
+etcetera.workspace = true
+flate2.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tokio.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+tracing.workspace = true

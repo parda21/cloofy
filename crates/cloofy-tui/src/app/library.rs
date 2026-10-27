@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cloofy_spotify::{
+use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, Track},
     home::{HomeItem, ItemKind},
 };

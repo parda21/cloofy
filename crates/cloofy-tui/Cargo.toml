@@ -8,6 +8,7 @@ repository.workspace = true
 description = "The terminal interface of cloofy"
 
 [dependencies]
+cloofy-core.workspace = true
 cloofy-spotify.workspace = true
 cloofy-player.workspace = true
 cloofy-os.workspace = true

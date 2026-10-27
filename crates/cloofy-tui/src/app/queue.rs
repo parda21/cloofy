@@ -3,7 +3,7 @@
 
 use std::{collections::HashSet, time::Instant};
 
-use cloofy_spotify::catalog::Track;
+use cloofy_core::catalog::Track;
 
 use super::{App, Focus, QUEUE_GRACE};
 use crate::{

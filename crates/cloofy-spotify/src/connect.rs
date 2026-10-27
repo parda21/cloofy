@@ -3,6 +3,7 @@
 //! the queue goes to the device through Spotify Connect itself, sent as cloofy's own device.
 
 use anyhow::Result;
+use cloofy_core::connect::{Device, Playback, PlayingTrack};
 use librespot::{core::session::Session, protocol::player::ProvidedTrack};
 use protobuf_json_mapping::PrintOptions;
 use reqwest::Method;
@@ -10,42 +11,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::webapi::WebApi;
-
-#[derive(Debug, Clone)]
-pub struct Device {
-    pub id: String,
-    pub name: String,
-    /// Spotify's device type, e.g. "Computer", "Smartphone", "Speaker".
-    pub kind: String,
-    pub active: bool,
-    pub volume_percent: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Playback {
-    pub device: Device,
-    pub playing: bool,
-    pub progress_ms: u32,
-    pub shuffle: bool,
-    /// "off", "context" or "track".
-    pub repeat: String,
-    pub track: Option<PlayingTrack>,
-    /// The playlist, album or artist being played, if any.
-    pub context: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PlayingTrack {
-    pub uri: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    pub artist_uris: Vec<String>,
-    pub album: String,
-    pub album_uri: Option<String>,
-    pub duration_ms: u32,
-    pub cover_url: Option<String>,
-    pub cover_url_large: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub enum Command {

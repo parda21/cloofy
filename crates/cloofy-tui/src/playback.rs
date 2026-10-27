@@ -7,9 +7,9 @@ use std::{
 };
 
 use anyhow::Result;
+use cloofy_core::{catalog::Track, connect::Playback, paths::Paths};
 use cloofy_player::Engine;
-use cloofy_spotify::{catalog::Track, connect::Playback};
-use cloofy_spotify::{paths::Paths, session};
+use cloofy_spotify::session;
 use futures::StreamExt;
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
@@ -967,7 +967,7 @@ mod tests {
 
     /// A poll of another device playing `uri`.
     fn poll(uri: &str, playing: bool, progress_ms: u32) -> Playback {
-        use cloofy_spotify::connect::{Device, PlayingTrack};
+        use cloofy_core::connect::{Device, PlayingTrack};
         Playback {
             device: Device {
                 id: "phone".into(),

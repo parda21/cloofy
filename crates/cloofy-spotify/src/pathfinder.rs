@@ -7,11 +7,10 @@
 use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
+use cloofy_core::paths::write_private;
 use librespot::core::session::Session;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
-
-use crate::paths::write_private;
 
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 const WEB_PLAYER: &str = "https://open.spotify.com/";
@@ -41,7 +40,7 @@ impl Pathfinder {
             hashes.extend(cached);
         }
         Self {
-            http: crate::http::client(USER_AGENT).build().unwrap_or_default(),
+            http: cloofy_core::http::client(USER_AGENT).build().unwrap_or_default(),
             session,
             cache_path,
             hashes: Mutex::new(hashes),

@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use cloofy_spotify::config;
+use cloofy_core::config;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, COVER_SIZE, Focus, ImageSlot};

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use cloofy_spotify::{
+use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, Track, User},
     home::Home,
     paths::write_private,

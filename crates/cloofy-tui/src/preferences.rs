@@ -1,8 +1,8 @@
 //! What people set on the Settings page. Every change goes to `config.toml` right away, so
 //! nobody has to edit it by hand, and what's in the file shows up here.
 
+use cloofy_core::config::{Config, Value};
 use cloofy_os::settings::Settings;
-use cloofy_spotify::config::{Config, Value};
 
 use crate::{graphics::ImageProtocol, theme::Rgb};
 

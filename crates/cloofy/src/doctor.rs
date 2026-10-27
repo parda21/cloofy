@@ -1,8 +1,7 @@
 use anyhow::Result;
+use cloofy_core::{config::Config, paths::Paths};
 use cloofy_spotify::{
-    config::Config,
     doctor::{self, Check, Expect, Outcome, Section},
-    paths::Paths,
     session,
     webapi::WebApi,
 };

@@ -507,6 +507,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cloofy-core",
  "cloofy-os",
  "cloofy-player",
  "cloofy-spotify",
@@ -520,6 +521,25 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "cloofy-core"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "cloofy-os",
+ "etcetera",
+ "flate2",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tokio",
+ "toml",
+ "toml_edit",
+ "tracing",
 ]
 
 [[package]]
@@ -562,9 +582,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "cloofy-os",
- "etcetera",
- "flate2",
+ "cloofy-core",
  "futures",
  "iana-time-zone",
  "librespot",
@@ -576,11 +594,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "tar",
  "thiserror 2.0.21",
  "tokio",
- "toml",
- "toml_edit",
  "tracing",
  "url",
 ]
@@ -591,6 +606,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "cloofy-core",
  "cloofy-os",
  "cloofy-player",
  "cloofy-spotify",

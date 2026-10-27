@@ -1,6 +1,6 @@
 //! Home: a greeting, the shortcut grid and shelves of cover cards.
 
-use cloofy_spotify::home::{HomeItem, ItemKind, Shelf};
+use cloofy_core::home::{HomeItem, ItemKind, Shelf};
 use ratatui::{
     Frame,
     layout::{Rect, Size},

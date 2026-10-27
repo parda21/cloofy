@@ -6,7 +6,8 @@ mod update;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use cloofy_spotify::{config::Config, paths::Paths, session, webapi::WebApi};
+use cloofy_core::{config::Config, paths::Paths};
+use cloofy_spotify::{session, webapi::WebApi};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]

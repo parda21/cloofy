@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cloofy_spotify::catalog::{AlbumInfo, PlaylistInfo};
+use cloofy_core::catalog::{AlbumInfo, PlaylistInfo};
 use tachyonfx::EffectManager;
 
 use super::{App, Focus, LIBRARY_PARTS};

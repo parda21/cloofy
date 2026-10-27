@@ -12,6 +12,7 @@ license = "MIT"
 repository = "https://github.com/parda21/cloofy"
 
 [workspace.dependencies]
+cloofy-core = { path = "crates/cloofy-core" }
 cloofy-spotify = { path = "crates/cloofy-spotify" }
 cloofy-player = { path = "crates/cloofy-player" }
 cloofy-tui = { path = "crates/cloofy-tui" }

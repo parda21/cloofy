@@ -15,15 +15,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cloofy_os::settings::Settings;
-use cloofy_spotify::{
+use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, ShowInfo, Track, User},
-    connect::{self, Device, Playback},
+    connect::{Device, Playback},
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
     paths::Paths,
     update::{PackageManager, Release},
 };
+use cloofy_os::settings::Settings;
+use cloofy_spotify::connect;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use librespot::playback::player::PlayerEvent;
 use ratatui::layout::{Position, Rect, Size};

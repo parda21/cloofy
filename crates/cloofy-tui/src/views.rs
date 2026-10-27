@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Range, time::Instant};
 
-use cloofy_spotify::{
+use cloofy_core::{
     artist::{ArtistPage, TopTrack},
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, SearchResults, Track},
     home::{Home, HomeItem},
@@ -669,10 +669,10 @@ mod tests {
         assert_eq!(view.list.offset, 4);
     }
 
-    fn shelf(uri: &str, items: &[&str]) -> cloofy_spotify::home::Shelf {
+    fn shelf(uri: &str, items: &[&str]) -> cloofy_core::home::Shelf {
         let item = |uri: &&str| HomeItem {
             uri: uri.to_string(),
-            kind: cloofy_spotify::home::ItemKind::Playlist,
+            kind: cloofy_core::home::ItemKind::Playlist,
             title: uri.to_string(),
             subtitle: String::new(),
             image_url: None,
@@ -680,7 +680,7 @@ mod tests {
             owner_name: String::new(),
             context_uri: uri.to_string(),
         };
-        cloofy_spotify::home::Shelf {
+        cloofy_core::home::Shelf {
             uri: uri.into(),
             title: uri.into(),
             shortcuts: false,

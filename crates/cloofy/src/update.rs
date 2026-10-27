@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use cloofy_spotify::update;
+use cloofy_core::update;
 
 use crate::style;
 

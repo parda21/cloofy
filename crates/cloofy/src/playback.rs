@@ -4,8 +4,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use cloofy_core::paths::Paths;
 use cloofy_player::{DEFAULT_VOLUME, Engine};
-use cloofy_spotify::{paths::Paths, session};
+use cloofy_spotify::session;
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack},
     core::SpotifyUri,

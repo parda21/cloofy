@@ -14,7 +14,7 @@ pub enum Overlay {
         picker: Picker<usize>,
     },
     Devices {
-        devices: Vec<cloofy_spotify::connect::Device>,
+        devices: Vec<cloofy_core::connect::Device>,
         picker: Picker<usize>,
         refreshing: bool,
     },

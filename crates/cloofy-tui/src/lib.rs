@@ -26,12 +26,11 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use cloofy_spotify::{
+use cloofy_core::{
     config::Config,
     paths::{Paths, Secret},
-    session,
-    webapi::WebApi,
 };
+use cloofy_spotify::{session, webapi::WebApi};
 use crossterm::{
     event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream},
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},

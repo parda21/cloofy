@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use cloofy_spotify::catalog::Track;
+use cloofy_core::catalog::Track;
 use ratatui::{
     Frame,
     buffer::Buffer,

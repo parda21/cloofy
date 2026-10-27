@@ -167,7 +167,7 @@ mod tests {
     }
 
     /// Writes to the login keychain: run it by hand with
-    /// `cargo test -p cloofy-spotify -- --ignored`.
+    /// `cargo test -p cloofy-core -- --ignored`.
     #[test]
     #[ignore = "uses the login keychain"]
     fn moves_a_file_into_the_keychain() {
