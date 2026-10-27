@@ -15,7 +15,8 @@ repository = "https://github.com/parda21/cloofy"
 cloofy-core = { path = "crates/cloofy-core" }
 cloofy-spotify = { path = "crates/cloofy-spotify" }
 cloofy-player = { path = "crates/cloofy-player" }
-cloofy-tui = { path = "crates/cloofy-tui" }
+# Its services are features; the binary picks them.
+cloofy-tui = { path = "crates/cloofy-tui", default-features = false }
 cloofy-os = { path = "crates/cloofy-os" }
 
 # librespot-core 0.8 fails to build with vergen 9.1, so Cargo.lock pins vergen 9.0.6.

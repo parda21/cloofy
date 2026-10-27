@@ -1,3 +1,5 @@
+//! `cloofy play` and `cloofy connect`: Spotify without the interface.
+
 use std::{
     io::Write,
     time::{Duration, Instant},
@@ -8,10 +10,11 @@ use cloofy_core::{
     paths::Paths,
     player::{CurrentTrack, PlayerEvent},
 };
+use cloofy_os::media::Command;
 use cloofy_player::{DEFAULT_VOLUME, Engine, events};
 use cloofy_spotify::session;
 use librespot::{
-    connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack},
+    connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
     core::SpotifyUri,
     metadata::{Metadata, Track},
 };
@@ -57,7 +60,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = media_events.recv() => media.on_event(event, |command| control(&spirc, command)),
             Some(name) = lost_outputs.recv() => {
                 spirc.pause()?;
                 println!("\r\x1b[2K  {}", style::dim(&format!("❚❚ paused: {name} disconnected")));
@@ -109,7 +112,7 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = media_events.recv() => media.on_event(event, |command| control(&spirc, command)),
             Some(name) = lost_outputs.recv() => {
                 spirc.pause()?;
                 paused = true;
@@ -137,6 +140,19 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
                 break;
             }
         }
+    }
+    Ok(())
+}
+
+/// Hands a request from the system's media controls to Spirc.
+fn control(spirc: &Spirc, command: Command) -> Result<()> {
+    match command {
+        Command::Play => spirc.play()?,
+        Command::Pause => spirc.pause()?,
+        Command::Toggle => spirc.play_pause()?,
+        Command::Next => spirc.next()?,
+        Command::Previous => spirc.prev()?,
+        Command::Seek(position) => spirc.set_position_ms(position.as_millis().try_into().unwrap_or(u32::MAX))?,
     }
     Ok(())
 }

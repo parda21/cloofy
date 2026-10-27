@@ -1,17 +1,25 @@
+// Without a service, the commands for one have nothing to hand their arguments to, and stop
+// at the first service they would go through.
+#![cfg_attr(not(feature = "spotify"), allow(unused_variables, clippy::never_loop))]
+
 mod doctor;
+#[cfg(feature = "spotify")]
 mod media;
-mod playback;
+#[cfg(feature = "spotify")]
+mod spotify;
 mod style;
 mod update;
 
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use cloofy_core::{config::Config, paths::Paths};
-use cloofy_spotify::{session, webapi::WebApi};
+use std::sync::LazyLock;
+
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand, builder::PossibleValuesParser};
+use cloofy_core::{config::Config, paths::Paths, service::Service};
+use cloofy_tui::SERVICES;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "cloofy", version, about = "Spotify in your terminal")]
+#[command(name = "cloofy", version = version(), about = about())]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -19,25 +27,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Log in to Spotify (Web API and streaming)
+    /// Sign in to your music services, or to the one named
     Login {
-        /// Log in again, even where already connected
+        /// The service; every one in use when left out
+        #[arg(value_parser = PossibleValuesParser::new(Service::ALL.map(Service::key)))]
+        service: Option<String>,
+        /// Sign in again, even where already signed in
         #[arg(long)]
         force: bool,
     },
-    /// Check which Spotify features are reachable
+    /// Check what each of your music services can reach
     Doctor,
     /// Update cloofy to the latest release
     Update,
     /// Play a song, album, playlist or artist directly in cloofy
     Play {
-        /// Spotify URI or link, e.g. https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc
+        /// URI or link, e.g. https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc
         uri: String,
         /// Shuffle
         #[arg(short, long)]
         shuffle: bool,
     },
     /// Development: run a pathfinder query and print the JSON
+    #[cfg(feature = "spotify")]
     #[command(hide = true)]
     Query {
         operation: String,
@@ -46,6 +58,7 @@ enum Command {
         variables: String,
     },
     /// Development: save the DJ narration for the next songs as MP3, with metadata
+    #[cfg(feature = "spotify")]
     #[command(hide = true)]
     DjSample {
         /// Target directory
@@ -54,11 +67,33 @@ enum Command {
     /// Try the interface with a built-in sample library, no account needed (nothing plays)
     Demo,
     /// Remote mode: wait until a Spotify app picks cloofy as its device
+    #[cfg(feature = "spotify")]
     Connect {
         /// Name the device shows up as in Spotify
         #[arg(long, default_value = "cloofy")]
         name: String,
     },
+}
+
+/// The version and the music services built in, like `0.4.0 (spotify)`. The installer reads
+/// them from `cloofy --version`.
+fn version() -> &'static str {
+    static VERSION: LazyLock<String> = LazyLock::new(|| {
+        let services: Vec<&str> = SERVICES.iter().map(|service| service.key()).collect();
+        let services = if services.is_empty() { "demo only".to_owned() } else { services.join(", ") };
+        format!("{} ({services})", env!("CARGO_PKG_VERSION"))
+    });
+    &VERSION
+}
+
+/// Like "Spotify in your terminal", naming the services built in.
+fn about() -> &'static str {
+    static ABOUT: LazyLock<String> = LazyLock::new(|| {
+        let names: Vec<&str> = SERVICES.iter().map(|service| service.name()).collect();
+        let names = if names.is_empty() { "Music".to_owned() } else { names.join(" and ") };
+        format!("{names} in your terminal")
+    });
+    &ABOUT
 }
 
 fn main() -> Result<()> {
@@ -99,16 +134,36 @@ async fn run() -> Result<()> {
     paths.keychain = Config::load(&paths)?.keychain()?;
     init_logging(&paths, matches!(cli.command, None | Some(Command::Demo)))?;
     match cli.command {
-        Some(Command::Login { force }) => login(&paths, force).await,
-        Some(Command::Doctor) => doctor::run(&paths).await,
+        Some(Command::Login { service, force }) => login(&paths, service.as_deref(), force).await,
+        Some(Command::Doctor) => doctor::run(&paths, &services(&paths, None)?).await,
         Some(Command::Update) => update::run().await,
-        Some(Command::Play { uri, shuffle }) => playback::play(&paths, &uri, shuffle).await,
-        Some(Command::Connect { name }) => playback::connect(&paths, name).await,
+        Some(Command::Play { uri, shuffle }) => play(&paths, &uri, shuffle).await,
         Some(Command::Demo) => update::restart_if_asked(cloofy_tui::demo(&paths).await?),
-        Some(Command::Query { operation, variables }) => query(&paths, &operation, &variables).await,
-        Some(Command::DjSample { dir }) => dj_sample(&paths, &dir).await,
+        #[cfg(feature = "spotify")]
+        Some(Command::Connect { name }) => spotify::connect(&paths, name).await,
+        #[cfg(feature = "spotify")]
+        Some(Command::Query { operation, variables }) => spotify::query(&paths, &operation, &variables).await,
+        #[cfg(feature = "spotify")]
+        Some(Command::DjSample { dir }) => spotify::dj_sample(&paths, &dir).await,
         None => update::restart_if_asked(cloofy_tui::run(&paths).await?),
     }
+}
+
+/// The services a command is about: the one `named`, which must be built in, or else every
+/// one in use.
+fn services(paths: &Paths, named: Option<&str>) -> Result<Vec<Service>> {
+    let Some(key) = named else {
+        let enabled = Config::load(paths)?.enabled_services(SERVICES);
+        if enabled.is_empty() {
+            bail!("{}", cloofy_tui::no_service(paths));
+        }
+        return Ok(enabled);
+    };
+    let service = Service::from_key(key).with_context(|| format!("“{key}” is not a music service cloofy knows"))?;
+    if !SERVICES.contains(&service) {
+        bail!("This cloofy was built without {}.", service.name());
+    }
+    Ok(vec![service])
 }
 
 /// Logs go to stderr for CLI commands; the TUI owns the screen, so it logs to a file.
@@ -127,79 +182,66 @@ fn init_logging(paths: &Paths, tui: bool) -> Result<()> {
     Ok(())
 }
 
-async fn login(paths: &Paths, force: bool) -> Result<()> {
+async fn login(paths: &Paths, named: Option<&str>, force: bool) -> Result<()> {
     let config = Config::load(paths)?;
-    let api = WebApi::new(config.client_id(paths)?, paths.webapi_token())?;
-
-    println!("\n  {} Web API (your app)", style::dim("1/2"));
-    if force || !api.is_logged_in().await {
-        api.login().await?;
-        println!("  {} connected\n", style::green("✓"));
-    } else {
-        println!("  {} already connected\n", style::green("✓"));
+    let services = services(paths, named)?;
+    for &service in &services {
+        if services.len() > 1 {
+            println!("\n  {}", style::bold(service.name()));
+        }
+        match service {
+            #[cfg(feature = "spotify")]
+            Service::Spotify => spotify::login(paths, &config, force).await?,
+            #[allow(unreachable_patterns)]
+            other => bail!("{} isn't built into this cloofy", other.name()),
+        }
     }
-
-    println!("  {} Streaming (librespot)", style::dim("2/2"));
-    if force || !session::is_logged_in(paths)? {
-        let session = session::login(paths).await?;
-        println!("  {} connected as {}\n", style::green("✓"), session.username());
-        session.shutdown();
-    } else {
-        println!("  {} already connected\n", style::green("✓"));
-    }
-
     println!("  Done. Test everything with {}\n", style::bold("cloofy doctor"));
     Ok(())
 }
 
-/// Fetches the DJ's lines for the first tracks of a fresh DJ session, without playing anything.
-async fn dj_sample(paths: &Paths, dir: &std::path::Path) -> Result<()> {
-    use anyhow::Context as _;
-    let session = session::prepare(paths)?.connect().await?;
-    let spclient = session.spclient();
-    let dj = spclient.get_context("spotify:playlist:37i9dQZF1EYkqdzj48dyYq").await?;
-    println!("context metadata: {:#?}", dj.metadata);
-    let lexicon = dj.metadata.get("lexicon_context_url").context("no lexicon_context_url")?;
-    let context = spclient.get_context_url(lexicon).await?;
-    std::fs::create_dir_all(dir)?;
-    let mut count = 0;
-    for track in context.pages.iter().flat_map(|page| &page.tracks) {
-        let mut narration: Vec<_> = track.metadata.iter().filter(|(key, _)| key.starts_with("narration.")).collect();
-        if narration.is_empty() {
-            continue;
-        }
-        narration.sort();
-        println!("\n{}", track.uri());
-        for (key, value) in &narration {
-            println!("  {key} = {value}");
-        }
-        let field = |key: String| track.metadata.get(&key).map(String::as_str).unwrap_or_default();
-        for kind in ["intro", "outro"] {
-            let ssml = field(format!("narration.{kind}.ssml"));
-            if ssml.is_empty() {
-                continue;
-            }
-            let voice = field(format!("narration.{kind}.voice"));
-            let provider = field(format!("narration.{kind}.tts_provider"));
-            let mp3 = spclient.get_narration(ssml, voice, provider).await?;
-            let file = dir.join(format!("{count}-{kind}.mp3"));
-            std::fs::write(&file, &mp3)?;
-            println!("  -> {} ({} bytes)", file.display(), mp3.len());
-        }
-        count += 1;
-        if count == 3 {
-            break;
-        }
+/// Plays a URI or link of a service without the interface.
+async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
+    // Something that isn't any service's goes to the one built in, to say what's wrong with it.
+    match link_service(input).or(SERVICES.first().copied()) {
+        #[cfg(feature = "spotify")]
+        Some(Service::Spotify) => spotify::play(paths, input, shuffle).await,
+        #[allow(unreachable_patterns)]
+        Some(other) => bail!("{} isn't built into this cloofy", other.name()),
+        None => bail!("{}", cloofy_tui::no_service(paths)),
     }
-    session.shutdown();
-    Ok(())
 }
 
-async fn query(paths: &Paths, operation: &str, variables: &str) -> Result<()> {
-    let session = session::prepare(paths)?.connect().await?;
-    let pathfinder = cloofy_spotify::pathfinder::Pathfinder::new(session.clone(), paths.pathfinder_hashes());
-    let data = pathfinder.query(operation, serde_json::from_str(variables)?).await?;
-    println!("{}", serde_json::to_string_pretty(&data)?);
-    session.shutdown();
-    Ok(())
+/// The service of a URI, or of a link to its website.
+fn link_service(input: &str) -> Option<Service> {
+    if input.starts_with("https://open.spotify.com/") {
+        Some(Service::Spotify)
+    } else if input.starts_with("https://music.youtube.com/") {
+        Some(Service::YouTubeMusic)
+    } else {
+        Service::of(input)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    #[test]
+    fn links_go_to_their_service() {
+        assert_eq!(link_service("https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc"), Some(Service::Spotify));
+        assert_eq!(link_service("spotify:track:1"), Some(Service::Spotify));
+        assert_eq!(link_service("https://music.youtube.com/watch?v=dQw4w9WgXcQ"), Some(Service::YouTubeMusic));
+        assert_eq!(link_service("ytmusic:album:MPREb_1"), Some(Service::YouTubeMusic));
+        assert_eq!(link_service("https://example.com/"), None);
+    }
+
+    #[test]
+    fn says_which_services_are_built_in() {
+        assert!(version().starts_with(env!("CARGO_PKG_VERSION")));
+        assert_eq!(version().contains("spotify"), cfg!(feature = "spotify"));
+        Cli::command().debug_assert();
+    }
 }

@@ -1,37 +1,32 @@
-use anyhow::Result;
-use cloofy_core::{config::Config, paths::Paths};
-use cloofy_spotify::{
+//! `cloofy doctor`: what each music service in use can reach, and through which path.
+
+use anyhow::{Result, bail};
+use cloofy_core::{
+    config::Config,
     doctor::{self, Check, Expect, Outcome, Section},
-    session,
-    webapi::WebApi,
+    paths::Paths,
+    service::Service,
 };
 
 use crate::style;
 
 const NAME_WIDTH: usize = 30;
 
-pub async fn run(paths: &Paths) -> Result<()> {
+pub async fn run(paths: &Paths, services: &[Service]) -> Result<()> {
     println!("\n  {}\n", style::bold("cloofy doctor"));
     let mut tally = Tally::default();
 
     let config = Config::load(paths)?;
-    let api = WebApi::new(config.client_id(paths)?, paths.webapi_token())?;
-    let web = if api.is_logged_in().await { doctor::web_api(&api).await } else { not_logged_in("WEB API · your app") };
-    print_section(&web, &mut tally);
-
-    let internal = match session::prepare(paths) {
-        Ok(pending) => match pending.connect().await {
-            Ok(session) => {
-                let section = doctor::spclient(&session).await;
-                session.shutdown();
-                section
-            }
-            Err(err) => failed_section("LIBRESPOT · Spotify internal", "Session", format!("{err:#}")),
-        },
-        Err(_) => not_logged_in("LIBRESPOT · Spotify internal"),
-    };
-    print_section(&internal, &mut tally);
-    print_section(&cloofy_core::doctor::external().await, &mut tally);
+    for &service in services {
+        let report = |section: Section| print_section(&section, &mut tally);
+        match service {
+            #[cfg(feature = "spotify")]
+            Service::Spotify => crate::spotify::doctor(paths, &config, report).await?,
+            #[allow(unreachable_patterns)]
+            other => bail!("{} isn't built into this cloofy", other.name()),
+        }
+    }
+    print_section(&doctor::external().await, &mut tally);
 
     println!(
         "  {} available · {} removed as expected · {}\n",
@@ -82,15 +77,4 @@ fn print_check(check: &Check, tally: &mut Tally) {
         }
     };
     println!("  {line}");
-}
-
-fn not_logged_in(title: &'static str) -> Section {
-    failed_section(title, "Login", "not logged in – run `cloofy login`".into())
-}
-
-fn failed_section(title: &'static str, name: &str, reason: String) -> Section {
-    Section {
-        title,
-        checks: vec![Check { name: name.into(), expect: Expect::Available, outcome: Outcome::Failed(reason) }],
-    }
 }

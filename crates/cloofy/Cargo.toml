@@ -7,16 +7,24 @@ license.workspace = true
 repository.workspace = true
 description = "A Spotify client for the terminal"
 
+# The music services built in; a release ships one build per choice. Without any, only
+# `cloofy demo` runs.
+[features]
+default = ["spotify"]
+spotify = ["cloofy-tui/spotify", "dep:cloofy-spotify", "dep:cloofy-player", "dep:librespot"]
+# Nothing yet: YouTube Music is on its way.
+ytmusic = ["cloofy-tui/ytmusic"]
+
 [dependencies]
 cloofy-core.workspace = true
-cloofy-spotify.workspace = true
-cloofy-player.workspace = true
+cloofy-spotify = { workspace = true, optional = true }
+cloofy-player = { workspace = true, optional = true }
 cloofy-tui.workspace = true
 cloofy-os.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 libc.workspace = true
-librespot.workspace = true
+librespot = { workspace = true, optional = true }
 reqwest.workspace = true
 rustls.workspace = true
 serde_json.workspace = true
@@ -26,3 +34,8 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 serde.workspace = true
+
+# Looks up the sample's songs on Spotify.
+[[example]]
+name = "demo_fixture"
+required-features = ["spotify"]
