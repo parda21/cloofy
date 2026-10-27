@@ -89,6 +89,12 @@ jobs:
         run: |
           gh release download "$TAG" --pattern '*.sha256' --dir checksums
           packaging/render.sh "${TAG#v}" checksums packages
+      # Until cloofy is in the AUR: `curl -LO …/releases/latest/download/PKGBUILD && makepkg -si`.
+      - name: Attach the PKGBUILD to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" packages/aur/cloofy-bin/PKGBUILD --clobber
       # Each skips with a notice until its secret is set, see packaging/README.md.
       - name: Push them to the tap and the AUR
         env:

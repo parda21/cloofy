@@ -31,6 +31,8 @@ pub enum PackageManager {
     /// The system's, such as pacman with cloofy-bin from the AUR.
     System,
     Nix,
+    /// mise, with `ubi:parda21/cloofy`; it keeps each version in a folder of its own.
+    Mise,
 }
 
 impl PackageManager {
@@ -48,6 +50,14 @@ impl PackageManager {
             Some(Self::Homebrew)
         } else if path.starts_with("/usr/bin") {
             Some(Self::System)
+        } else if path
+            .components()
+            .map(|part| part.as_os_str())
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["mise", "installs"])
+        {
+            Some(Self::Mise)
         } else {
             None
         }
@@ -59,6 +69,7 @@ impl PackageManager {
             Self::Homebrew => "Update with brew upgrade cloofy",
             Self::System => "Update with your package manager",
             Self::Nix => "Update with Nix",
+            Self::Mise => "Update with mise upgrade",
         }
     }
 }
@@ -294,6 +305,11 @@ mod tests {
         assert_eq!(of("/usr/local/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
         assert_eq!(of("/home/linuxbrew/.linuxbrew/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
         assert_eq!(of("/usr/bin/cloofy"), Some(PackageManager::System));
+        assert_eq!(
+            of("/home/sam/.local/share/mise/installs/ubi-parda21-cloofy/0.3.0/cloofy"),
+            Some(PackageManager::Mise)
+        );
+        assert_eq!(of("/home/sam/.local/bin/cloofy"), None);
         assert_eq!(
             of("/nix/store/0ac6p7kvsyhwlnh7z7mfqmzjy3zcvqqg-cloofy-0.3.0/bin/cloofy"),
             Some(PackageManager::Nix)
