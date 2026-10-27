@@ -15,6 +15,8 @@ use ratatui::{
     style::{Color, Modifier},
 };
 
+use crate::graphics::{INLINE_CELL, Inline};
+
 /// Font size in pixels; cells come out about 12×26, close to a typical terminal.
 const PX: f32 = 20.0;
 const DEFAULT_BG: [u8; 3] = [13, 13, 16];
@@ -39,6 +41,8 @@ pub struct Placement {
     pub cells: Vec<Cell>,
     /// The first time a Kitty image is drawn: the upload of its pixels, written after the frame.
     pub upload: Option<String>,
+    /// A Sixel or iTerm2 image, which cloofy writes itself after the frame.
+    pub inline: Option<Arc<Inline>>,
 }
 
 pub struct Snapshotter {
@@ -188,7 +192,8 @@ impl Snapshotter {
         let (px, py) = ((x - area.x) as u32 * self.cell_w, (y - area.y) as u32 * self.cell_h);
         let (fg, _) = colors(buffer, x, y);
         let Some(c) = cell.symbol().chars().next() else { return };
-        if c != ' ' && c != KITTY_PLACEHOLDER && !self.draw_block(image, c, px, py, fg) {
+        let picture = c == KITTY_PLACEHOLDER || cell.symbol() == INLINE_CELL;
+        if c != ' ' && !picture && !self.draw_block(image, c, px, py, fg) {
             let bold = cell.modifier.contains(Modifier::BOLD);
             let glyph = glyphs.entry((c, bold)).or_insert_with(|| self.rasterize(c, bold));
             if let Some((metrics, coverage)) = glyph {

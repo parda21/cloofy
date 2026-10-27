@@ -41,6 +41,7 @@ use crate::{
     app::AppEvent,
     art,
     demo::Demo,
+    graphics::{ImageProtocol, ImageTerminal, Inline},
     playback::CurrentTrack,
     queue::{Listed, Upcoming},
     theme::{self, Rgb},
@@ -78,11 +79,18 @@ impl Drop for Fetch {
 
 /// An encoded image plus, in snapshot mode, its source for pasting into PNG snapshots.
 pub struct Picture {
-    pub protocol: Protocol,
+    pub graphic: Graphic,
     pub source: Option<Arc<image::DynamicImage>>,
     /// Memory the terminal keeps for the image once drawn. Only kitty keeps images, until told
     /// to delete them; the other protocols draw them and forget.
     pub terminal_bytes: usize,
+}
+
+pub enum Graphic {
+    /// Kitty placeholders or half blocks: cells that ratatui draws like text.
+    Cells(Protocol),
+    /// Sixel or iTerm2: escape sequences that cloofy writes after the frame.
+    Inline(Arc<Inline>),
 }
 
 pub enum DataEvent {
@@ -198,7 +206,11 @@ pub struct Loader {
     tx: UnboundedSender<AppEvent>,
     session: watch::Receiver<SessionState>,
     http: reqwest::Client,
-    picker: Picker,
+    /// What the terminal said about images at startup.
+    image_terminal: Arc<ImageTerminal>,
+    /// The protocol chosen for covers, and what encodes them for it. It can change while
+    /// cloofy runs; covers encoded before are dropped as they arrive.
+    picker: Arc<watch::Sender<(ImageProtocol, Picker)>>,
     pathfinder: Arc<OnceCell<Pathfinder>>,
     pathfinder_hashes: PathBuf,
     /// The user's Spotify ID, to tell their own playlists from followed ones.
@@ -230,7 +242,7 @@ impl Loader {
         api: Arc<WebApi>,
         tx: UnboundedSender<AppEvent>,
         session: watch::Receiver<SessionState>,
-        picker: Picker,
+        image_terminal: ImageTerminal,
         pathfinder_hashes: PathBuf,
         image_cache: PathBuf,
         keep_sources: bool,
@@ -241,13 +253,15 @@ impl Loader {
         let turns = std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).clamp(1, 4));
         let (remote, commands) = mpsc::unbounded_channel();
         tokio::spawn(send_remote(api.clone(), tx.clone(), commands));
+        let picker = image_terminal.picker(ImageProtocol::Auto);
         Self {
             remote,
             api,
             tx,
             session,
             http,
-            picker,
+            image_terminal: Arc::new(image_terminal),
+            picker: Arc::new(watch::Sender::new((ImageProtocol::Auto, picker))),
             pathfinder: Arc::default(),
             pathfinder_hashes,
             user_id: Arc::default(),
@@ -264,6 +278,26 @@ impl Loader {
     pub fn with_demo(mut self, demo: Option<Arc<Demo>>) -> Self {
         self.demo = demo;
         self
+    }
+
+    /// The protocol chosen for covers.
+    pub fn image_protocol(&self) -> ImageProtocol {
+        self.picker.borrow().0
+    }
+
+    /// What [`ImageProtocol::Auto`] draws with in this terminal.
+    pub fn auto_image_protocol(&self) -> ImageProtocol {
+        self.image_terminal.auto()
+    }
+
+    /// Encodes covers for `protocol` from now on.
+    pub fn set_image_protocol(&self, protocol: ImageProtocol) {
+        self.picker.send_replace((protocol, self.image_terminal.picker(protocol)));
+    }
+
+    /// What covers are encoded as now.
+    pub fn image_kind(&self) -> ProtocolType {
+        self.picker.borrow().1.protocol_type()
     }
 
     fn demo(&self) -> Option<&Demo> {
@@ -632,7 +666,7 @@ impl Loader {
         size: Size,
         process: impl FnOnce(&mut image::DynamicImage) -> T + Send + 'static,
     ) -> Result<(Picture, T)> {
-        let picker = self.picker.clone();
+        let picker = self.picker.borrow().1.clone();
         let keep_source = self.keep_sources;
         tokio::task::spawn_blocking(move || {
             let mut image = match source {
@@ -649,23 +683,30 @@ impl Loader {
             let extra = process(&mut image);
             let source = keep_source.then(|| Arc::new(image.clone()));
             // Triangle (bilinear) is several times faster than Lanczos and looks the same when shrinking.
-            let (protocol, terminal_bytes) = if picker.protocol_type() == ProtocolType::Kitty {
-                // Kitty fits an image into its cells itself, so it is only shrunk to the pixels
-                // the cells have, never enlarged: that would only add pixels to encode, send and
-                // store, such as a 640 px cover blown up to fill Now Playing.
-                let font = picker.font_size();
-                let width = u32::from(size.width) * u32::from(font.width);
-                let height = u32::from(size.height) * u32::from(font.height);
-                if image.width() > width || image.height() > height {
-                    image = image.resize(width, height, FilterType::Triangle);
+            let (graphic, terminal_bytes) = match picker.protocol_type() {
+                ProtocolType::Kitty => {
+                    // Kitty fits an image into its cells itself, so it is only shrunk to the
+                    // pixels the cells have, never enlarged: that would only add pixels to
+                    // encode, send and store, such as a 640 px cover blown up to fill Now Playing.
+                    let font = picker.font_size();
+                    let width = u32::from(size.width) * u32::from(font.width);
+                    let height = u32::from(size.height) * u32::from(font.height);
+                    if image.width() > width || image.height() > height {
+                        image = image.resize(width, height, FilterType::Triangle);
+                    }
+                    let terminal_bytes = image.width() as usize * image.height() as usize * 4;
+                    (Graphic::Cells(picker.new_protocol_cells(image, size)?), terminal_bytes)
                 }
-                let terminal_bytes = image.width() as usize * image.height() as usize * 4;
-                (picker.new_protocol_cells(image, size)?, terminal_bytes)
-            } else {
+                kind @ (ProtocolType::Sixel | ProtocolType::Iterm2) => {
+                    let inline = Inline::new(kind, &image, size, picker.font_size(), picker.tmux_detected())?;
+                    (Graphic::Inline(Arc::new(inline)), 0)
+                }
                 // Scale, not Fit: small covers (e.g. user-uploaded playlist images) must fill their slot too.
-                (picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?, 0)
+                ProtocolType::Halfblocks => {
+                    (Graphic::Cells(picker.new_protocol(image, size, Resize::Scale(Some(FilterType::Triangle)))?), 0)
+                }
             };
-            Ok((Picture { protocol, source, terminal_bytes }, extra))
+            Ok((Picture { graphic, source, terminal_bytes }, extra))
         })
         .await?
     }
@@ -927,15 +968,34 @@ fn cache_name(url: &str) -> String {
 }
 
 impl Picture {
+    /// In cells.
+    pub fn size(&self) -> Size {
+        match &self.graphic {
+            Graphic::Cells(protocol) => protocol.size(),
+            Graphic::Inline(inline) => inline.size(),
+        }
+    }
+
+    /// The protocol it was encoded for.
+    pub fn kind(&self) -> ProtocolType {
+        match &self.graphic {
+            Graphic::Cells(Protocol::Kitty(_)) => ProtocolType::Kitty,
+            Graphic::Cells(Protocol::Sixel(_)) => ProtocolType::Sixel,
+            Graphic::Cells(Protocol::ITerm2(_)) => ProtocolType::Iterm2,
+            Graphic::Cells(Protocol::Halfblocks(_)) => ProtocolType::Halfblocks,
+            Graphic::Inline(inline) => inline.kind(),
+        }
+    }
+
     /// Whether the terminal holds the image: a kitty image that has been drawn.
     pub fn in_terminal(&self) -> bool {
-        matches!(&self.protocol, Protocol::Kitty(kitty) if kitty.transmitted())
+        matches!(&self.graphic, Graphic::Cells(Protocol::Kitty(kitty)) if kitty.transmitted())
     }
 
     /// The escape sequence that deletes the image from the terminal, if it holds it.
     pub fn terminal_delete(&self) -> Option<String> {
-        match &self.protocol {
-            Protocol::Kitty(kitty) if kitty.transmitted() => Some(kitty.delete_sequence()),
+        match &self.graphic {
+            Graphic::Cells(Protocol::Kitty(kitty)) if kitty.transmitted() => Some(kitty.delete_sequence()),
             _ => None,
         }
     }

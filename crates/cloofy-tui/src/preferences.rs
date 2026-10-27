@@ -4,7 +4,7 @@
 use cloofy_os::settings::Settings;
 use cloofy_spotify::config::{Config, Value};
 
-use crate::theme::Rgb;
+use crate::{graphics::ImageProtocol, theme::Rgb};
 
 const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 
@@ -13,6 +13,7 @@ pub struct Preferences {
     /// Seconds consecutive tracks overlap.
     pub crossfade: u64,
     pub covers: bool,
+    pub images: ImageProtocol,
     pub accent: AccentChoice,
     pub icons: IconChoice,
     pub power_saving: PowerSaving,
@@ -31,6 +32,7 @@ impl Preferences {
         Self {
             crossfade: config.crossfade.unwrap_or(0).min(12),
             covers: config.covers != Some(false),
+            images: config.images.as_deref().and_then(ImageProtocol::parse).unwrap_or_default(),
             accent: AccentChoice::from_config(config.accent.as_deref()),
             icons: match config.icons.as_deref() {
                 Some("nerd") => IconChoice::Nerd,
@@ -64,6 +66,7 @@ impl Preferences {
             Setting::Crossfade if self.crossfade == 0 => "Off".to_owned(),
             Setting::Crossfade => format!("{} s", self.crossfade),
             Setting::Covers => on_off(self.covers),
+            Setting::Images => self.images.label().to_owned(),
             Setting::Accent => self.accent.label().to_owned(),
             Setting::Icons => self.icons.label().to_owned(),
             Setting::PowerSaving => self.power_saving.label().to_owned(),
@@ -78,7 +81,7 @@ impl Preferences {
             Setting::Covers => Some(self.covers),
             Setting::Notifications => Some(self.notifications),
             Setting::UpdateCheck => Some(self.update_check),
-            Setting::Crossfade | Setting::Accent | Setting::Icons | Setting::PowerSaving => None,
+            Setting::Crossfade | Setting::Images | Setting::Accent | Setting::Icons | Setting::PowerSaving => None,
         }
     }
 
@@ -87,6 +90,7 @@ impl Preferences {
         match setting {
             Setting::Crossfade => self.crossfade = cycle(&CROSSFADE_STEPS, &self.crossfade, forward),
             Setting::Covers => self.covers = !self.covers,
+            Setting::Images => self.images = cycle(&ImageProtocol::ALL, &self.images, forward),
             Setting::Accent => self.accent = cycle(&AccentChoice::ALL, &self.accent, forward),
             Setting::Icons => self.icons = cycle(&IconChoice::ALL, &self.icons, forward),
             Setting::PowerSaving => self.power_saving = cycle(&PowerSaving::ALL, &self.power_saving, forward),
@@ -102,6 +106,10 @@ impl Preferences {
         match setting {
             Setting::Crossfade => ("crossfade", (self.crossfade > 0).then(|| Value::from(self.crossfade as i64))),
             Setting::Covers => ("covers", off(self.covers)),
+            Setting::Images => (
+                "images",
+                (self.images != ImageProtocol::Auto).then(|| Value::from(self.images.label().to_lowercase())),
+            ),
             Setting::Accent => ("accent", self.accent.config().map(Value::from)),
             Setting::Icons => ("icons", self.icons.config().map(Value::from)),
             Setting::PowerSaving => ("power_saving", self.power_saving.config().map(Value::from)),
@@ -123,6 +131,7 @@ fn cycle<T: Clone + PartialEq>(items: &[T], current: &T, forward: bool) -> T {
 pub enum Setting {
     Crossfade,
     Covers,
+    Images,
     Accent,
     Icons,
     PowerSaving,
@@ -133,7 +142,7 @@ pub enum Setting {
 /// The Settings page: section titles with their settings, in order.
 pub const SECTIONS: [(&str, &[Setting]); 4] = [
     ("Playback", &[Setting::Crossfade]),
-    ("Display", &[Setting::Covers, Setting::Accent, Setting::Icons]),
+    ("Display", &[Setting::Covers, Setting::Images, Setting::Accent, Setting::Icons]),
     ("Power", &[Setting::PowerSaving]),
     ("Notifications and updates", &[Setting::Notifications, Setting::UpdateCheck]),
 ];
@@ -148,6 +157,7 @@ impl Setting {
         match self {
             Setting::Crossfade => "Crossfade",
             Setting::Covers => "Cover art",
+            Setting::Images => "Cover images",
             Setting::Accent => "Accent color",
             Setting::Icons => "Icons",
             Setting::PowerSaving => "Power saving",
@@ -160,6 +170,7 @@ impl Setting {
         match self {
             Setting::Crossfade => "Let songs fade into each other.",
             Setting::Covers => "Turn off to save memory and processor time on slower computers.",
+            Setting::Images => "How covers reach the terminal. Blocks work in every terminal.",
             Setting::Accent => "Follows the cover of the playing song, or stays one color.",
             Setting::Icons => "Text icons work with every font; Nerd Font icons need one installed.",
             Setting::PowerSaving => "Stops animations and redraws less often. Auto follows the system.",
@@ -355,6 +366,9 @@ mod tests {
         assert_eq!(preferences.crossfade, 12);
         preferences.step(Setting::Crossfade, true);
         assert_eq!(preferences.crossfade, 0);
+        preferences.step(Setting::Images, false);
+        assert_eq!(preferences.images, ImageProtocol::Blocks);
+        assert_eq!(preferences.entry(Setting::Images).1.and_then(|v| v.as_str().map(str::to_owned)).as_deref(), Some("blocks"));
         preferences.step(Setting::Accent, false);
         assert_eq!(preferences.accent, AccentChoice::Fixed(NamedColor::Orange));
         assert_eq!(preferences.value(Setting::Accent), "Orange");

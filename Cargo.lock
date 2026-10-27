@@ -597,6 +597,7 @@ dependencies = [
  "crossterm",
  "fontdue",
  "futures",
+ "icy_sixel",
  "image",
  "libc",
  "librespot",

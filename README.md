@@ -34,7 +34,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.
 - **The queue.** See what plays next, on cloofy or the device it controls: the songs you queued, then the rest of the playlist or album. Skip ahead to any of them, or take a queued song out again.
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
-- **Cover art.** Real images in terminals that speak the Kitty graphics protocol, and block art everywhere else.
+- **Cover art.** Real images in terminals that show pictures through the Kitty, Sixel or iTerm2 protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
 - **Settings in the app.** Crossfade, cover art, the accent color, icons, power saving and notifications, on a Settings page like Spotify's. Slow computer? Turn cover art off.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
@@ -169,13 +169,14 @@ When a new release is out, an update button shows in the top bar. Click it or pr
 
 ## Settings
 
-<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
 
 ```toml
 client_id = "your client id"
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
 covers = false             # no cover art, for slower computers; on when missing
 accent = "violet"          # "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
+images = "blocks"          # "kitty", "sixel", "iterm2" or "blocks"; detected from the terminal when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
 power_saving = "on"        # "on" or "off"; follows the system when missing
 notifications = false      # no desktop notifications for new tracks; on when missing
@@ -194,10 +195,11 @@ cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `
 | Terminal | Cover art | Icons | Notifications |
 | --- | --- | --- | --- |
 | Ghostty, kitty, WezTerm | Real images | Built in | Yes |
-| iTerm2 | Blocks | With a Nerd Font | Yes |
-| Others | Blocks | With a Nerd Font | No |
+| iTerm2 | Real images | With a Nerd Font | Yes |
+| foot, Windows Terminal, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | No |
+| Others | Real images with Sixel, else blocks | With a Nerd Font | No |
 
-Every terminal needs true color. Without a Nerd Font, pick text icons in Settings.
+Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time.
 
 ## FAQ
 

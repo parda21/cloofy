@@ -12,6 +12,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Power saving, your way.** Power saving can stay on or off for good; Auto follows the system as before.
 - **Accent color.** The accent can stay one color instead of following the cover.
 - **At home on Linux.** Media keys, playerctl and the media controls of GNOME, KDE and Waybar play, pause, skip and seek, and show the track with its cover, in `cloofy play` and `cloofy connect` too. cloofy pauses before the computer sleeps and reconnects as soon as it wakes. With animations turned off in the desktop's settings, slides become fades, lyrics jump to the current line and the equalizer stands still. In Power Saver mode animations stop and cloofy wakes the computer less often.
+- **Covers in more terminals.** Covers are real images in iTerm2, foot, Windows Terminal, Konsole, VS Code, xterm and other terminals that show Sixel or iTerm2 images, no longer only in kitty, Ghostty and WezTerm. They scroll in and out of view row by row, stay whole under menus, the command palette and the DJ panel, and reach the terminal once instead of with every frame. Inside tmux they stay blocks unless the terminal around it is kitty or Ghostty.
 
 ### Changed
 

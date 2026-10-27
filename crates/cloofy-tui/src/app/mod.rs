@@ -32,6 +32,7 @@ use tokio::sync::watch;
 
 use crate::{
     commands::Command,
+    graphics::{INLINE_CELL, ImageProtocol, InlineLayer},
     loader::{DataEvent, Loader, Picture, SessionState},
     media::MediaSync,
     notify::Notifier,
@@ -525,6 +526,8 @@ pub struct App {
     pub seek_preview: Option<u32>,
     /// Images drawn in the current frame, for dev snapshots.
     pub placements: Vec<Placement>,
+    /// Writes the frame's Sixel and iTerm2 images.
+    pub inline: InlineLayer,
     /// F12 was pressed; the next frame gets written as a PNG.
     pub snapshot_requested: bool,
     last_click: Option<(Instant, Hit)>,
@@ -658,6 +661,7 @@ impl App {
             lyrics_scroll: 0.0,
             hits: Vec::new(),
             placements: Vec::new(),
+            inline: InlineLayer::default(),
             snapshot_requested: false,
             mouse: None,
             hovered: None,
@@ -1254,6 +1258,13 @@ impl App {
             DataEvent::Image { .. } | DataEvent::Cover { .. } | DataEvent::LargeCover { .. } if !self.prefs.covers => {
                 return false;
             }
+            // Encoded for the protocol used before a change in Settings: loaded again when drawn.
+            DataEvent::Image { key, result: Ok(picture) } if picture.kind() != self.loader.image_kind() => {
+                if matches!(self.images.get(&key), Some(ImageSlot::Loading(_))) {
+                    self.images.remove(&key);
+                    self.image_used.remove(&key);
+                }
+            }
             DataEvent::Image { key, result } => {
                 let slot = match result {
                     Ok(picture) => ImageSlot::Ready(picture),
@@ -1293,7 +1304,8 @@ impl App {
             }
             DataEvent::Cover { url, result } => {
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url.as_deref());
-                if current != Some(url.as_str()) {
+                let stale = result.as_ref().is_ok_and(|(picture, _)| picture.kind() != self.loader.image_kind());
+                if current != Some(url.as_str()) || stale {
                     return false;
                 }
                 match result {
@@ -1329,6 +1341,7 @@ impl App {
                 }
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
                 let wanted = self.zen && self.zen_cover_want == Some(size) && current == Some(url.as_str());
+                let wanted = wanted && result.as_ref().is_ok_and(|picture| picture.kind() == self.loader.image_kind());
                 match result {
                     Ok(picture) if wanted => {
                         if let Some(old) = self.zen_cover.replace(LargeCover { url, size, picture }) {
@@ -2673,8 +2686,11 @@ impl App {
             return;
         }
         // Kitty images are drawn through placeholder cells whose color encodes the image;
-        // recoloring them mid-animation would show the wrong picture.
-        let effect = effect.with_filter(CellFilter::eval_cell(|cell| !cell.symbol().starts_with(KITTY_PLACEHOLDER)));
+        // recoloring them mid-animation would show the wrong picture. Sixel and iTerm2 images
+        // are not recolored either, so that they keep counting as uncovered.
+        let effect = effect.with_filter(CellFilter::eval_cell(|cell| {
+            !cell.symbol().starts_with(KITTY_PLACEHOLDER) && cell.symbol() != INLINE_CELL
+        }));
         self.effects.add_unique_effect(slot, effect);
         self.last_draw = Instant::now();
     }
@@ -2919,6 +2935,40 @@ impl App {
         }
         let url = url.unwrap_or(crate::art::PLACEHOLDER_COVER);
         self.prefetch.push((url.to_owned(), size, round));
+    }
+
+    /// The protocol chosen for covers; see [`App::set_image_protocol`].
+    pub fn image_protocol(&self) -> ImageProtocol {
+        self.loader.image_protocol()
+    }
+
+    /// What [`ImageProtocol::Auto`] draws with in this terminal, to show beside the choice.
+    pub fn auto_image_protocol(&self) -> ImageProtocol {
+        self.loader.auto_image_protocol()
+    }
+
+    /// Draws covers with `protocol` from now on, for the Settings page. Every cover is encoded
+    /// again, from the disk cache; covers that loaded for the old protocol meanwhile are dropped.
+    pub fn set_image_protocol(&mut self, protocol: ImageProtocol) {
+        if protocol == self.loader.image_protocol() {
+            return;
+        }
+        self.loader.set_image_protocol(protocol);
+        for (_, slot) in self.images.drain() {
+            if let ImageSlot::Ready(picture) = slot {
+                self.terminal_out.extend(picture.terminal_delete());
+            }
+        }
+        self.image_used.clear();
+        if let Some(cover) = self.now.cover.take() {
+            self.terminal_out.extend(cover.picture.terminal_delete());
+            self.load_cover(cover.url);
+        }
+        if let Some(cover) = self.zen_cover.take() {
+            self.terminal_out.extend(cover.picture.terminal_delete());
+        }
+        self.zen_cover_pending = None;
+        self.zen_cover_failed = None;
     }
 
     /// The cover for `url` at `size`, loading it on first use.

@@ -1,12 +1,15 @@
 //! The Settings page: every setting with a line on what it does, and its value, changed in
 //! place with the arrow keys or a click.
 
+use std::borrow::Cow;
+
 use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Style};
 use unicode_width::UnicodeWidthStr;
 
 use super::{content::UNFOCUSED_SELECTION, text};
 use crate::{
     app::{App, Focus, Hit},
+    graphics::ImageProtocol,
     preferences::{SECTIONS, Setting},
     theme::{BG, FAINT, MUTED, RAISED, TEXT},
     views::View,
@@ -103,7 +106,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             Row::About(setting) => {
                 let about = about(app, setting);
-                buf.set_string(inner.x, y, text::truncate(about, inner.width as usize), Style::new().fg(MUTED));
+                buf.set_string(inner.x, y, text::truncate(&about, inner.width as usize), Style::new().fg(MUTED));
             }
             Row::Blank => {}
             Row::Footer => {
@@ -120,12 +123,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// What the setting does, or why it can't do anything here.
-fn about(app: &App, setting: Setting) -> &'static str {
+fn about(app: &App, setting: Setting) -> Cow<'static, str> {
     match setting {
         Setting::Notifications if !app.can_notify() && !app.is_demo() => {
-            "This terminal can't show notifications; see the README for which ones can."
+            "This terminal can't show notifications; see the README for which ones can.".into()
         }
-        _ => setting.description(),
+        Setting::Images if app.prefs.images == ImageProtocol::Auto => {
+            format!("How covers reach the terminal. Auto picked {} here.", app.auto_image_protocol().label()).into()
+        }
+        _ => setting.description().into(),
     }
 }
 

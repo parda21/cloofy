@@ -75,6 +75,7 @@ impl App {
                 }
             }
             Setting::Covers => self.drop_covers(),
+            Setting::Images => self.set_image_protocol(self.prefs.images),
             Setting::Accent => {
                 let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(DEFAULT_ACCENT);
                 if self.settings.low_power {

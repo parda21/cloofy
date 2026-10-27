@@ -28,6 +28,9 @@ pub struct Config {
     pub power_saving: Option<String>,
     /// A color name such as `"violet"`; follows the playing cover when missing.
     pub accent: Option<String>,
+    /// How covers reach the terminal: `"kitty"`, `"sixel"`, `"iterm2"` or `"blocks"`; detected
+    /// from the terminal when missing.
+    pub images: Option<String>,
 }
 
 impl Config {
