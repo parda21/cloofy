@@ -11,7 +11,7 @@ mod queue;
 pub(crate) mod stream;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -74,14 +74,16 @@ enum Command {
 }
 
 impl Player {
-    /// Starts mpv at `volume` (0 to 65535). Fails when mpv isn't installed.
+    /// Starts mpv at `volume` (0 to 65535). Fails when mpv isn't installed. `CLOOFY_MPV_ARGS`
+    /// adds arguments for mpv, separated by spaces, such as `--ao=null` for tests.
     pub async fn spawn(
         client: YtMusic,
         paths: &Paths,
         volume: u16,
         events: UnboundedSender<PlayerEvent>,
     ) -> Result<Player> {
-        Self::spawn_with_args(client, paths, volume, events, Vec::new()).await
+        let args = std::env::var("CLOOFY_MPV_ARGS").unwrap_or_default();
+        Self::spawn_with_args(client, paths, volume, events, args.split_whitespace().map(str::to_owned).collect()).await
     }
 
     /// [`Player::spawn`] with more arguments for mpv, such as `--ao=null` for tests.
@@ -105,6 +107,7 @@ impl Player {
             jobs,
             cache_dir: Some(paths.cache.join("ytmusic").join("yt-dlp")),
             queue: Queue::default(),
+            adding: VecDeque::new(),
             streams: HashMap::new(),
             resolving: HashSet::new(),
             unresolvable: HashSet::new(),
@@ -259,6 +262,9 @@ struct Engine {
     jobs: UnboundedSender<Job>,
     cache_dir: Option<PathBuf>,
     queue: Queue,
+    /// Songs on their way into the queue, in the order they were added, with their details
+    /// once these arrived: each joins only after the ones added before it.
+    adding: VecDeque<(String, Option<Option<Track>>)>,
     /// Resolved stream URLs by video ID.
     streams: HashMap<String, Stream>,
     resolving: HashSet<String>,
@@ -368,9 +374,11 @@ impl Engine {
             }
             Command::ClearQueue => {
                 self.queue.clear_queue();
+                self.adding.clear();
                 self.queue_changed().await
             }
             Command::AddToQueue(uri) => {
+                self.adding.push_back((uri.clone(), None));
                 let (client, jobs) = (self.client.clone(), self.jobs.clone());
                 tokio::spawn(async move {
                     let track = client.tracks_by_uri(std::slice::from_ref(&uri)).await.map(|t| t.into_iter().next());
@@ -404,10 +412,9 @@ impl Engine {
         position_ms: u32,
         shuffle: Option<bool>,
     ) -> Result<()> {
-        if !self.active {
-            self.active = true;
-            self.emit(PlayerEvent::Activated);
-        }
+        // Every start makes this the player that plays, also after another service's played.
+        self.active = true;
+        self.emit(PlayerEvent::Activated);
         self.generation += 1;
         self.context_loaded = false;
         self.autoplay = Autoplay::default();
@@ -813,10 +820,26 @@ impl Engine {
                 self.queue_changed().await
             }
             Job::Queued { uri, track } => {
-                match track {
-                    Ok(Some(track)) => self.queue.add(track),
-                    Ok(None) => tracing::warn!("{uri} can't be queued: not found"),
-                    Err(err) => tracing::warn!("{uri} can't be queued: {err:#}"),
+                let track = match track {
+                    Ok(Some(track)) => Some(track),
+                    Ok(None) => {
+                        tracing::warn!("{uri} can't be queued: not found");
+                        None
+                    }
+                    Err(err) => {
+                        tracing::warn!("{uri} can't be queued: {err:#}");
+                        None
+                    }
+                };
+                // Gone when the queue was cleared meanwhile.
+                let Some(slot) = self.adding.iter_mut().find(|(added, slot)| *added == uri && slot.is_none()) else {
+                    return Ok(());
+                };
+                slot.1 = Some(track);
+                while let Some((_, Some(_))) = self.adding.front() {
+                    if let Some((_, Some(Some(track)))) = self.adding.pop_front() {
+                        self.queue.add(track);
+                    }
                 }
                 self.queue_changed().await
             }
