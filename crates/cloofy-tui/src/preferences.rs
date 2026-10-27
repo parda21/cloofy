@@ -368,7 +368,10 @@ mod tests {
         assert_eq!(preferences.crossfade, 0);
         preferences.step(Setting::Images, false);
         assert_eq!(preferences.images, ImageProtocol::Blocks);
-        assert_eq!(preferences.entry(Setting::Images).1.and_then(|v| v.as_str().map(str::to_owned)).as_deref(), Some("blocks"));
+        assert_eq!(
+            preferences.entry(Setting::Images).1.and_then(|v| v.as_str().map(str::to_owned)).as_deref(),
+            Some("blocks")
+        );
         preferences.step(Setting::Accent, false);
         assert_eq!(preferences.accent, AccentChoice::Fixed(NamedColor::Orange));
         assert_eq!(preferences.value(Setting::Accent), "Orange");

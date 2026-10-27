@@ -2937,11 +2937,6 @@ impl App {
         self.prefetch.push((url.to_owned(), size, round));
     }
 
-    /// The protocol chosen for covers; see [`App::set_image_protocol`].
-    pub fn image_protocol(&self) -> ImageProtocol {
-        self.loader.image_protocol()
-    }
-
     /// What [`ImageProtocol::Auto`] draws with in this terminal, to show beside the choice.
     pub fn auto_image_protocol(&self) -> ImageProtocol {
         self.loader.auto_image_protocol()
