@@ -21,12 +21,12 @@ use cloofy_core::{
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
     paths::Paths,
+    player::{CurrentTrack, PlayerEvent},
     update::{PackageManager, Release},
 };
 use cloofy_os::settings::Settings;
 use cloofy_spotify::connect;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use librespot::playback::player::PlayerEvent;
 use ratatui::layout::{Position, Rect, Size};
 use tachyonfx::{CellFilter, Effect, EffectManager, Interpolation, Motion, fx};
 use tokio::sync::watch;
@@ -38,7 +38,7 @@ use crate::{
     media::MediaSync,
     notify::Notifier,
     overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
-    playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    playback::{ConnectPush, Controller, Cover, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     preferences::{AccentChoice, Preferences, Setting},
     queue::Queue,
     snapshot::Placement,
@@ -1000,9 +1000,9 @@ impl App {
     fn on_player(&mut self, event: PlayerEvent) -> bool {
         // What plays next, as cloofy's own player has it; while another device plays, it has
         // nothing to say.
-        if let PlayerEvent::SetQueue { context_uri, current_track, next_tracks, .. } = event {
+        if let PlayerEvent::QueueChanged { context_uri, current, next } = event {
             if !self.remote_active {
-                self.set_queue(Queue::from_player(context_uri, current_track, &next_tracks));
+                self.set_queue(Queue::from_player(context_uri, current, &next));
             }
             return matches!(self.view, View::Queue(_));
         }
@@ -1012,14 +1012,14 @@ impl App {
             self.queue_reshuffled();
         }
         match &event {
-            PlayerEvent::SessionConnected { .. } => {
+            PlayerEvent::Activated => {
                 self.local_active = true;
                 // A volume set while inactive was ignored; Spirc takes it now.
                 if let Some(volume) = self.volume_sync.next() {
                     self.control(|c| c.set_volume(volume));
                 }
             }
-            PlayerEvent::SessionDisconnected { .. } => {
+            PlayerEvent::Deactivated => {
                 self.local_active = false;
                 // Usually another device took over; find out which before the next command.
                 self.next_poll = Instant::now();

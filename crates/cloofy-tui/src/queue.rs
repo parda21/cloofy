@@ -2,10 +2,8 @@
 //! the playlist or album. Spotify's player state holds both in one list of next tracks and tells
 //! them apart by who put each one there.
 
-use librespot::{
-    playback::player::QueueTrack,
-    protocol::player::{PlayerState, ProvidedTrack},
-};
+use cloofy_core::player::QueueTrack;
+use librespot::protocol::player::{PlayerState, ProvidedTrack};
 
 /// Where an upcoming track comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,9 +75,9 @@ impl Queue {
 
     /// From cloofy's own player, which reports it whenever a context loads or the queue
     /// changes, without entry IDs.
-    pub fn from_player(context: String, current: Option<QueueTrack>, next: &[QueueTrack]) -> Self {
+    pub fn from_player(context: String, current: Option<String>, next: &[QueueTrack]) -> Self {
         Self {
-            current: current.map(|t| t.uri).filter(|uri| !uri.is_empty()),
+            current: current.filter(|uri| !uri.is_empty()),
             next: next.iter().filter_map(|t| upcoming(&t.uri, "", &t.provider)).collect(),
             context,
             ..Self::default()
@@ -196,7 +194,7 @@ mod tests {
             track("spotify:delimiter", "context"),
             track("spotify:track:c", "context"),
         ];
-        let queue = Queue::from_player("spotify:album:1".into(), Some(track("spotify:track:x", "context")), &next);
+        let queue = Queue::from_player("spotify:album:1".into(), Some("spotify:track:x".into()), &next);
         assert_eq!(queue.current.as_deref(), Some("spotify:track:x"));
         assert_eq!(uris(&queue.next), ["spotify:track:a", "spotify:track:c"]);
         assert_eq!(queue.next[0].provider, Provider::Queue);

@@ -1,3 +1,4 @@
+pub mod events;
 #[cfg(target_os = "macos")]
 mod macos;
 

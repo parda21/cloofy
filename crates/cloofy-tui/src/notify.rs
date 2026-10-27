@@ -5,8 +5,7 @@
 use std::time::{Duration, Instant};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-
-use crate::playback::CurrentTrack;
+use cloofy_core::player::CurrentTrack;
 
 /// How long a track has to play before it gets announced, so skipping through doesn't flood.
 const SETTLE: Duration = Duration::from_millis(1500);

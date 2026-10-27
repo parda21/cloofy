@@ -3,12 +3,9 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
+use cloofy_core::player::{CurrentTrack, PlayerEvent};
 use cloofy_os::media::{Command, Controls, State, Track};
-use librespot::{
-    connect::Spirc,
-    metadata::audio::{AudioItem, UniqueFields},
-    playback::player::PlayerEvent,
-};
+use librespot::connect::Spirc;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub enum Event {
@@ -44,23 +41,23 @@ impl Media {
             return;
         }
         match event {
-            PlayerEvent::TrackChanged { audio_item } => {
-                self.state.track = Some(track(audio_item));
+            PlayerEvent::TrackChanged { track: current } => {
+                self.state.track = Some(track(current));
                 self.state.position = Duration::ZERO;
-                self.load_artwork(audio_item);
+                self.load_artwork(current);
             }
-            PlayerEvent::Playing { position_ms, .. } => {
+            PlayerEvent::Playing { position_ms } => {
                 self.state.playing = true;
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Paused { position_ms, .. } => {
+            PlayerEvent::Paused { position_ms } => {
                 self.state.playing = false;
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Seeked { position_ms, .. } | PlayerEvent::PositionCorrection { position_ms, .. } => {
+            PlayerEvent::Seeked { position_ms } | PlayerEvent::PositionCorrection { position_ms } => {
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Stopped { .. } => self.state = State::default(),
+            PlayerEvent::Stopped => self.state = State::default(),
             _ => return,
         }
         if let Some(controls) = &self.controls {
@@ -87,9 +84,9 @@ impl Media {
         }
     }
 
-    fn load_artwork(&mut self, item: &AudioItem) {
+    fn load_artwork(&mut self, current: &CurrentTrack) {
         // A cover still loading for the previous track must not land on this one.
-        self.artwork_url = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone());
+        self.artwork_url = current.cover_url_large.clone();
         let Some(url) = self.artwork_url.clone() else { return };
         let (http, tx) = (self.http.clone(), self.tx.clone());
         tokio::spawn(async move {
@@ -116,21 +113,12 @@ fn control(spirc: &Spirc, command: Command) -> Result<()> {
     Ok(())
 }
 
-fn track(item: &AudioItem) -> Track {
-    let (artist, album) = match &item.unique_fields {
-        UniqueFields::Track { artists, album, .. } => {
-            (artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", "), album.clone())
-        }
-        UniqueFields::Episode { show_name, .. } => (show_name.clone(), String::new()),
-        UniqueFields::Local { artists, album, .. } => {
-            (artists.clone().unwrap_or_default(), album.clone().unwrap_or_default())
-        }
-    };
+fn track(current: &CurrentTrack) -> Track {
     Track {
-        title: item.name.clone(),
-        artist,
-        album,
-        duration: Duration::from_millis(item.duration_ms.into()),
+        title: current.name.clone(),
+        artist: current.artists.join(", "),
+        album: current.album.clone(),
+        duration: Duration::from_millis(current.duration_ms.into()),
         artwork: None,
     }
 }

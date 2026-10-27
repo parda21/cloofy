@@ -7,15 +7,17 @@ use std::{
 };
 
 use anyhow::Result;
-use cloofy_core::{catalog::Track, connect::Playback, paths::Paths};
-use cloofy_player::Engine;
+use cloofy_core::{
+    connect::Playback,
+    paths::Paths,
+    player::{CurrentTrack, PlayerEvent},
+};
+use cloofy_player::{Engine, events};
 use cloofy_spotify::session;
 use futures::StreamExt;
 use librespot::{
     connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
     core::{SpotifyUri, dealer::protocol::Message, session::Session},
-    metadata::audio::{AudioItem, UniqueFields},
-    playback::player::PlayerEvent,
     protocol::connect::ClusterUpdate,
 };
 use tokio::sync::{
@@ -74,36 +76,6 @@ impl Repeat {
     }
 }
 
-pub struct CurrentTrack {
-    pub uri: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    /// Parallel to `artists`; may be shorter when unknown.
-    pub artist_uris: Vec<String>,
-    pub album: String,
-    pub album_uri: Option<String>,
-    pub duration_ms: u32,
-    pub cover_url: Option<String>,
-    /// The largest available cover, for the Now Playing screen.
-    pub cover_url_large: Option<String>,
-}
-
-impl CurrentTrack {
-    /// The track as a row of a track list.
-    pub fn to_track(&self) -> Track {
-        Track {
-            uri: self.uri.clone(),
-            name: self.name.clone(),
-            artists: self.artists.clone(),
-            artist_uris: self.artist_uris.clone(),
-            album: self.album.clone(),
-            album_uri: self.album_uri.clone().unwrap_or_default(),
-            duration_ms: self.duration_ms,
-            image_url: self.cover_url.clone(),
-        }
-    }
-}
-
 pub struct Cover {
     pub url: String,
     pub picture: crate::loader::Picture,
@@ -132,7 +104,7 @@ struct Shown {
     position_at: Instant,
 }
 
-/// What the local player is doing, as reported by librespot's player events.
+/// What the local player is doing, as reported by its events.
 pub struct NowPlaying {
     pub track: Option<CurrentTrack>,
     pub playing: bool,
@@ -349,8 +321,7 @@ impl NowPlaying {
     /// Applies a player event. Returns a cover URL when the new track needs its art loaded.
     pub fn apply(&mut self, event: PlayerEvent) -> Option<String> {
         match event {
-            PlayerEvent::Loading { track_id, position_ms, .. } => {
-                let uri = track_id.to_uri();
+            PlayerEvent::Loading { uri, position_ms } => {
                 // Also covers skips from the phone and next tracks that weren't preloaded.
                 if self.pending.is_none() {
                     self.start(None);
@@ -365,8 +336,7 @@ impl NowPlaying {
                     self.report_position(position_ms);
                 }
             }
-            PlayerEvent::TrackChanged { audio_item } => {
-                let track = current_track(&audio_item);
+            PlayerEvent::TrackChanged { track } => {
                 let cover_url = track.cover_url.clone();
                 self.track = Some(track);
                 self.pending = None;
@@ -376,30 +346,30 @@ impl NowPlaying {
                     return cover_url;
                 }
             }
-            PlayerEvent::Playing { position_ms, .. } => {
+            PlayerEvent::Playing { position_ms } => {
                 self.pending = None;
                 // Freeze first, so a report from before a seek leaves the shown position put.
                 self.set_playing(false);
                 self.report_position(position_ms);
                 self.playing = true;
             }
-            PlayerEvent::Paused { position_ms, .. } => {
+            PlayerEvent::Paused { position_ms } => {
                 self.pending = None;
                 self.set_playing(false);
                 self.report_position(position_ms);
             }
-            PlayerEvent::Stopped { .. } => {
+            PlayerEvent::Stopped => {
                 self.pending = None;
                 self.playing = false;
             }
-            PlayerEvent::Seeked { position_ms, .. } => {
+            PlayerEvent::Seeked { position_ms } => {
                 // "Previous" restarts the track instead when it has played for a while.
                 if self.pending.as_ref().is_some_and(|p| p.skip && !p.loading) {
                     self.pending = None;
                 }
                 self.report_position(position_ms);
             }
-            PlayerEvent::PositionCorrection { position_ms, .. } | PlayerEvent::PositionChanged { position_ms, .. } => {
+            PlayerEvent::PositionCorrection { position_ms } | PlayerEvent::PositionChanged { position_ms } => {
                 self.report_position(position_ms)
             }
             PlayerEvent::ShuffleChanged { shuffle } => self.shuffle = shuffle,
@@ -577,41 +547,6 @@ impl RemoteIntent {
             || self.shuffle.is_some()
             || self.repeat.is_some()
             || self.volume.is_some()
-    }
-}
-
-fn current_track(item: &AudioItem) -> CurrentTrack {
-    let (artists, artist_uris, album) = match &item.unique_fields {
-        UniqueFields::Track { artists, album, .. } => (
-            artists.iter().map(|a| a.name.clone()).collect(),
-            artists.iter().map(|a| a.id.to_uri()).collect(),
-            album.clone(),
-        ),
-        UniqueFields::Episode { show_name, .. } => (vec![show_name.clone()], Vec::new(), String::new()),
-        UniqueFields::Local { artists, album, .. } => {
-            (artists.clone().into_iter().collect(), Vec::new(), album.clone().unwrap_or_default())
-        }
-    };
-    // The smallest cover that is still sharp at a few cells, else the largest one.
-    let cover_url = item
-        .covers
-        .iter()
-        .filter(|c| c.width >= 200)
-        .min_by_key(|c| c.width)
-        .or_else(|| item.covers.iter().max_by_key(|c| c.width))
-        .map(|c| c.url.clone());
-    let cover_url_large = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone());
-    CurrentTrack {
-        uri: item.uri.clone(),
-        name: item.name.clone(),
-        artists,
-        artist_uris,
-        album,
-        // Not in the player's metadata; filled in from the track list when it is open.
-        album_uri: None,
-        duration_ms: item.duration_ms,
-        cover_url,
-        cover_url_large,
     }
 }
 
@@ -838,12 +773,13 @@ pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Noti
     });
 }
 
-/// Passes the player's events and lost outputs on to the app.
+/// Passes the player's events, as cloofy's own, and lost outputs on to the app.
 fn forward_events(engine: &Engine, mut lost_outputs: UnboundedReceiver<String>, tx: &UnboundedSender<AppEvent>) {
-    let mut events = engine.player.get_player_event_channel();
+    let mut librespot_events = engine.player.get_player_event_channel();
     let player_tx = tx.clone();
     tokio::spawn(async move {
-        while let Some(event) = events.recv().await {
+        while let Some(event) = librespot_events.recv().await {
+            let Some(event) = events::neutral(event) else { continue };
             if player_tx.send(AppEvent::Player(event)).is_err() {
                 break;
             }
@@ -926,8 +862,6 @@ fn forward_pushes(session: &Session, tx: UnboundedSender<AppEvent>) {
 
 #[cfg(test)]
 mod tests {
-    use librespot::core::SpotifyUri;
-
     use super::*;
 
     const URI: &str = "spotify:track:4uLU6hMCjMI75M1A2tKUQC";
@@ -953,16 +887,12 @@ mod tests {
         now
     }
 
-    fn id() -> SpotifyUri {
-        SpotifyUri::from_uri(URI).unwrap()
-    }
-
     fn seeked(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::Seeked { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::Seeked { position_ms }
     }
 
     fn position_changed(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::PositionChanged { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::PositionChanged { position_ms }
     }
 
     /// A poll of another device playing `uri`.
@@ -1041,7 +971,7 @@ mod tests {
         let mut now = paused_track();
         now.playing = true;
         now.seek(90_000);
-        now.apply(PlayerEvent::Paused { play_request_id: 1, track_id: id(), position_ms: 30_000 });
+        now.apply(PlayerEvent::Paused { position_ms: 30_000 });
         assert!(!now.playing);
         assert!((90_000..90_500).contains(&now.position_ms()));
     }
@@ -1169,11 +1099,11 @@ mod tests {
     const OTHER: &str = "spotify:track:0000000000000000000000";
 
     fn playing(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::Playing { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::Playing { position_ms }
     }
 
     fn loading(uri: &str) -> PlayerEvent {
-        PlayerEvent::Loading { play_request_id: 1, track_id: SpotifyUri::from_uri(uri).unwrap(), position_ms: 0 }
+        PlayerEvent::Loading { uri: uri.into(), position_ms: 0 }
     }
 
     #[test]

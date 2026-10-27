@@ -9,12 +9,12 @@ use std::{
 use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, Track},
     home::{HomeItem, ItemKind},
+    player::CurrentTrack,
 };
 
 use super::{App, NavItem};
 use crate::{
     overlay::{Overlay, PaletteAction},
-    playback::CurrentTrack,
     views::{QueueRow, SearchEntry, TrackSource, View},
 };
 

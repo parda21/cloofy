@@ -5,9 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use cloofy_core::player::CurrentTrack;
 use cloofy_os::media::{Controls, State, Track};
 
-use crate::playback::{CurrentTrack, NowPlaying};
+use crate::playback::NowPlaying;
 
 /// How far the system's own clock may drift from the player before it gets corrected, which
 /// is how seeks reach it.

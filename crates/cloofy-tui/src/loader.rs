@@ -17,6 +17,7 @@ use cloofy_core::{
     home::Home,
     lyrics::{Lyrics, LyricsQuery},
     paths::Paths,
+    player::CurrentTrack,
     update::{self, Release},
 };
 use cloofy_spotify::{artist, catalog, connect, home, lyrics, pathfinder::Pathfinder, webapi::WebApi};
@@ -41,7 +42,6 @@ use crate::{
     art,
     demo::Demo,
     graphics::{ImageProtocol, ImageTerminal, Inline},
-    playback::CurrentTrack,
     queue::{Listed, Upcoming},
     theme::{self, Rgb},
     views::TrackSource,

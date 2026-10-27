@@ -6,13 +6,13 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use cloofy_core::{
     catalog::{AlbumInfo, PlaylistInfo, Track},
     home::{HomeItem, ItemKind},
+    player::CurrentTrack,
 };
 
 use super::{App, Focus, LibraryEntry, NavItem};
 use crate::{
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
-    playback::CurrentTrack,
     queue::Provider,
     views::{ArtistSelection, QueueRow, SearchEntry, TrackSource, View},
 };
