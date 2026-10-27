@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     fs::{self, OpenOptions},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process,
     sync::{Arc, Mutex, PoisonError, Weak},
 };
@@ -54,18 +54,7 @@ impl Notifications {
                 let mut shown = shown.lock().unwrap_or_else(PoisonError::into_inner);
                 (shown.id, image.and_then(|image| shown.write(&image)))
             };
-            let mut hints = HashMap::from([
-                ("desktop-entry", Value::from("cloofy")),
-                ("omarchy-glyph", Value::from(GLYPH)),
-                // Low: a new song is worth a glance, not an interruption.
-                ("urgency", Value::U8(0)),
-            ]);
-            if let Some(url) = image.and_then(|path| url::Url::from_file_path(path).ok()) {
-                hints.insert("image-path", Value::from(url.to_string()));
-            }
-            // The action a click on the notification takes; it shows no button.
-            let actions = ["default", "Show cloofy"];
-            let arguments = ("cloofy", replaces, "cloofy", title.as_str(), body.as_str(), actions, hints, -1i32);
+            let arguments = notify_arguments(replaces, &title, &body, image.as_deref());
             let reply = connection.call_method(Some(SERVER), PATH, Some(SERVER), "Notify", &arguments).await;
             match reply.and_then(|reply| reply.body().deserialize::<u32>()) {
                 Ok(id) => shown.lock().unwrap_or_else(PoisonError::into_inner).id = id,
@@ -82,6 +71,26 @@ impl Drop for Notifications {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+type NotifyArguments<'a> = (&'a str, u32, &'a str, &'a str, &'a str, &'a [&'a str], HashMap<&'a str, Value<'a>>, i32);
+
+/// What `Notify` takes: app, the notification it replaces, icon, title, body, actions, hints
+/// and how long it shows (the server's choice).
+fn notify_arguments<'a>(replaces: u32, title: &'a str, body: &'a str, image: Option<&Path>) -> NotifyArguments<'a> {
+    let mut hints = HashMap::from([
+        ("desktop-entry", Value::from("cloofy")),
+        ("omarchy-glyph", Value::from(GLYPH)),
+        // Low: a new song is worth a glance, not an interruption.
+        ("urgency", Value::U8(0)),
+    ]);
+    if let Some(url) = image.and_then(|path| url::Url::from_file_path(path).ok()) {
+        hints.insert("image-path", Value::from(url.to_string()));
+    }
+    // The action a click on the notification takes; it shows no button. A slice, since a fixed
+    // array would go over the bus as a structure, which `Notify` doesn't take.
+    let actions: &[&str] = &["default", "Show cloofy"];
+    ("cloofy", replaces, "cloofy", title, body, actions, hints, -1)
 }
 
 /// Brings cloofy's window to the front when the notification on screen is clicked, for as long
@@ -133,7 +142,17 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use zbus::zvariant::DynamicType;
+
     use super::*;
+
+    #[test]
+    fn calls_notify_with_its_signature() {
+        let arguments = notify_arguments(3, "Strobe", "deadmau5", Some(Path::new("/run/cover.jpg")));
+        assert_eq!(arguments.signature().to_string(), "(susssasa{sv}i)");
+        assert_eq!(arguments.1, 3, "replaces the one before");
+        assert_eq!(arguments.6["image-path"], Value::from("file:///run/cover.jpg"));
+    }
 
     #[test]
     fn escapes_what_looks_like_markup() {
