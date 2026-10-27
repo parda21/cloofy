@@ -67,6 +67,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 url = "2"
+# D-Bus on Linux in pure Rust, driven by tokio rather than a runtime of its own. zbus 6 needs
+# a newer Rust than cloofy's rust-version.
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 # vendor/ holds forks as git submodules, both on branch `cloofy`:
 # - librespot (github.com/parda21/librespot) with two open upstream PRs merged, DJ with

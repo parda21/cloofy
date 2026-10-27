@@ -4,6 +4,9 @@
 //! ```sh
 //! cargo run -p cloofy-os --example now_playing [--paused] [cover.jpg]
 //! ```
+//!
+//! On Linux, `playerctl -p cloofy play-pause` or `busctl --user call org.mpris.MediaPlayer2.cloofy
+//! /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player Seek x 10000000` send requests too.
 
 use std::{sync::Arc, time::Duration};
 
@@ -32,7 +35,7 @@ fn main() {
         let mut state = State { track: Some(track), playing: !paused, position: Duration::ZERO };
         let mut since = std::time::Instant::now();
         controls.update(state.clone());
-        println!("Showing a track. Try the media keys or Control Center; Ctrl+C quits.");
+        println!("Showing a track. Try the media keys, Control Center or playerctl; Ctrl+C quits.");
         for command in rx {
             println!("{command:?}");
             if state.playing {

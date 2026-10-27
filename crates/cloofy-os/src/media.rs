@@ -25,7 +25,8 @@ pub struct State {
     pub position: Duration,
 }
 
-/// A request from the system: a media key, a headphone button, Control Center or Siri.
+/// A request from the system: a media key, a headphone button, Control Center, Siri, or an MPRIS
+/// client such as playerctl.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     Play,

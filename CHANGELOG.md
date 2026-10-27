@@ -10,6 +10,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Cover art off.** For slower computers: without cover art, cloofy loads and draws no covers at all. Pages show plain tiles in their place, and Now Playing gives the lyrics the whole screen.
 - **Power saving, your way.** Power saving can stay on or off for good; Auto follows the system as before.
 - **Accent color.** The accent can stay one color instead of following the cover.
+- **At home on Linux.** Media keys, playerctl and the media controls of GNOME, KDE and Waybar play, pause, skip and seek, and show the track with its cover, in `cloofy play` and `cloofy connect` too. cloofy pauses before the computer sleeps and reconnects as soon as it wakes. With animations turned off in the desktop's settings, slides become fades, lyrics jump to the current line and the equalizer stands still. In Power Saver mode animations stop and cloofy wakes the computer less often.
 
 ### Changed
 

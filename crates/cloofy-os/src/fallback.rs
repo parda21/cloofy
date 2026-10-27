@@ -1,4 +1,5 @@
-//! Systems without an integration yet: nothing to set up, nothing shown.
+//! Systems without an integration yet: nothing to set up, nothing shown. Linux uses the parts it
+//! has nothing better for.
 
 pub fn run_main<R>(work: impl FnOnce() -> R) -> R {
     work()
@@ -17,6 +18,7 @@ pub mod audio {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub mod power {
     use std::sync::Arc;
 
@@ -27,6 +29,7 @@ pub mod power {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub mod settings {
     use crate::settings::Settings;
 
@@ -57,6 +60,7 @@ pub mod secrets {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub mod media {
     use std::sync::Arc;
 

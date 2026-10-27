@@ -37,7 +37,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
 - **Settings in the app.** Crossfade, cover art, the accent color, icons, power saving and notifications, on a Settings page like Spotify's. Slow computer? Turn cover art off.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
-- **At home on macOS.** Media keys, AirPods and Control Center, headphones that pause when they disconnect, Reduce Motion and Low Power Mode.
+- **At home on macOS and Linux.** Media keys and the system's media controls: Control Center on macOS, and on Linux GNOME, KDE, Waybar and playerctl. cloofy pauses before the computer sleeps, reconnects when it wakes, and moves less when the system asks for less motion or saves power. On macOS, AirPods and headphones pause playback when they disconnect.
 
 ## A closer look
 
@@ -181,7 +181,7 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
-Power saving stops animations and redraws less often. On macOS it turns on with Low Power Mode unless set otherwise.
+Power saving stops animations and redraws less often. Unless set otherwise, it turns on by itself with Low Power Mode on macOS and the Power Saver profile on Linux.
 
 Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.
 

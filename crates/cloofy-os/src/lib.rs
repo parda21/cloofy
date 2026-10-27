@@ -14,9 +14,14 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as os;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as os;
+
 #[cfg(not(target_os = "macos"))]
 mod fallback;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use fallback as os;
 
 /// Runs `work` while the main thread serves the OS, and returns its result.

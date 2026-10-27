@@ -31,6 +31,12 @@ objc2-media-player = { workspace = true, features = [
     "MPRemoteCommandEvent",
 ] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+futures.workspace = true
+tokio.workspace = true
+url.workspace = true
+zbus.workspace = true
+
 [[test]]
 name = "run_main"
 harness = false
