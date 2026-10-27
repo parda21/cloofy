@@ -83,47 +83,51 @@ The demo opens the full interface with a sample library: real albums and artists
 curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
 ```
 
-The installer checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup): your Spotify app, its client ID, and signing in. cloofy offers new releases itself, see [updates](#updates).
+The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's bar widget, theme, menu entries and launcher. Run it again to switch; cloofy offers new releases itself, see [updates](#updates).
 
-With Homebrew, on macOS and Linux:
+Package managers have the same three builds:
+
+| | Spotify | YouTube Music | Both |
+| --- | --- | --- | --- |
+| [Homebrew](https://brew.sh), macOS and Linux | `cloofy` | `cloofy-ytmusic` | `cloofy-full` |
+| [mise](https://mise.jdx.dev), anywhere | `matching=spotify` | `matching=ytmusic` | `matching=full` |
+| Arch Linux | `cloofy-bin` | `cloofy-ytmusic-bin` | `cloofy-full-bin` |
 
 ```sh
-brew install parda21/cloofy/cloofy
-```
-
-With [mise](https://mise.jdx.dev), anywhere:
-
-```sh
-mise use -g ubi:parda21/cloofy
+brew install parda21/cloofy/cloofy-ytmusic
+mise use -g 'github:parda21/cloofy[matching=ytmusic]'
 ```
 
 On Arch Linux, as a package built from the PKGBUILD that comes with each release:
 
 ```sh
-curl -LO https://github.com/parda21/cloofy/releases/latest/download/PKGBUILD && makepkg -si
+curl -L -o PKGBUILD https://github.com/parda21/cloofy/releases/latest/download/cloofy-ytmusic-bin.PKGBUILD && makepkg -si
 ```
 
-Installed with a package manager, go through the [setup](#setup) yourself. The package manager keeps cloofy up to date.
+Homebrew's and Arch's YouTube Music packages bring mpv, yt-dlp and deno along; with mise, install those yourself. Each package replaces the others. Installed with a package manager, go through the [setup](#setup) yourself. The package manager keeps cloofy up to date.
 
 <details>
 <summary>Installer options, building from source</summary>
 
-- `bash -s -- --yes` installs without asking anything.
-- `bash -s -- --uninstall` removes cloofy.
+- `bash -s -- --service ytmusic` installs YouTube Music without asking about it: `spotify`, `ytmusic` or `both`.
+- `bash -s -- --yes` installs without asking anything: the services you have, or Spotify the first time.
+- `bash -s -- --uninstall` removes cloofy, and its Omarchy setup.
 
-On platforms without a prebuilt binary, the installer builds cloofy with cargo. To do that yourself (Rust 1.88 or newer):
+On platforms without a prebuilt binary, the installer builds cloofy with cargo, with only the services you picked. To do that yourself (Rust 1.88 or newer), name them as features; without any, you get both:
 
 ```sh
-cargo install --git https://github.com/parda21/cloofy --locked
+cargo install --git https://github.com/parda21/cloofy --locked cloofy --no-default-features --features ytmusic
 ```
 
-On Linux the build needs the ALSA and PulseAudio headers:
+On Linux the Spotify build needs the ALSA and PulseAudio headers:
 
 | Distro | Packages |
 | --- | --- |
 | Debian, Ubuntu | `libasound2-dev libpulse-dev pkg-config` |
 | Fedora | `alsa-lib-devel pulseaudio-libs-devel` |
 | Arch | `alsa-lib libpulse` |
+
+YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](https://github.com/yt-dlp/yt-dlp) (2025.11.12 or newer) and [deno](https://deno.com) to play.
 
 </details>
 
