@@ -13,6 +13,8 @@ pub enum Expect {
     Available,
     /// Spotify removed this for Development Mode apps; a failure is the expected result.
     Removed,
+    /// Nice to have; a failure is no problem.
+    Optional,
 }
 
 #[derive(Debug)]
@@ -36,12 +38,16 @@ pub struct Section {
 
 /// Runs a probe that should succeed, giving up after a while; its answer is the detail shown.
 pub async fn timed(name: &str, probe: impl Future<Output = Result<String>>) -> Check {
-    let outcome = match tokio::time::timeout(TIMEOUT, probe).await {
+    Check { name: name.into(), expect: Expect::Available, outcome: outcome(TIMEOUT, probe).await }
+}
+
+/// What a probe found, or why it failed; one still running after `timeout` failed.
+pub async fn outcome(timeout: Duration, probe: impl Future<Output = Result<String>>) -> Outcome {
+    match tokio::time::timeout(timeout, probe).await {
         Ok(Ok(detail)) => Outcome::Ok(detail),
         Ok(Err(err)) => Outcome::Failed(format!("{err:#}")),
         Err(_) => Outcome::Failed("Timed out".into()),
-    };
-    Check { name: name.into(), expect: Expect::Available, outcome }
+    }
 }
 
 /// What every service relies on besides itself: LRCLIB, where lyrics come from when the

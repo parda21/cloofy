@@ -16,7 +16,7 @@ mod player;
 mod search;
 mod watch;
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use cloofy_core::{
@@ -24,7 +24,7 @@ use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, Track, User},
     home::Home,
     lyrics::{Lyrics, LyricsQuery},
-    paths::{Paths, Secret},
+    paths::Paths,
 };
 use futures::Stream;
 use serde_json::Value;
@@ -58,7 +58,7 @@ struct Inner {
 impl YtMusic {
     /// Signs in with the cookies saved by `cloofy login ytmusic`, if any; signed out otherwise.
     pub fn new(paths: &Paths) -> Result<Self> {
-        let api = InnerTube::new(cookie_store(paths))?;
+        let api = InnerTube::new(paths.ytmusic_cookies())?;
         let http = cloofy_core::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
         Ok(Self { inner: Arc::new(Inner { api, http, library: Library::default() }) })
     }
@@ -177,15 +177,4 @@ impl YtMusic {
     pub(crate) fn api(&self) -> &InnerTube {
         &self.inner.api
     }
-}
-
-/// Where the sign-in's cookies are kept: a private file, or the keychain when the user keeps
-/// sign-ins there.
-pub(crate) fn cookie_store(paths: &Paths) -> Secret {
-    let file = cookie_file(paths);
-    if paths.keychain { Secret::Keychain { name: "ytmusic-cookies", file } } else { Secret::File(file) }
-}
-
-pub(crate) fn cookie_file(paths: &Paths) -> PathBuf {
-    paths.data.join("ytmusic").join("cookies.txt")
 }

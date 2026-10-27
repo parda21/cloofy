@@ -1,10 +1,10 @@
 //! Checks what YouTube Music needs: the programs playback runs on, InnerTube, the sign-in, and
-//! a stream URL actually resolving. Same shape as Spotify's checks, so `cloofy doctor` prints
-//! both alike.
+//! a stream URL actually resolving, as `cloofy doctor` sections.
 
 use std::{process::Stdio, time::Duration};
 
 use anyhow::{Result, bail};
+use cloofy_core::doctor::{Check, Expect, Outcome, Section, outcome};
 use tokio::process::Command;
 
 use crate::{YtMusic, player};
@@ -12,32 +12,6 @@ use crate::{YtMusic, player};
 /// Starboy, which has lyrics and a radio.
 const TRACK: &str = "ytmusic:track:plnfIj7dkJE";
 const TIMEOUT: Duration = Duration::from_secs(45);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Expect {
-    Available,
-    /// Nice to have; a failure is no problem.
-    Optional,
-}
-
-#[derive(Debug)]
-pub enum Outcome {
-    Ok(String),
-    Failed(String),
-}
-
-#[derive(Debug)]
-pub struct Check {
-    pub name: String,
-    pub expect: Expect,
-    pub outcome: Outcome,
-}
-
-#[derive(Debug)]
-pub struct Section {
-    pub title: &'static str,
-    pub checks: Vec<Check>,
-}
 
 /// Every check, in the order `cloofy doctor` shows them.
 pub async fn all(client: &YtMusic) -> Vec<Section> {
@@ -139,12 +113,12 @@ async fn version(name: &str, program: &str, args: &[&str], expect: Expect) -> Ch
     Check { name: name.into(), expect, outcome }
 }
 
+/// Like [`cloofy_core::doctor::timed`], with time for yt-dlp, and how long the probe took.
 async fn timed(name: &str, expect: Expect, probe: impl Future<Output = Result<String>>) -> Check {
     let started = std::time::Instant::now();
-    let outcome = match tokio::time::timeout(TIMEOUT, probe).await {
-        Ok(Ok(detail)) => Outcome::Ok(format!("{detail} ({} ms)", started.elapsed().as_millis())),
-        Ok(Err(err)) => Outcome::Failed(format!("{err:#}")),
-        Err(_) => Outcome::Failed("Timed out".into()),
+    let outcome = match outcome(TIMEOUT, probe).await {
+        Outcome::Ok(detail) => Outcome::Ok(format!("{detail} ({} ms)", started.elapsed().as_millis())),
+        failed => failed,
     };
     Check { name: name.into(), expect, outcome }
 }

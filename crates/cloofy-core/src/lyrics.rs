@@ -52,7 +52,8 @@ pub async fn lrclib(http: &reqwest::Client, query: &LyricsQuery<'_>) -> Result<O
         ])
         .send()
         .await?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
+    // LRCLIB answers "not found" with 503 at times.
+    if matches!(response.status(), reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::SERVICE_UNAVAILABLE) {
         return Ok(None);
     }
     let body: Value = response.error_for_status()?.json().await?;

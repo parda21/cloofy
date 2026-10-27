@@ -43,6 +43,12 @@ impl Paths {
         self.secret("streaming", self.session_dir().join("credentials.json"))
     }
 
+    /// The YouTube Music sign-in: youtube.com's cookies, borrowed from a browser, as a
+    /// `cookies.txt`.
+    pub fn ytmusic_cookies(&self) -> Secret {
+        self.secret("ytmusic-cookies", self.data.join("ytmusic").join("cookies.txt"))
+    }
+
     fn secret(&self, name: &'static str, file: PathBuf) -> Secret {
         if self.keychain { Secret::Keychain { name, file } } else { Secret::File(file) }
     }
@@ -118,6 +124,28 @@ impl Secret {
             }
         }
     }
+
+    /// Forgets the secret wherever it is kept, a file from before the keychain included; fine
+    /// when there is none.
+    pub fn delete(&self) -> Result<()> {
+        let file = self.file();
+        match fs::remove_file(file) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).with_context(|| format!("{} can't be removed", file.display())),
+        }
+        if let Secret::Keychain { name, .. } = self {
+            cloofy_os::secrets::delete(name).context("Removing it from the keychain failed")?;
+        }
+        Ok(())
+    }
+
+    /// The file the secret is kept in, or was before it moved to the keychain.
+    pub fn file(&self) -> &Path {
+        match self {
+            Secret::File(path) | Secret::Keychain { file: path, .. } => path,
+        }
+    }
 }
 
 fn read_file(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -163,6 +191,9 @@ mod tests {
             let mode = fs::metadata(dir.join("token.json")).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+        secret.delete().unwrap();
+        assert_eq!(secret.read().unwrap(), None);
+        secret.delete().unwrap();
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -11,10 +11,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cloofy_core::paths::{Paths, Secret, write_private};
+use cloofy_core::paths::{Paths, write_private};
 use tokio::process::Command;
 
-use crate::{cookie_file, cookie_store, cookies::Jar, innertube};
+use crate::{cookies::Jar, innertube};
 
 /// A browser yt-dlp can read cookies from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,26 +139,17 @@ pub fn import_cookie_header(paths: &Paths, header: &str) -> Result<()> {
 
 /// Forgets the cookies; YouTube Music is signed out on the next start.
 pub fn sign_out(paths: &Paths) -> Result<()> {
-    let file = cookie_file(paths);
-    match fs::remove_file(&file) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err).with_context(|| format!("{} can't be removed", file.display())),
-    }
-    // The keychain has no "remove" here; an empty entry reads as signed out.
-    if let Secret::Keychain { .. } = cookie_store(paths) {
-        cookie_store(paths).write(b"")?;
-    }
-    Ok(())
+    paths.ytmusic_cookies().delete()
 }
 
 fn save(paths: &Paths, jar: &Jar) -> Result<()> {
-    cookie_store(paths).write(jar.to_text().as_bytes())
+    paths.ytmusic_cookies().write(jar.to_text().as_bytes())
 }
 
 /// The folder of the sign-in, readable by the user only.
 fn private_dir(paths: &Paths) -> Result<PathBuf> {
-    let dir = cookie_file(paths).parent().map(Path::to_path_buf).context("No folder for the cookies")?;
+    let cookies = paths.ytmusic_cookies();
+    let dir = cookies.file().parent().map(Path::to_path_buf).context("No folder for the cookies")?;
     fs::create_dir_all(&dir).with_context(|| format!("{} can't be created", dir.display()))?;
     #[cfg(unix)]
     {
@@ -183,7 +174,7 @@ mod tests {
         let paths = paths("header");
         assert!(import_cookie_header(&paths, "PREF=x").is_err(), "not signed in without LOGIN_INFO");
         import_cookie_header(&paths, "Cookie: SAPISID=abc; LOGIN_INFO=def; SID=ghi").unwrap();
-        let file = cookie_file(&paths);
+        let file = paths.ytmusic_cookies().file().to_owned();
         let saved = Jar::parse(&fs::read_to_string(&file).unwrap());
         assert_eq!(saved.get("SAPISID"), Some("abc"));
         #[cfg(unix)]

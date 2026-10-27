@@ -67,10 +67,15 @@ fn print_check(check: &Check, tally: &mut Tally) {
             tally.available += 1;
             format!("{}  {name}{}", style::cyan("✓"), style::cyan(&format!("available after all · {detail}")))
         }
+        (Outcome::Ok(detail), Expect::Optional) => {
+            tally.available += 1;
+            format!("{}  {name}{}", style::green("✓"), style::dim(detail))
+        }
         (Outcome::Failed(reason), Expect::Removed) => {
             tally.removed += 1;
             style::dim(&format!("–  {name}removed · {reason}"))
         }
+        (Outcome::Failed(reason), Expect::Optional) => style::dim(&format!("–  {name}{reason}")),
         (Outcome::Failed(reason), Expect::Available) => {
             tally.problems += 1;
             format!("{}  {name}{}", style::red("✗"), style::red(reason))

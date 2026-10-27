@@ -19,17 +19,7 @@ pub(crate) async fn lyrics(api: &InnerTube, http: &reqwest::Client, query: &Lyri
             Err(err) => tracing::debug!("YouTube Music lyrics: {err:#}"),
         }
     }
-    match lyrics::lrclib(http, query).await {
-        Ok(lyrics) => Ok(lyrics),
-        // LRCLIB answers "not found" with 503 at times.
-        Err(err)
-            if err.downcast_ref::<reqwest::Error>().and_then(reqwest::Error::status)
-                == Some(reqwest::StatusCode::SERVICE_UNAVAILABLE) =>
-        {
-            Ok(None)
-        }
-        Err(err) => Err(err),
-    }
+    lyrics::lrclib(http, query).await
 }
 
 async fn youtube(api: &InnerTube, video: &str) -> Result<Option<Lyrics>> {
