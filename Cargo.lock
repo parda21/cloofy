@@ -634,6 +634,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloofy-ytmusic"
+version = "0.4.0"
+dependencies = [
+ "anyhow",
+ "cloofy-core",
+ "futures",
+ "libc",
+ "reqwest 0.13.5",
+ "serde_json",
+ "sha1",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
