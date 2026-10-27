@@ -14,6 +14,7 @@ repository = "https://github.com/parda21/cloofy"
 [workspace.dependencies]
 cloofy-core = { path = "crates/cloofy-core" }
 cloofy-spotify = { path = "crates/cloofy-spotify" }
+cloofy-ytmusic = { path = "crates/cloofy-ytmusic" }
 cloofy-player = { path = "crates/cloofy-player" }
 cloofy-tui = { path = "crates/cloofy-tui" }
 cloofy-os = { path = "crates/cloofy-os" }
@@ -59,6 +60,8 @@ reqwest = { version = "0.13", features = ["json", "form", "query"] }
 security-framework = "3.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# SAPISIDHASH, the signature YouTube Music wants with cookie sign-ins.
+sha1 = "0.10"
 sha2 = "0.11"
 tachyonfx = "0.25"
 # Release archives only; the default features would also restore extended attributes.
