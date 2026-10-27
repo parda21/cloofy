@@ -14,6 +14,7 @@ use cloofy_core::{
 
 use super::{App, NavItem};
 use crate::{
+    backend,
     overlay::{Overlay, PaletteAction},
     views::{QueueRow, SearchEntry, TrackSource, View},
 };
@@ -156,7 +157,7 @@ impl App {
     /// Shows a like, save or follow (or undoing one) at once in the sidebar, the library page
     /// and Liked Songs. `saved` is the new state.
     pub(super) fn show_library_change(&mut self, uri: &str, saved: bool) {
-        if uri.starts_with("spotify:track:") {
+        if backend::is_track(uri) {
             return self.show_liked_change(uri, saved);
         }
         let restore = if saved { self.unsaved.remove(uri) } else { None };

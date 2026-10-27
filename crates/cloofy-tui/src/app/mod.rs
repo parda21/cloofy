@@ -25,20 +25,19 @@ use cloofy_core::{
     update::{PackageManager, Release},
 };
 use cloofy_os::settings::Settings;
-use cloofy_spotify::connect;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect, Size};
 use tachyonfx::{CellFilter, Effect, EffectManager, Interpolation, Motion, fx};
-use tokio::sync::watch;
 
 use crate::{
+    backend::{self, Player, Remote, Service},
     commands::Command,
     graphics::{INLINE_CELL, ImageProtocol, InlineLayer},
-    loader::{DataEvent, Loader, Picture, SessionState},
+    loader::{DataEvent, Loader, Picture},
     media::MediaSync,
     notify::Notifier,
     overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
-    playback::{ConnectPush, Controller, Cover, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    playback::{ConnectPush, Cover, NowPlaying, RemoteIntent, Repeat, VolumeSync},
     preferences::{AccentChoice, Preferences, Setting},
     queue::Queue,
     snapshot::Placement,
@@ -76,8 +75,6 @@ const ZEN_COVER_SETTLE: Duration = Duration::from_millis(150);
 /// A Now Playing cover that failed to load is tried again after this long.
 const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
-/// Spotify's DJ; loading it without a track asks for a fresh set.
-const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 /// How often to check which device plays, and how soon to look again while a change sent to
@@ -156,18 +153,21 @@ pub enum Update {
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
     Data(DataEvent),
-    Player(PlayerEvent),
-    Pushed(ConnectPush),
-    PlayerReady(Box<Controller>),
-    PlayerFailed(String),
-    /// The connection to Spotify dropped; a new one is on its way.
-    PlayerLost,
+    /// What a service's player reports.
+    Player(Service, PlayerEvent),
+    /// A service pushed a change of what plays on the account's devices.
+    Pushed(Service, ConnectPush),
+    /// A service's player is up; also after it connected again.
+    PlayerReady(Box<Player>),
+    PlayerFailed(Service, String),
+    /// The player's connection to the service dropped; a new one is on its way.
+    PlayerLost(Service),
     /// The computer is about to sleep, or woke up.
     Power(cloofy_os::power::Event),
     /// A media key, headphone button or Control Center.
     Media(cloofy_os::media::Command),
-    /// The audio output in use went away, named.
-    OutputLost(String),
+    /// The audio output a service's player used went away, named.
+    OutputLost(Service, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -385,8 +385,12 @@ pub struct App {
     restored_volume: Option<u16>,
     /// Local volume changes on their way to the player.
     volume_sync: VolumeSync,
-    controller: Option<Controller>,
-    /// cloofy's own Spotify Connect device ID.
+    /// cloofy's own players, one per service that is connected.
+    players: HashMap<Service, Player>,
+    /// The service whose player is the one that plays, or played last. Only one plays at a
+    /// time: starting playback on another one pauses this one.
+    active: Option<Service>,
+    /// cloofy's own device ID among the account's devices.
     device_id: Option<String>,
     /// cloofy's own device is the active one. Until something activates it, Spirc ignores
     /// every command but loading a track.
@@ -412,7 +416,6 @@ pub struct App {
     poll_started: Instant,
     /// The last change Spotify pushed, and when.
     last_push: Option<(ConnectPush, Instant)>,
-    session_tx: watch::Sender<SessionState>,
     /// Where the data cache and the state file live.
     paths: Paths,
     pub player_error: Option<String>,
@@ -560,7 +563,6 @@ pub struct App {
 impl App {
     pub fn new(
         loader: Loader,
-        session_tx: watch::Sender<SessionState>,
         prefs: Preferences,
         start: Start,
         paths: Paths,
@@ -584,7 +586,8 @@ impl App {
             last_context: None,
             restored_volume: None,
             volume_sync: VolumeSync::default(),
-            controller: None,
+            players: HashMap::new(),
+            active: None,
             device_id: None,
             local_active: false,
             remote_active: false,
@@ -600,7 +603,6 @@ impl App {
             polling: false,
             poll_started: Instant::now(),
             last_push: None,
-            session_tx,
             paths,
             player_error: None,
             now: NowPlaying::new(),
@@ -736,7 +738,48 @@ impl App {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.controller.is_some()
+        self.player().is_some()
+    }
+
+    /// The player that plays, or played last, while it is connected.
+    fn player(&self) -> Option<&Player> {
+        self.players.get(&self.active?)
+    }
+
+    /// The service playing, or else the one shown.
+    pub fn service(&self) -> Option<Service> {
+        self.active.or(self.loader.service())
+    }
+
+    /// The name of the service playing or shown, for messages about it.
+    pub fn service_name(&self) -> &'static str {
+        self.service().map_or("your music service", Service::name)
+    }
+
+    /// Whether Spotify's DJ is there, for the service that plays.
+    pub fn supports_dj(&self) -> bool {
+        self.service().is_some_and(backend::supports_dj)
+    }
+
+    /// Whether the service that plays can play on the account's other devices.
+    pub fn supports_devices(&self) -> bool {
+        self.service().is_some_and(backend::supports_devices)
+    }
+
+    /// Whether the service that plays can fade songs into each other.
+    pub fn supports_crossfade(&self) -> bool {
+        self.service().is_some_and(backend::supports_crossfade)
+    }
+
+    /// Whether `command` does anything here. The palette and the help leave out the ones for
+    /// what the service lacks.
+    pub fn offers(&self, command: Command) -> bool {
+        match command {
+            Command::Dj => self.supports_dj(),
+            Command::Devices => self.supports_devices(),
+            Command::Crossfade => self.supports_crossfade(),
+            _ => true,
+        }
     }
 
     /// Animation frame counter, shared by all animated elements.
@@ -765,8 +808,8 @@ impl App {
             self.save_library(false);
         }
         self.save_open_tracks(false);
-        if let Some(controller) = &self.controller {
-            controller.shutdown();
+        for player in self.players.values() {
+            player.shutdown();
         }
     }
 
@@ -861,33 +904,44 @@ impl App {
     /// Returns whether the screen needs a redraw.
     pub fn on_event(&mut self, event: AppEvent) -> bool {
         match event {
-            AppEvent::Player(event) => return self.on_player(event),
-            AppEvent::Pushed(push) => {
-                // A push brings the next poll forward; only the queue page shows it at once.
-                return self.on_push(push);
-            }
-            AppEvent::PlayerReady(controller) => {
-                self.player_error = None;
-                let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
-                self.device_id = Some(controller.session.device_id().to_owned());
-                controller.set_crossfade(Duration::from_secs(self.prefs.crossfade));
-                self.controller = Some(*controller);
-                self.reload_failed_view();
-            }
-            AppEvent::PlayerFailed(err) => self.on_player_failed(err),
-            AppEvent::PlayerLost => self.on_player_lost(),
+            AppEvent::Player(service, event) => return self.on_player(service, event),
+            // A push brings the next poll forward; only the queue page shows it at once.
+            AppEvent::Pushed(service, push) if self.is_active(service) => return self.on_push(push),
+            AppEvent::Pushed(..) => return false,
+            AppEvent::PlayerReady(player) => self.on_player_ready(*player),
+            AppEvent::PlayerFailed(service, err) => self.on_player_failed(service, err),
+            AppEvent::PlayerLost(service) => self.on_player_lost(service),
             AppEvent::Power(event) => self.on_power(event),
             AppEvent::Media(command) => self.on_media(command),
-            AppEvent::OutputLost(name) => self.on_output_lost(name),
+            AppEvent::OutputLost(service, name) => self.on_output_lost(service, name),
             AppEvent::Data(data) => return self.on_data(data),
         }
         true
     }
 
+    /// Whether `service`'s player is the one that plays, or nothing has played yet.
+    fn is_active(&self, service: Service) -> bool {
+        self.active.is_none_or(|active| active == service)
+    }
+
+    fn on_player_ready(&mut self, player: Player) {
+        let service = player.service();
+        self.player_error = None;
+        self.active.get_or_insert(service);
+        if self.is_active(service) {
+            self.device_id = player.device_id();
+        }
+        player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
+        self.players.insert(service, player);
+        self.reload_failed_view();
+    }
+
     /// The new connection starts out idle; what played gets ready to continue, as after a restart.
-    fn on_player_lost(&mut self) {
-        self.controller = None;
-        let _ = self.session_tx.send(SessionState::Connecting);
+    fn on_player_lost(&mut self, service: Service) {
+        self.players.remove(&service);
+        if !self.is_active(service) {
+            return;
+        }
         if !self.remote_active
             && self.resume.is_none()
             && let Some(last) = self.snapshot().last_track
@@ -895,7 +949,7 @@ impl App {
             self.now.restore(&last);
             self.resume = Some(last);
         }
-        self.notice("Connection to Spotify lost, reconnecting…".into());
+        self.notice(format!("Connection to {} lost, reconnecting…", service.name()));
     }
 
     fn on_power(&mut self, event: cloofy_os::power::Event) {
@@ -910,10 +964,10 @@ impl App {
             }
             Event::Wake => {
                 let slept = self.slept_at.take().and_then(|at| at.elapsed().ok());
-                if slept.is_none_or(|slept| slept >= LONG_SLEEP)
-                    && let Some(controller) = &self.controller
-                {
-                    controller.reconnect();
+                if slept.is_none_or(|slept| slept >= LONG_SLEEP) {
+                    for player in self.players.values() {
+                        player.reconnect();
+                    }
                 }
                 // Whatever plays elsewhere may have changed meanwhile.
                 self.next_poll = Instant::now();
@@ -922,10 +976,16 @@ impl App {
     }
 
     /// Unplugged headphones pause playback rather than move it to the speakers.
-    fn on_output_lost(&mut self, name: String) {
+    fn on_output_lost(&mut self, service: Service, name: String) {
+        if !self.is_active(service) {
+            if let Some(player) = self.players.get(&service) {
+                let _ = player.pause();
+            }
+            return;
+        }
         // The report itself says cloofy's player is writing audio, whatever the state shows,
         // and pausing a player that isn't playing does nothing.
-        self.control(|c| c.pause());
+        self.control(Player::pause);
         // Shown paused at once: a pause from the headphones that arrives before the player
         // confirms must not toggle playback back on, through the speakers.
         self.now.set_playing(false);
@@ -969,12 +1029,12 @@ impl App {
         media.sync(&self.now, !self.remote_active);
     }
 
-    /// Lets requests waiting for the session fail. `playback::spawn` keeps trying to connect
-    /// and reports back with `PlayerReady`.
-    fn on_player_failed(&mut self, err: String) {
+    /// The player keeps trying to connect and reports back with `PlayerReady`.
+    fn on_player_failed(&mut self, service: Service, err: String) {
         tracing::warn!("player: {err}");
-        let _ = self.session_tx.send(SessionState::Failed(err.clone()));
-        self.player_error = Some(err);
+        if self.is_active(service) {
+            self.player_error = Some(err);
+        }
     }
 
     /// Loads the open page again once the session is up, if it failed without one.
@@ -997,7 +1057,15 @@ impl App {
         }
     }
 
-    fn on_player(&mut self, event: PlayerEvent) -> bool {
+    fn on_player(&mut self, service: Service, event: PlayerEvent) -> bool {
+        if !self.is_active(service) {
+            // Playback started on another service's player, say from another app: that one
+            // plays now, and this one stops.
+            if !matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
+                return false;
+            }
+            self.take_over(service);
+        }
         // What plays next, as cloofy's own player has it; while another device plays, it has
         // nothing to say.
         if let PlayerEvent::QueueChanged { context_uri, current, next } = event {
@@ -1664,12 +1732,12 @@ impl App {
             redraw = true;
         }
 
-        if self.controller.is_some() && !self.polling && Instant::now() >= self.next_poll {
+        if self.player().is_some_and(Player::supports_devices) && !self.polling && Instant::now() >= self.next_poll {
             self.polling = true;
             self.poll_started = Instant::now();
             let interval = if self.last_push.is_some() { PUSHED_POLL_INTERVAL } else { POLL_INTERVAL };
             self.next_poll = Instant::now() + interval;
-            self.loader.playback();
+            self.loader.playback(self.active);
         }
 
         if self.upcoming_due.is_some_and(|due| Instant::now() >= due) {
@@ -1708,7 +1776,7 @@ impl App {
             || lyrics_loading
             || self.playlists_loading
             || self.library_loading
-            || (self.controller.is_none() && self.player_error.is_none())
+            || (!self.is_connected() && self.player_error.is_none())
     }
 
     /// Requests the big cover once the Now Playing layout knows its size.
@@ -2412,23 +2480,23 @@ impl App {
                 let playing = !self.now.playing;
                 self.now.set_playing(playing);
                 self.remote_intent.playing = Some(playing);
-                self.remote(if playing { connect::Command::Play } else { connect::Command::Pause });
+                self.remote(if playing { Remote::Play } else { Remote::Pause });
             }
-            Command::PlayPause if self.resume.is_some() && self.controller.is_some() => {
+            Command::PlayPause if self.resume.is_some() && self.is_connected() => {
                 if let Some(last) = self.resume.take() {
                     let uri = last.uri.clone();
-                    if self.control(|c| c.resume(last.context, last.uri, last.position_ms)) {
+                    if self.start_on(&uri, |p| p.resume(last.context, last.uri, last.position_ms)) {
                         self.now.start(Some(uri));
                     }
                 }
             }
-            Command::PlayPause if self.idle() && self.controller.is_some() => self.play_shown(),
+            Command::PlayPause if self.idle() && self.is_connected() => self.play_shown(),
             Command::PlayPause => {
                 let has_track = self.now.track.is_some();
-                self.control(|c| c.toggle(has_track));
+                self.control(|p| p.toggle(has_track));
             }
             Command::Next | Command::Previous | Command::Shuffle | Command::Repeat
-                if self.idle() && self.controller.is_some() =>
+                if self.idle() && self.is_connected() =>
             {
                 self.notice("Nothing is playing here yet · press space to start".into());
             }
@@ -2443,9 +2511,9 @@ impl App {
                 if self.remote_active {
                     self.now.shuffle = on;
                     self.remote_intent.shuffle = Some(on);
-                    self.remote(connect::Command::Shuffle(on));
+                    self.remote(Remote::Shuffle(on));
                 } else {
-                    self.control(|c| c.shuffle(on));
+                    self.control(|p| p.shuffle(on));
                 }
             }
             Command::Repeat => {
@@ -2457,9 +2525,9 @@ impl App {
                 if self.remote_active {
                     self.now.repeat = next;
                     self.remote_intent.repeat = Some(next);
-                    self.remote(connect::Command::Repeat(next.remote_name()));
+                    self.remote(Remote::Repeat(next));
                 } else {
-                    self.control(|c| c.repeat(next));
+                    self.control(|p| p.repeat(next));
                 }
             }
             Command::Search => {
@@ -2482,9 +2550,15 @@ impl App {
                 self.open_menu((area.x + area.width / 3, area.y + area.height / 3));
             }
             Command::Dj if self.dj_playing() => self.open_dj(),
-            Command::Dj => {
-                self.notice("Starting DJ…".into());
-                self.play(DJ_URI.into(), None);
+            Command::Dj => match self.service().and_then(backend::dj_context) {
+                Some(dj) => {
+                    self.notice("Starting DJ…".into());
+                    self.play(dj.into(), None);
+                }
+                None => self.error(format!("{} has no DJ", self.service_name())),
+            },
+            Command::Crossfade if !self.supports_crossfade() => {
+                self.error(format!("{} doesn't crossfade", self.service_name()));
             }
             Command::Crossfade => {
                 self.change_setting(Setting::Crossfade, true);
@@ -2495,8 +2569,11 @@ impl App {
                 self.notice(text);
             }
             Command::Settings => self.open_settings(),
+            Command::Devices if !self.supports_devices() => {
+                self.error(format!("{} doesn't play on other devices", self.service_name()));
+            }
             Command::Devices => {
-                self.loader.devices();
+                self.loader.devices(self.service());
                 match self.devices_cache.clone().filter(|d| !d.is_empty()) {
                     // The last list opens at once and updates when the fresh one arrives.
                     Some(devices) => self.open_devices(devices, true),
@@ -2534,6 +2611,7 @@ impl App {
     fn open_palette(&mut self) {
         let mut items: Vec<_> = Command::PALETTE
             .iter()
+            .filter(|&&command| self.offers(command))
             .map(|&command| PickItem {
                 label: match command {
                     Command::Dj if self.dj_playing() => "Ask DJ…".to_owned(),
@@ -2605,7 +2683,7 @@ impl App {
         if let Some(playlist) = self.playlists.get_mut(index) {
             playlist.total += uris.len() as u32;
             let text = format!("Added to “{}”", playlist.name);
-            self.loader.add_to_playlist(playlist.id.clone(), uris);
+            self.loader.add_to_playlist(playlist, uris);
             self.notice(text);
         }
     }
@@ -2797,7 +2875,7 @@ impl App {
 
     /// Whether cloofy itself plays DJ, so the DJ button moves it on to different picks.
     pub fn dj_playing(&self) -> bool {
-        self.local_active && self.playing_context() == Some(DJ_URI)
+        self.local_active && self.playing_context().is_some_and(backend::is_dj)
     }
 
     /// Track `row` of the open track list or search results.
@@ -3252,8 +3330,8 @@ impl App {
             View::Tracks(v) => {
                 let Some(track) = v.tracks.get(v.list.selected).cloned() else { return };
                 let (context, cover_url) = match &v.source {
-                    TrackSource::Liked => match &self.controller {
-                        Some(c) => (format!("spotify:user:{}:collection", c.session.username()), None),
+                    TrackSource::Liked => match self.liked_context() {
+                        Some(context) => (context, None),
                         None => return self.not_connected(),
                     },
                     TrackSource::Playlist(p) => (p.uri.clone(), None),
@@ -3286,7 +3364,7 @@ impl App {
 
     /// Opens playlists and albums; everything else starts playing.
     fn open_home_item(&mut self, item: HomeItem) {
-        if item.uri == DJ_URI {
+        if backend::is_dj(&item.uri) {
             return self.run(Command::Dj);
         }
         let id = item.uri.rsplit(':').next().unwrap_or_default().to_owned();
@@ -3364,11 +3442,12 @@ impl App {
     fn play(&mut self, context: String, track: Option<String>) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        let sent = if self.remote_active {
-            self.remote(connect::Command::PlayContext { context, track: track.clone(), shuffle: false });
+        let sent = if self.remote_active && self.plays_here(&context) {
+            self.remote(Remote::PlayContext { context, track: track.clone(), shuffle: false });
             true
         } else {
-            self.control(|c| c.play(context, track.clone()))
+            let uri = track.clone().unwrap_or_else(|| context.clone());
+            self.start_on(&uri, |p| p.play(context, track.clone()))
         };
         if sent {
             self.now.start(track);
@@ -3385,7 +3464,7 @@ impl App {
     fn play_shown(&mut self) {
         let Some(track) = &self.now.track else { return };
         let (context, uri, position_ms) = (self.last_context.clone(), track.uri.clone(), self.now.position_ms());
-        if self.control(|c| c.resume(context, uri.clone(), position_ms)) {
+        if self.start_on(&uri, |p| p.resume(context, uri.clone(), position_ms)) {
             self.now.start(Some(uri));
         }
     }
@@ -3393,11 +3472,11 @@ impl App {
     fn play_shuffled(&mut self, context: String) {
         self.resume = None;
         self.last_context = Some(context.clone());
-        let sent = if self.remote_active {
-            self.remote(connect::Command::PlayContext { context, track: None, shuffle: true });
+        let sent = if self.remote_active && self.plays_here(&context) {
+            self.remote(Remote::PlayContext { context, track: None, shuffle: true });
             true
         } else {
-            self.control(|c| c.play_shuffled(context))
+            self.start_on(&context.clone(), |p| p.play_shuffled(context))
         };
         if sent {
             self.now.start(None);
@@ -3410,18 +3489,18 @@ impl App {
         let restart = !forward && self.now.position_ms() >= RESTART_AFTER_MS;
         let sent = match (self.remote_active, forward) {
             (true, true) => {
-                self.remote(connect::Command::Next);
+                self.remote(Remote::Next);
                 true
             }
             (true, false) => {
                 if restart {
                     self.remote_intent.seek = Some((0, Instant::now()));
                 }
-                self.remote(connect::Command::Previous);
+                self.remote(Remote::Previous);
                 true
             }
-            (false, true) => self.control(|c| c.next()),
-            (false, false) => self.control(|c| c.previous()),
+            (false, true) => self.control(Player::next),
+            (false, false) => self.control(Player::previous),
         };
         // An inactive player drops skips; with nothing shown there is nothing to wait for.
         if !sent || !(self.remote_active || self.local_active) {
@@ -3487,10 +3566,10 @@ impl App {
     }
 
     /// Sends a command to the other device. Its answer schedules the poll that confirms it.
-    fn remote(&mut self, command: connect::Command) {
+    fn remote(&mut self, command: Remote) {
         self.remote_intent.sent();
         self.last_command = Instant::now();
-        self.loader.remote(command);
+        self.loader.remote(self.active, command);
     }
 
     fn change_volume(&mut self, steps: i32) {
@@ -3504,13 +3583,13 @@ impl App {
         self.now.volume = volume;
         if self.remote_active {
             self.remote_intent.volume = Some(volume);
-            self.remote(connect::Command::Volume((volume as u32 * 100 / u16::MAX as u32) as u8));
+            self.remote(Remote::Volume((volume as u32 * 100 / u16::MAX as u32) as u8));
             return;
         }
         self.restored_volume = Some(volume);
         if self.local_active {
             if let Some(volume) = self.volume_sync.request(volume) {
-                self.control(|c| c.set_volume(volume));
+                self.control(|p| p.set_volume(volume));
             }
         } else {
             self.volume_sync.defer(volume);
@@ -3531,10 +3610,10 @@ impl App {
         if self.remote_active {
             self.now.set_position(position_ms);
             self.remote_intent.seek = Some((position_ms, Instant::now()));
-            self.remote(connect::Command::Seek(position_ms));
+            self.remote(Remote::Seek(position_ms));
         } else if self.local_active {
             self.now.seek(position_ms);
-            self.control(|c| c.seek(position_ms));
+            self.control(|p| p.seek(position_ms));
         } else {
             // cloofy's inactive device ignores seeks; space starts from the new spot instead.
             self.now.set_position(position_ms);
@@ -3558,7 +3637,7 @@ impl App {
         let Some(Overlay::Dj { picker, suggestions, .. }) = self.overlay.take() else { return };
         match choice {
             DjChoice::Jump => {
-                if self.control(Controller::next_segment) {
+                if self.control(Player::next_segment) {
                     self.notice("Getting different DJ picks…".into());
                     self.now.start(None);
                 }
@@ -3573,8 +3652,8 @@ impl App {
     }
 
     fn ask_dj(&mut self, prompt: String, suggested: bool) {
-        let Some(controller) = &self.controller else { return self.not_connected() };
-        match controller.ask_dj(prompt, suggested) {
+        let Some(player) = self.player() else { return self.not_connected() };
+        match player.ask_dj(prompt, suggested) {
             Ok(answer) => {
                 self.loader.ask_dj(answer);
                 self.notice("Asking DJ…".into());
@@ -3586,7 +3665,7 @@ impl App {
 
     fn open_devices(&mut self, devices: Vec<Device>, refreshing: bool) {
         if devices.is_empty() && !refreshing {
-            return self.error("No Spotify devices found.".into());
+            return self.error(format!("No {} devices found.", self.service_name()));
         }
         let items = device_items(&devices, self.device_id.as_deref());
         self.status = None;
@@ -3597,7 +3676,7 @@ impl App {
     fn refresh_devices(&mut self, devices: Vec<Device>) {
         if devices.is_empty() {
             self.overlay = None;
-            return self.error("No Spotify devices found.".into());
+            return self.error(format!("No {} devices found.", self.service_name()));
         }
         let items = device_items(&devices, self.device_id.as_deref());
         let Some(Overlay::Devices { devices: shown, picker, refreshing }) = &mut self.overlay else { return };
@@ -3613,7 +3692,7 @@ impl App {
         // The device label shows the move until the device turns up playing.
         self.transfer =
             Some(Transfer { device_id: device.id.clone(), name: device.name.clone(), since: Instant::now() });
-        self.loader.transfer(device);
+        self.loader.transfer(self.service(), device);
         self.last_command = Instant::now();
     }
 
@@ -3623,23 +3702,60 @@ impl App {
     }
 
     /// Sends a command to cloofy's own player. Returns whether it went out.
-    fn control(&mut self, command: impl FnOnce(&Controller) -> anyhow::Result<()>) -> bool {
-        let Some(controller) = &self.controller else {
+    fn control(&mut self, command: impl FnOnce(&Player) -> anyhow::Result<()>) -> bool {
+        let Some(player) = self.player() else {
             self.not_connected();
             return false;
         };
-        if let Err(err) = command(controller) {
+        if let Err(err) = command(player) {
             self.error(format!("{err:#}"));
             return false;
         }
         true
     }
 
+    /// Starts playback of `uri` on the player of its service, which takes over from the one
+    /// that played before. Returns whether the command went out.
+    fn start_on(&mut self, uri: &str, command: impl FnOnce(&Player) -> anyhow::Result<()>) -> bool {
+        if let Some(service) = Service::of(uri).filter(|service| self.players.contains_key(service)) {
+            self.take_over(service);
+        }
+        self.control(command)
+    }
+
+    /// Makes `service`'s player the one that plays. Only one plays at a time, so the one that
+    /// played before pauses, wherever it played.
+    fn take_over(&mut self, service: Service) {
+        let Some(previous) = self.active.replace(service).filter(|previous| *previous != service) else { return };
+        if self.remote_active {
+            self.loader.remote(Some(previous), Remote::Pause);
+        } else if let Some(player) = self.players.get(&previous) {
+            let _ = player.pause();
+        }
+        self.device_id = self.players.get(&service).and_then(Player::device_id);
+        self.local_active = false;
+        self.remote_active = false;
+        self.active_device = None;
+        self.now.device = None;
+    }
+
+    /// Whether `uri` plays on the service that plays now, rather than on another one.
+    fn plays_here(&self, uri: &str) -> bool {
+        Service::of(uri).is_none_or(|service| self.is_active(service))
+    }
+
+    /// Liked Songs of the service shown as a context to play, once its player knows the user.
+    fn liked_context(&self) -> Option<String> {
+        let service = self.loader.service()?;
+        let user = self.players.get(&service).and_then(Player::user);
+        backend::liked_context(service, user.as_deref())
+    }
+
     fn not_connected(&mut self) {
         let text = match &self.player_error {
             Some(err) => format!("Playback unavailable: {err}"),
             None if self.demo => "This is the demo: nothing plays here".into(),
-            None => "Still connecting to Spotify…".into(),
+            None => format!("Still connecting to {}…", self.service_name()),
         };
         self.error(text);
     }

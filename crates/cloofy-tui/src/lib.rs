@@ -1,5 +1,10 @@
+// What only a service's player sends, like its events, has nobody to send it in a build
+// without one, which runs the demo only.
+#![cfg_attr(not(feature = "spotify"), allow(dead_code))]
+
 mod app;
 mod art;
+mod backend;
 mod commands;
 mod datacache;
 pub mod demo;
@@ -26,11 +31,7 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use cloofy_core::{
-    config::Config,
-    paths::{Paths, Secret},
-};
-use cloofy_spotify::{session, webapi::WebApi};
+use cloofy_core::{config::Config, paths::Paths, service::Service};
 use crossterm::{
     event::{DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture, EventStream},
     terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate},
@@ -38,17 +39,21 @@ use crossterm::{
 use futures::{FutureExt, StreamExt};
 use ratatui::{Terminal, backend::CrosstermBackend, buffer::Buffer};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{Notify, mpsc},
     time::MissedTickBehavior,
 };
 
 pub use crate::graphics::ImageProtocol;
 use crate::{
     app::{App, AppEvent},
+    backend::{Account, Catalog, Launch},
     graphics::ImageTerminal,
-    loader::{DataEvent, Loader, SessionState},
+    loader::{DataEvent, Loader},
     preferences::Preferences,
 };
+
+/// The music services this build has.
+pub const SERVICES: &[Service] = backend::COMPILED;
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
 const TICK: Duration = Duration::from_millis(25);
@@ -67,11 +72,28 @@ const LOW_POWER_TICK: Duration = Duration::from_millis(100);
 /// asked to restart.
 pub async fn run(paths: &Paths) -> Result<Option<PathBuf>> {
     let config = Config::load(paths)?;
-    let api = Arc::new(WebApi::new(config.client_id(paths)?, paths.webapi_token())?);
-    if !api.is_logged_in().await || !session::is_logged_in(paths)? {
-        bail!("Not logged in yet – run `cloofy login` first.");
+    let services = config.enabled_services(SERVICES);
+    if services.is_empty() {
+        bail!("{}", no_service(paths));
     }
-    run_ui(paths, config, api, None).await
+    let mut accounts = Vec::new();
+    for service in services {
+        accounts.push(Account::open(service, paths, &config).await?);
+    }
+    run_ui(paths, config, accounts, None).await
+}
+
+/// Why there is nothing to play from: no service built in, or none of them enabled.
+pub fn no_service(paths: &Paths) -> String {
+    if SERVICES.is_empty() {
+        return "This cloofy has no music service built in. `cloofy demo` shows what it looks like.".into();
+    }
+    let keys: Vec<String> = SERVICES.iter().map(|service| format!("\"{}\"", service.key())).collect();
+    format!(
+        "No music service is enabled. Add the ones to use to {}:\n\n  services = [{}]",
+        paths.config_file().display(),
+        keys.join(", ")
+    )
 }
 
 /// The interface with a built-in sample instead of an account: nothing to set up, nothing
@@ -79,15 +101,13 @@ pub async fn run(paths: &Paths) -> Result<Option<PathBuf>> {
 pub async fn demo(paths: &Paths) -> Result<Option<PathBuf>> {
     let demo = Arc::new(demo::Demo::sample()?);
     let config = Config::load(paths).unwrap_or_default();
-    // Never asked for anything: every request is answered from the sample.
-    let api = Arc::new(WebApi::new("demo", Secret::File(paths.cache.join("demo-has-no-token")))?);
-    run_ui(paths, config, api, Some(demo)).await
+    run_ui(paths, config, Vec::new(), Some(demo)).await
 }
 
 async fn run_ui(
     paths: &Paths,
     config: Config,
-    api: Arc<WebApi>,
+    accounts: Vec<Account>,
     demo: Option<Arc<demo::Demo>>,
 ) -> Result<Option<PathBuf>> {
     #[cfg(unix)]
@@ -112,7 +132,7 @@ async fn run_ui(
     let image_protocol = ImageProtocol::from_env().unwrap_or(prefs.images);
     // Detected even with notifications off, so turning them on in Settings works at once.
     let notifier = if demo.is_some() { None } else { notify::Notifier::detect() };
-    let result = run_app(&mut terminal, paths, api, images, image_protocol, prefs, notifier, demo).await;
+    let result = run_app(&mut terminal, paths, accounts, images, image_protocol, prefs, notifier, demo).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
@@ -122,7 +142,7 @@ async fn run_ui(
 async fn run_app(
     terminal: &mut Term,
     paths: &Paths,
-    api: Arc<WebApi>,
+    accounts: Vec<Account>,
     images: ImageTerminal,
     image_protocol: ImageProtocol,
     prefs: Preferences,
@@ -130,20 +150,7 @@ async fn run_app(
     demo: Option<Arc<demo::Demo>>,
 ) -> Result<Option<PathBuf>> {
     let (tx, mut events) = mpsc::unbounded_channel();
-    let (session_tx, session_rx) = watch::channel(SessionState::Connecting);
     let snapshotter = snapshot::Snapshotter::from_env().map(Arc::new);
-    let loader = Loader::new(
-        api,
-        tx.clone(),
-        session_rx,
-        images,
-        paths.pathfinder_hashes(),
-        paths.cache.join("images"),
-        snapshotter.is_some(),
-    )
-    .with_demo(demo.clone());
-    loader.set_image_protocol(image_protocol);
-    loader.prune_image_cache();
     let notices = tx.clone();
     // The demo leaves the system alone: no media keys, no player, no saved session.
     let media = if demo.is_some() {
@@ -156,29 +163,46 @@ async fn run_app(
             }
         })
     };
-    let retry_now = Arc::new(tokio::sync::Notify::new());
+    // One for each player, which waits on its own.
+    let retries: Vec<Arc<Notify>> = accounts.iter().map(|_| Arc::default()).collect();
     cloofy_os::power::watch({
-        let (tx, retry_now) = (tx.clone(), retry_now.clone());
+        let (tx, retries) = (tx.clone(), retries.clone());
         move |event| {
-            // Whatever kept Spotify out of reach may be gone after sleep. The signal is kept
-            // for a wait that only starts once the connection drops.
+            // Whatever kept the service out of reach may be gone after sleep. The signal is
+            // kept for a wait that only starts once the connection drops.
             if event == cloofy_os::power::Event::Wake {
-                retry_now.notify_one();
+                retries.iter().for_each(|retry_now| retry_now.notify_one());
             }
             let _ = tx.send(app::AppEvent::Power(event));
         }
     });
-    let start = match &demo {
-        Some(demo) => app::Start::Demo(demo),
+    let (start, catalogs) = match &demo {
+        Some(demo) => (app::Start::Demo(demo), Vec::new()),
         None => {
             let saved = state::load(&paths.state_file());
-            let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
-            playback::spawn(paths.clone(), Duration::from_secs(prefs.crossfade), volume, retry_now, tx.clone());
-            app::Start::Restore(Box::new(saved))
+            let crossfade = Duration::from_secs(prefs.crossfade);
+            let catalogs: Vec<Catalog> = accounts
+                .into_iter()
+                .zip(retries)
+                .map(|(account, retry_now)| {
+                    let (paths, tx, volume) = (paths.clone(), tx.clone(), saved.volume);
+                    account.start(Launch { paths, crossfade, volume, retry_now, tx })
+                })
+                .collect();
+            (app::Start::Restore(Box::new(saved)), catalogs)
         }
     };
+    // The demo's sample comes from Spotify.
+    let service = match &demo {
+        Some(demo) => Service::of(&demo.playing.track.uri),
+        None => catalogs.first().map(Catalog::service),
+    };
+    let loader = Loader::new(catalogs, service, tx.clone(), images, paths.cache.join("images"), snapshotter.is_some())
+        .with_demo(demo.clone());
+    loader.set_image_protocol(image_protocol);
+    loader.prune_image_cache();
     let update_check = prefs.update_check && demo.is_none();
-    let mut app = App::new(loader, session_tx, prefs, start, paths.clone(), media, notifier);
+    let mut app = App::new(loader, prefs, start, paths.clone(), media, notifier);
     if update_check {
         app.check_for_update(false);
     }

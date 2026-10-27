@@ -16,7 +16,9 @@ type Hint = (&'static str, &'static str, Option<HintAction>);
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let p = theme::palette();
+    // Where the service has no other devices, there is nothing to switch to.
     let device = match (app.transferring_to(), &app.now.device, app.is_connected()) {
+        _ if !app.supports_devices() => Span::raw(""),
         (Some(name), ..) => {
             Span::styled(format!("{}  → {name} …", crate::ui::text::spinner(app.frame())), app.accent.color())
         }
@@ -26,8 +28,10 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     };
     let device_width = device.width() as u16;
     let device_x = area.right().saturating_sub(device_width + 2);
-    buf.set_span(device_x, area.y, &device, device_width);
-    app.hits.push((Rect::new(device_x, area.y, device_width, 1), Hit::Command(Command::Devices)));
+    if device_width > 0 {
+        buf.set_span(device_x, area.y, &device, device_width);
+        app.hits.push((Rect::new(device_x, area.y, device_width, 1), Hit::Command(Command::Devices)));
+    }
     let width = area.width.saturating_sub(device_width + 6);
 
     if let Some(status) = &app.status {

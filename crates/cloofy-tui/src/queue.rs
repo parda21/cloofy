@@ -1,9 +1,10 @@
 //! What plays next, the way Spotify's apps show it: the songs the user queued, then the rest of
-//! the playlist or album. Spotify's player state holds both in one list of next tracks and tells
-//! them apart by who put each one there.
+//! the playlist or album. Players report both in one list of next tracks and tell them apart by
+//! who put each one there.
 
 use cloofy_core::player::QueueTrack;
-use librespot::protocol::player::{PlayerState, ProvidedTrack};
+
+use crate::backend::{self, Listed};
 
 /// Where an upcoming track comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,16 +26,6 @@ pub struct Upcoming {
     pub provider: Provider,
 }
 
-impl Upcoming {
-    /// Spotify's name for the provider, as commands about the entry name it.
-    pub fn provider_name(&self) -> &'static str {
-        match self.provider {
-            Provider::Queue => "queue",
-            Provider::Context | Provider::Unknown => "context",
-        }
-    }
-}
-
 /// What plays next on the device that plays, as last reported.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Queue {
@@ -45,34 +36,12 @@ pub struct Queue {
     pub context: String,
     /// The context's name, where Spotify sends one along.
     pub context_name: Option<String>,
-    /// The lists as Spotify's player state had them, which changing the queue sends back.
-    /// Only there when the queue came from Spotify's player state.
+    /// The lists as the service had them, which changing another device's queue sends back.
+    /// Only there when the queue came from the service rather than from cloofy's player.
     pub listed: Option<Box<Listed>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Listed {
-    pub next: Vec<ProvidedTrack>,
-    pub previous: Vec<ProvidedTrack>,
-    pub revision: String,
-}
-
 impl Queue {
-    /// From the player state Spotify pushes about the device that plays.
-    pub fn from_player_state(state: &PlayerState) -> Self {
-        Self {
-            current: Some(state.track.uri.clone()).filter(|uri| !uri.is_empty()),
-            next: state.next_tracks.iter().filter_map(|t| upcoming(&t.uri, &t.uid, &t.provider)).collect(),
-            context: state.context_uri.clone(),
-            context_name: state.context_metadata.get("context_description").filter(|name| !name.is_empty()).cloned(),
-            listed: Some(Box::new(Listed {
-                next: state.next_tracks.clone(),
-                previous: state.prev_tracks.clone(),
-                revision: state.queue_revision.clone(),
-            })),
-        }
-    }
-
     /// From cloofy's own player, which reports it whenever a context loads or the queue
     /// changes, without entry IDs.
     pub fn from_player(context: String, current: Option<String>, next: &[QueueTrack]) -> Self {
@@ -122,68 +91,29 @@ impl Queue {
         }
     }
 
-    /// The lists to send back to Spotify without `entry`, if it came from them.
+    /// The lists to send back to the service without `entry`, if it came from them.
     pub fn without(&self, entry: &Upcoming) -> Option<Listed> {
-        let listed = self.listed.as_deref()?;
-        let index = listed.next.iter().position(|t| t.uid == entry.uid && t.uri == entry.uri)?;
-        let mut next = listed.next.clone();
-        next.remove(index);
-        Some(Listed { next, ..listed.clone() })
+        self.listed.as_deref()?.without(entry)
     }
 }
 
 /// An entry worth showing: a track or episode, not one of the markers Spotify keeps between
 /// pages of a context, nor a track it can't play.
-fn upcoming(uri: &str, uid: &str, provider: &str) -> Option<Upcoming> {
+pub(crate) fn upcoming(uri: &str, uid: &str, provider: &str) -> Option<Upcoming> {
     let provider = match provider {
         "queue" => Provider::Queue,
         "context" | "autoplay" | "" => Provider::Context,
         _ => return None,
     };
-    let playable = uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:");
-    playable.then(|| Upcoming { uri: uri.to_owned(), uid: uid.to_owned(), provider })
+    backend::is_playable(uri).then(|| Upcoming { uri: uri.to_owned(), uid: uid.to_owned(), provider })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn provided(uri: &str, uid: &str, provider: &str) -> ProvidedTrack {
-        ProvidedTrack { uri: uri.into(), uid: uid.into(), provider: provider.into(), ..ProvidedTrack::default() }
-    }
-
     fn uris(entries: &[Upcoming]) -> Vec<&str> {
         entries.iter().map(|t| t.uri.as_str()).collect()
-    }
-
-    fn state() -> PlayerState {
-        let mut state = PlayerState {
-            context_uri: "spotify:playlist:late".into(),
-            queue_revision: "7".into(),
-            next_tracks: vec![
-                provided("spotify:track:a", "q0", "queue"),
-                provided("spotify:track:b", "q1", "queue"),
-                provided("spotify:delimiter", "delimiter0", "context"),
-                provided("spotify:track:c", "c3", "context"),
-                provided("spotify:track:d", "c4", "autoplay"),
-                provided("spotify:track:e", "c5", "unavailable"),
-            ],
-            ..PlayerState::default()
-        };
-        state.track.mut_or_insert_default().uri = "spotify:track:x".into();
-        state.context_metadata.insert("context_description".into(), "Late Night Coding".into());
-        state
-    }
-
-    #[test]
-    fn the_player_state_splits_queued_songs_from_the_context() {
-        let queue = Queue::from_player_state(&state());
-        assert_eq!(queue.current.as_deref(), Some("spotify:track:x"));
-        assert_eq!(uris(&queue.next), ["spotify:track:a", "spotify:track:b", "spotify:track:c", "spotify:track:d"]);
-        let providers: Vec<_> = queue.next.iter().map(|t| t.provider).collect();
-        assert_eq!(providers, [Provider::Queue, Provider::Queue, Provider::Context, Provider::Context]);
-        assert_eq!(queue.next[2].uid, "c3");
-        assert_eq!(queue.context_name.as_deref(), Some("Late Night Coding"));
     }
 
     #[test]
@@ -199,45 +129,5 @@ mod tests {
         assert_eq!(uris(&queue.next), ["spotify:track:a", "spotify:track:c"]);
         assert_eq!(queue.next[0].provider, Provider::Queue);
         assert!(queue.next[0].uid.is_empty());
-    }
-
-    #[test]
-    fn the_list_moves_on_with_the_playing_track() {
-        let queue = Queue::from_player_state(&state());
-        assert_eq!(queue.after(Some("spotify:track:x")).len(), 4);
-        assert_eq!(
-            uris(queue.after(Some("spotify:track:a"))),
-            ["spotify:track:b", "spotify:track:c", "spotify:track:d"]
-        );
-        assert_eq!(uris(queue.after(Some("spotify:track:c"))), ["spotify:track:d"]);
-        // A track from elsewhere: the list says nothing about what follows it.
-        assert!(queue.after(Some("spotify:track:z")).is_empty());
-        assert!(!queue.knows("spotify:track:z"));
-    }
-
-    #[test]
-    fn a_listing_keeps_known_queued_songs_queued() {
-        // After shuffling, the queued songs lead as before and the rest comes in a new order.
-        let queue = Queue::from_player_state(&state());
-        let listing = ["spotify:track:a", "spotify:track:b", "spotify:track:f", "spotify:track:c"];
-        let listed =
-            queue.with_listing("spotify:track:x", "spotify:playlist:late".into(), listing.map(String::from).to_vec());
-        let providers: Vec<_> = listed.next.iter().map(|t| t.provider).collect();
-        assert_eq!(providers, [Provider::Queue, Provider::Queue, Provider::Context, Provider::Context]);
-        assert_eq!(listed.context_name.as_deref(), Some("Late Night Coding"));
-        // Nothing known: nothing to sort by.
-        let fresh = Queue::default().with_listing("spotify:track:x", String::new(), vec!["spotify:track:a".into()]);
-        assert_eq!(fresh.next[0].provider, Provider::Unknown);
-    }
-
-    #[test]
-    fn removing_a_queued_song_sends_back_the_rest() {
-        let queue = Queue::from_player_state(&state());
-        let listed = queue.without(&queue.next[1]).unwrap();
-        let uids: Vec<_> = listed.next.iter().map(|t| t.uid.as_str()).collect();
-        assert_eq!(uids, ["q0", "delimiter0", "c3", "c4", "c5"]);
-        assert_eq!(listed.revision, "7");
-        // Entries the player reported itself aren't Spotify's to send back.
-        assert!(Queue::from_player(String::new(), None, &[]).without(&queue.next[0]).is_none());
     }
 }

@@ -7,12 +7,19 @@ license.workspace = true
 repository.workspace = true
 description = "The terminal interface of cloofy"
 
+# The music services built in. Without any, only the demo runs.
+[features]
+default = ["spotify"]
+spotify = ["dep:cloofy-spotify", "dep:cloofy-player", "dep:librespot"]
+# Nothing yet: YouTube Music is on its way.
+ytmusic = []
+
 [dependencies]
 cloofy-core.workspace = true
-cloofy-spotify.workspace = true
-cloofy-player.workspace = true
+cloofy-spotify = { workspace = true, optional = true }
+cloofy-player = { workspace = true, optional = true }
 cloofy-os.workspace = true
-librespot.workspace = true
+librespot = { workspace = true, optional = true }
 anyhow.workspace = true
 base64.workspace = true
 crossterm.workspace = true

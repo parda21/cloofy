@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, COVER_SIZE, Focus, ImageSlot};
 use crate::{
+    commands::Command,
     preferences::{AccentChoice, Setting},
     theme,
     views::{SettingsView, View},
@@ -35,9 +36,19 @@ impl App {
         self.zen = false;
         if !matches!(self.view, View::Settings(_)) {
             let id = self.next_id();
-            self.push_view(View::Settings(SettingsView::new(id)));
+            self.push_view(View::Settings(SettingsView::new(id, self.shown_settings())));
         }
         self.focus = Focus::Content;
+    }
+
+    /// The settings that mean something here; crossfade, say, only where the service has it.
+    fn shown_settings(&self) -> Vec<Setting> {
+        let shown = |setting: &Setting| match setting {
+            Setting::Crossfade => self.supports_crossfade(),
+            Setting::UpdateCheck => self.offers(Command::Update),
+            _ => true,
+        };
+        Setting::all().filter(shown).collect()
     }
 
     pub(super) fn on_settings_key(&mut self, key: KeyEvent) {
@@ -65,8 +76,8 @@ impl App {
         self.prefs.step(setting, forward);
         match setting {
             Setting::Crossfade => {
-                if let Some(controller) = &self.controller {
-                    controller.set_crossfade(Duration::from_secs(self.prefs.crossfade));
+                for player in self.players.values() {
+                    player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
                 }
             }
             Setting::Covers if self.prefs.covers => {

@@ -577,7 +577,9 @@ pub struct LibraryView {
 /// The Settings page.
 pub struct SettingsView {
     pub id: u64,
-    /// Index into [`Setting::all`].
+    /// The settings shown, in page order: those that mean something with the service that plays.
+    pub settings: Vec<Setting>,
+    /// Index into `settings`.
     pub selected: usize,
     /// Screen rows scrolled past at the top, when the page is taller than the window.
     pub top: usize,
@@ -586,16 +588,16 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
-    pub fn new(id: u64) -> Self {
-        Self { id, selected: 0, top: 0, detached: false }
+    pub fn new(id: u64, settings: Vec<Setting>) -> Self {
+        Self { id, settings, selected: 0, top: 0, detached: false }
     }
 
     pub fn setting(&self) -> Setting {
-        Setting::all().nth(self.selected).unwrap_or(Setting::Crossfade)
+        self.settings.get(self.selected).or(self.settings.last()).copied().unwrap_or(Setting::Covers)
     }
 
     pub fn move_by(&mut self, delta: isize) {
-        let last = Setting::all().count() as isize - 1;
+        let last = self.settings.len() as isize - 1;
         self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
         self.detached = false;
     }

@@ -234,7 +234,7 @@ impl App {
     /// Skips ahead to a track that plays later, as a click in Spotify's queue does: what lies
     /// between is passed over, the rest of the queue stays.
     pub(super) fn skip_to(&mut self, track: Track, entry: Upcoming) {
-        if self.controller.is_none() {
+        if !self.is_connected() {
             return self.not_connected();
         }
         if self.local_active && !self.remote_active {
@@ -271,10 +271,10 @@ impl App {
             let Some(index) = queued.iter().position(|uri| *uri == entry.uri) else {
                 return self.error("This song isn't in the queue any more.".into());
             };
-            let sent = self.control(|c| {
-                c.clear_queue()?;
-                queued[index..].iter().try_for_each(|uri| c.add_to_queue(uri))?;
-                c.next()
+            let sent = self.control(|p| {
+                p.clear_queue()?;
+                queued[index..].iter().try_for_each(|uri| p.add_to_queue(uri))?;
+                p.next()
             });
             if !sent {
                 return;
@@ -327,7 +327,7 @@ impl App {
         }
         if self.remote_active {
             match (self.queue.without(&entry), self.active_device.clone()) {
-                (Some(listed), Some(device)) => self.loader.set_queue(device, listed),
+                (Some(listed), Some(device)) => self.loader.set_queue(self.active, device, listed),
                 _ => return self.error("Spotify hasn't said yet what plays next there.".into()),
             }
         } else {
@@ -339,9 +339,9 @@ impl App {
             let Some(index) = queued.iter().position(|t| **t == entry) else { return };
             let keep: Vec<String> =
                 queued.iter().enumerate().filter(|(i, _)| *i != index).map(|(_, t)| t.uri.clone()).collect();
-            let sent = self.control(|c| {
-                c.clear_queue()?;
-                keep.iter().try_for_each(|uri| c.add_to_queue(uri))
+            let sent = self.control(|p| {
+                p.clear_queue()?;
+                keep.iter().try_for_each(|uri| p.add_to_queue(uri))
             });
             if !sent {
                 return;

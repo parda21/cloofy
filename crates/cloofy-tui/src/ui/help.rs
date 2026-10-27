@@ -9,6 +9,7 @@ use ratatui::{
 use super::text;
 use crate::{
     app::{App, Hit},
+    commands::Command,
     theme,
 };
 
@@ -84,10 +85,16 @@ const PADDING: u16 = 3;
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let p = theme::palette();
-    let fits = height(ONE_COLUMN) <= area.height || area.width < TWO_COLUMN_MIN_WIDTH;
+    // Keys of commands for what the service lacks, like DJ, are left out.
+    let hidden: Vec<&str> = [Command::Dj, Command::Crossfade, Command::Devices, Command::Update]
+        .into_iter()
+        .filter(|command| !app.offers(*command))
+        .map(Command::key)
+        .collect();
+    let fits = height(ONE_COLUMN, &hidden) <= area.height || area.width < TWO_COLUMN_MIN_WIDTH;
     let (columns, width) = if fits { (ONE_COLUMN, ONE_COLUMN_WIDTH) } else { (TWO_COLUMNS, TWO_COLUMN_WIDTH) };
-    let popup =
-        area.centered(Constraint::Length(width.min(area.width)), Constraint::Length(height(columns).min(area.height)));
+    let height = height(columns, &hidden);
+    let popup = area.centered(Constraint::Length(width.min(area.width)), Constraint::Length(height.min(area.height)));
     Clear.render(popup, buf);
     Block::bordered()
         .border_type(BorderType::Rounded)
@@ -110,7 +117,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
             }
             buf.set_stringn(x, y, *title, column_width as usize, Style::new().fg(p.faint).bold());
             y += 1;
-            for (key, label) in *keys {
+            for (key, label) in keys.iter().filter(|(key, _)| !hidden.contains(key)) {
                 if y >= bottom {
                     break 'column;
                 }
@@ -131,10 +138,11 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     }
 }
 
-/// Rows the popup needs for `columns`: borders, a blank line at the top and each section's
-/// title, keys and the blank line after it.
-fn height(columns: &[&[Section]]) -> u16 {
-    let rows = |sections: &[Section]| sections.iter().map(|(_, keys)| keys.len() as u16 + 2).sum::<u16>();
+/// Rows the popup needs for `columns` without the `hidden` keys: borders, a blank line at the
+/// top and each section's title, keys and the blank line after it.
+fn height(columns: &[&[Section]], hidden: &[&str]) -> u16 {
+    let shown = |keys: &[(&str, &str)]| keys.iter().filter(|(key, _)| !hidden.contains(key)).count() as u16;
+    let rows = |sections: &[Section]| sections.iter().map(|(_, keys)| shown(keys) + 2).sum::<u16>();
     columns.iter().map(|sections| rows(sections)).max().unwrap_or(0) + 3
 }
 
@@ -146,7 +154,7 @@ mod tests {
 
     #[test]
     fn fits_a_classic_terminal_in_two_columns() {
-        assert!(height(TWO_COLUMNS) <= 24);
+        assert!(height(TWO_COLUMNS, &[]) <= 24);
     }
 
     #[test]

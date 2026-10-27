@@ -11,6 +11,7 @@ use cloofy_core::{
 
 use super::{App, Focus, LibraryEntry, NavItem};
 use crate::{
+    backend::{self, Player},
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
     queue::Provider,
@@ -143,13 +144,11 @@ impl App {
         }
     }
 
-    /// Liked Songs as a playable context.
+    /// Liked Songs of the service shown as a playable context.
     pub(super) fn liked_uri(&self) -> Option<String> {
-        let user = match &self.controller {
-            Some(c) => c.session.username(),
-            None => self.me.as_ref()?.id.clone(),
-        };
-        Some(format!("spotify:user:{user}:collection"))
+        let service = self.loader.service()?;
+        let user = self.players.get(&service).and_then(Player::user).or_else(|| Some(self.me.as_ref()?.id.clone()));
+        backend::liked_context(service, user.as_deref())
     }
 
     pub(super) fn run_menu(&mut self, action: MenuAction, target: ContextTarget) {
@@ -192,7 +191,7 @@ impl App {
                 }
             }
             MenuAction::CopyLink => {
-                copy_to_clipboard(&web_link(&target.uri));
+                copy_to_clipboard(&backend::web_link(&target.uri));
                 self.notice("Link copied".into());
             }
         }
@@ -205,10 +204,10 @@ impl App {
 
     /// A short name for a playing context, like “Playlist · Deep Focus”.
     pub fn context_label(&self, uri: &str) -> Option<String> {
-        if Some(uri) == self.liked_uri().as_deref() || uri.ends_with(":collection") {
+        if Some(uri) == self.liked_uri().as_deref() || backend::is_liked_context(uri) {
             return Some("Liked Songs".into());
         }
-        if uri == super::DJ_URI {
+        if backend::is_dj(uri) {
             return Some("DJ".into());
         }
         let label = |kind: &str, name: &str| Some(format!("{kind} · {name}"));
@@ -234,7 +233,7 @@ impl App {
 
     /// Opens the page of a playlist, album or artist known only by its URI.
     pub(super) fn open_context(&mut self, uri: String) {
-        if uri.ends_with(":collection") {
+        if backend::is_liked_context(&uri) {
             return self.open_library_entry(LibraryEntry::Liked);
         }
         let kind = match uri.split(':').nth(1) {
@@ -322,7 +321,7 @@ fn track_target(track: &Track, context: Option<String>) -> ContextTarget {
 
 /// The playing track or episode; `context` is what it plays from.
 fn current_track_target(track: &CurrentTrack, context: Option<String>) -> ContextTarget {
-    let kind = if track.uri.starts_with("spotify:episode:") { TargetKind::Episode } else { TargetKind::Track };
+    let kind = if backend::is_episode(&track.uri) { TargetKind::Episode } else { TargetKind::Track };
     ContextTarget {
         context,
         album: track.album_uri.clone().map(|uri| (uri, track.album.clone())),
@@ -400,15 +399,6 @@ fn menu_items(target: &ContextTarget, saved: bool) -> Vec<(MenuAction, String)> 
     items
 }
 
-/// `spotify:track:123` → `https://open.spotify.com/track/123`
-fn web_link(uri: &str) -> String {
-    let mut parts = uri.split(':').skip(1);
-    match (parts.next(), parts.next()) {
-        (Some(kind), Some(id)) => format!("https://open.spotify.com/{kind}/{id}"),
-        _ => uri.to_owned(),
-    }
-}
-
 /// OSC 52: the terminal puts the text on the clipboard, which also works over SSH.
 fn copy_to_clipboard(text: &str) {
     let mut stdout = std::io::stdout();
@@ -419,11 +409,6 @@ fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn builds_web_links() {
-        assert_eq!(web_link("spotify:track:abc"), "https://open.spotify.com/track/abc");
-    }
 
     #[test]
     fn track_menu_offers_library_and_navigation() {

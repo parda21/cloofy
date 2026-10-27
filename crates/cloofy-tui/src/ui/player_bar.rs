@@ -132,7 +132,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         None if app.is_connected() => {
             buf.set_string(info.x, info.y, "Nothing playing", Style::new().fg(p.text).bold());
-            let hint = "Pick a song and press ↵ · ␣ takes over playback from your other device";
+            let hint = if app.supports_devices() {
+                "Pick a song and press ↵ · ␣ takes over playback from your other device"
+            } else {
+                "Pick a song and press ↵"
+            };
             buf.set_string(info.x, info.y + 1, text::truncate(hint, info.width as usize), Style::new().fg(p.muted));
         }
         None => match &app.player_error {
@@ -141,7 +145,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 buf.set_string(info.x, info.y + 1, text::truncate(err, info.width as usize), Style::new().fg(p.muted));
             }
             None => {
-                let line = format!("{}  Connecting to Spotify…", text::spinner(app.frame()));
+                let line = format!("{}  Connecting to {}…", text::spinner(app.frame()), app.service_name());
                 buf.set_string(info.x, info.y, line, Style::new().fg(p.muted));
             }
         },
@@ -158,7 +162,7 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
         } else if app.player_error.is_some() {
             ("Playback unavailable".to_owned(), Style::new().fg(p.danger))
         } else {
-            (format!("{}  Connecting to Spotify…", text::spinner(app.frame())), Style::new().fg(p.muted))
+            (format!("{}  Connecting to {}…", text::spinner(app.frame()), app.service_name()), Style::new().fg(p.muted))
         };
         buf.set_string(area.x + 2, area.y, text::truncate(&status, area.width.saturating_sub(4) as usize), style);
         return;

@@ -30,12 +30,17 @@ enum Row {
     Footer,
 }
 
-fn rows() -> Vec<Row> {
+/// The page's rows, with the settings `shown`; a section without any is left out.
+fn rows(shown: &[Setting]) -> Vec<Row> {
     let mut rows = vec![Row::Title, Row::Blank];
     let mut index = 0;
     for (title, settings) in SECTIONS {
+        let settings: Vec<Setting> = settings.iter().copied().filter(|setting| shown.contains(setting)).collect();
+        if settings.is_empty() {
+            continue;
+        }
         rows.extend([Row::Section(title), Row::Blank]);
-        for &setting in settings {
+        for setting in settings {
             rows.extend([Row::Name(index, setting), Row::About(setting), Row::Blank]);
             index += 1;
         }
@@ -60,7 +65,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.hits.push((area, Hit::ContentArea));
     let View::Settings(view) = &mut app.view else { return };
 
-    let rows = rows();
+    let rows = rows(&view.settings);
     let height = inner.height as usize;
     // Follow the selection, with its section title in view, unless the wheel moved the page.
     if !view.detached {
