@@ -284,7 +284,7 @@ impl App {
             // A song of the playlist or album starts there, as a click on its page does. The
             // queued songs stay queued.
             let Some(context) = self.queue_context() else {
-                return self.error("Spotify hasn't said yet what plays next.".into());
+                return self.error(format!("{} hasn't said yet what plays next.", self.service_name()));
             };
             self.play(context, Some(track.uri.clone()));
         }
@@ -328,7 +328,7 @@ impl App {
         if self.remote_active {
             match (self.queue.without(&entry), self.active_device.clone()) {
                 (Some(listed), Some(device)) => self.loader.set_queue(self.active, device, listed),
-                _ => return self.error("Spotify hasn't said yet what plays next there.".into()),
+                _ => return self.error(format!("{} hasn't said yet what plays next there.", self.service_name())),
             }
         } else {
             // cloofy's player takes no new list from here: it empties its queue and gets the

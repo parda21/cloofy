@@ -3721,8 +3721,14 @@ impl App {
     /// Starts playback of `uri` on the player of its service, which takes over from the one
     /// that played before. Returns whether the command went out.
     fn start_on(&mut self, uri: &str, command: impl FnOnce(&Player) -> anyhow::Result<()>) -> bool {
-        if let Some(service) = Service::of(uri).filter(|service| self.players.contains_key(service)) {
-            self.take_over(service);
+        match Service::of(uri) {
+            Some(service) if self.players.contains_key(&service) => self.take_over(service),
+            // Another service's player must not get it, while this one's isn't connected.
+            Some(service) if !self.is_active(service) => {
+                self.not_connected();
+                return false;
+            }
+            _ => {}
         }
         self.control(command)
     }
