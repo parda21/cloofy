@@ -18,17 +18,18 @@ use std::time::Instant;
 use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
-    buffer::{Buffer, Cell},
+    buffer::{Buffer, Cell, CellDiffOption},
     layout::{Constraint, Layout, Rect, Size},
     style::{Color, Modifier, Style},
 };
-use ratatui_image::{Image, protocol::Protocol};
+use ratatui_image::Image;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{App, Focus, Hit},
+    graphics::INLINE_CELL,
     icons::icons,
-    loader::Picture,
+    loader::{Graphic, Picture},
     overlay::Overlay,
     snapshot::Placement,
     theme::{BG, TEXT},
@@ -104,6 +105,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();
     app.effects.process_effects(elapsed.into(), frame.buffer_mut(), area);
+    app.inline.prepare(frame.buffer_mut(), &app.placements);
     app.end_frame();
 }
 
@@ -150,44 +152,66 @@ pub(super) fn picture_at(frame: &mut Frame, picture: &Picture, slot: Rect) -> Op
 }
 
 /// Draws the part of an image centered in a slot at `(x, y)` that lies inside `clip`.
-/// Returns `None` when nothing was drawn: fully clipped, or a protocol that cannot be cut.
-fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Size, clip: Rect) -> Option<Placement> {
-    let size = picture.protocol.size();
+/// Returns `None` when nothing was drawn.
+pub(super) fn picture_in(
+    frame: &mut Frame,
+    picture: &Picture,
+    (x, y): (u16, i32),
+    slot: Size,
+    clip: Rect,
+) -> Option<Placement> {
+    let size = picture.size();
     let size = Size::new(size.width.min(slot.width), size.height.min(slot.height));
     let left = x + slot.width.saturating_sub(size.width) / 2;
     let top = y + (slot.height.saturating_sub(size.height) / 2) as i32;
+    let mut bottom = clip.bottom();
+    if let Graphic::Inline(_) = picture.graphic {
+        // Some terminals put the cursor below a Sixel or iTerm2 image, which in the last row
+        // scrolls the whole screen.
+        bottom = bottom.min(frame.area().bottom().saturating_sub(1));
+    }
     let visible_top = top.max(clip.y as i32);
-    let visible_bottom = (top + size.height as i32).min(clip.bottom() as i32);
+    let visible_bottom = (top + size.height as i32).min(bottom as i32);
     if visible_top >= visible_bottom || left + size.width > frame.area().right() {
         return None;
     }
     let skip = (visible_top - top) as u16;
     let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
-    let upload = if area.height == size.height {
-        frame.render_widget(Image::new(&picture.protocol), area);
-        take_upload(&mut frame.buffer_mut()[(area.x, area.y)])
-    } else {
-        // Kitty placeholders and half blocks are plain cells, so rows can be cut; Sixel and
-        // iTerm2 images are a single escape sequence and cannot.
-        if !matches!(picture.protocol, Protocol::Kitty(_) | Protocol::Halfblocks(_)) {
-            return None;
-        }
-        let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
-        Image::new(&picture.protocol).render(scratch.area, &mut scratch);
-        let upload = take_upload(&mut scratch[(0, 0)]);
-        let buf = frame.buffer_mut();
-        for row in 0..area.height {
-            for column in 0..area.width {
-                buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
+    let (upload, inline) = match &picture.graphic {
+        // Written after the frame, cut to the rows in view; the cells only mark where it goes.
+        Graphic::Inline(image) => {
+            let buf = frame.buffer_mut();
+            for position in area.positions() {
+                let cell = &mut buf[position];
+                let bg = cell.bg;
+                cell.reset();
+                cell.set_symbol(INLINE_CELL).set_bg(bg).set_diff_option(CellDiffOption::Skip);
             }
+            (None, Some(image.clone()))
         }
-        upload
+        Graphic::Cells(protocol) if area.height == size.height => {
+            frame.render_widget(Image::new(protocol), area);
+            (take_upload(&mut frame.buffer_mut()[(area.x, area.y)]), None)
+        }
+        // Kitty placeholders and half blocks are plain cells, so rows can be cut.
+        Graphic::Cells(protocol) => {
+            let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
+            Image::new(protocol).render(scratch.area, &mut scratch);
+            let upload = take_upload(&mut scratch[(0, 0)]);
+            let buf = frame.buffer_mut();
+            for row in 0..area.height {
+                for column in 0..area.width {
+                    buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
+                }
+            }
+            (upload, None)
+        }
     };
     let cells = match picture.source {
         Some(_) => area.rows().flat_map(|row| row.columns()).map(|p| frame.buffer_mut()[p].clone()).collect(),
         None => Vec::new(),
     };
-    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload })
+    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload, inline })
 }
 
 /// The first time a Kitty image is drawn, the upload of its pixels rides on its top-left cell.
