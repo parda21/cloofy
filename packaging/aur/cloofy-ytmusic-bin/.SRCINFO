@@ -1,0 +1,23 @@
+pkgbase = cloofy-ytmusic-bin
+	pkgdesc = YouTube Music client for the terminal
+	pkgver = @VERSION@
+	pkgrel = 1
+	url = https://github.com/parda21/cloofy
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = deno
+	depends = glibc
+	depends = libgcc
+	depends = mpv
+	depends = yt-dlp
+	provides = cloofy=@VERSION@
+	conflicts = cloofy
+	options = !strip
+	options = !debug
+	source_x86_64 = cloofy-ytmusic-@VERSION@-x86_64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-ytmusic-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = @SHA256_YTMUSIC_X86_64_UNKNOWN_LINUX_GNU@
+	source_aarch64 = cloofy-ytmusic-@VERSION@-aarch64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-ytmusic-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = @SHA256_YTMUSIC_AARCH64_UNKNOWN_LINUX_GNU@
+
+pkgname = cloofy-ytmusic-bin

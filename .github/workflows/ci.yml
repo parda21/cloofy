@@ -12,6 +12,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The default features, both services: the full build.
   check:
     name: ${{ matrix.os }}
     strategy:
@@ -36,6 +37,72 @@ jobs:
       - name: Lint install.sh
         if: runner.os == 'Linux'
         run: shellcheck install.sh
+
+  # The other builds: each service on its own, and none, where only `cloofy demo` works. The
+  # features go to every crate that has them, cloofy and cloofy-tui among them.
+  features:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: spotify, id: spotify, features: --no-default-features --features spotify }
+          - { name: ytmusic, id: ytmusic, features: --no-default-features --features ytmusic }
+          - { name: no services, id: none, features: --no-default-features }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # Every workspace crate builds, cloofy-player too, whatever the features.
+      - name: Install audio headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpulse-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.id }}
+      - run: cargo clippy --workspace --all-targets --locked ${{ matrix.features }} -- -D warnings
+      - run: cargo test --workspace --locked ${{ matrix.features }}
+
+  # Installs must not carry the service they weren't made for: what cloofy depends on with
+  # each set of features, on every platform.
+  no-bloat:
+    name: no bloat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Cargo.toml patches librespot and ratatui-image with them.
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Each build depends only on its services
+        run: |
+          # Fails when cloofy with `features` depends on a crate matching `unwanted`, or on none
+          # matching `wanted`, which would mean the feature doesn't bring its service in.
+          only() {
+            local features=$1 wanted=$2 unwanted=$3 deps found
+            deps=$(cargo tree --package cloofy --locked --edges normal --target all --prefix none \
+              --no-default-features ${features:+--features "$features"}) || return 1
+            found=$(grep -E "$unwanted" <<<"$deps" | sort -u || true)
+            if [ -n "$found" ]; then
+              echo "::error::With features '${features:-none}', cloofy depends on:"
+              echo "$found"
+              return 1
+            fi
+            if [ -n "$wanted" ] && ! grep -Eq "$wanted" <<<"$deps"; then
+              echo "::error::With features '${features:-none}', cloofy depends on nothing matching $wanted"
+              return 1
+            fi
+            echo "Features '${features:-none}': nothing matches $unwanted"
+          }
+          status=0
+          # Spotify's player is the only thing that plays through ALSA or PulseAudio.
+          only ytmusic '^cloofy-ytmusic ' '^(librespot|cloofy-spotify|cloofy-player|alsa-sys|libpulse)' || status=1
+          only spotify '^librespot ' '^cloofy-ytmusic ' || status=1
+          only "" "" '^(librespot|cloofy-spotify|cloofy-player|cloofy-ytmusic )' || status=1
+          exit $status
 
   packaging:
     name: packaging
