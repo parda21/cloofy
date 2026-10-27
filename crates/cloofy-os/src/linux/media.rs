@@ -71,7 +71,7 @@ impl Drop for Controls {
 async fn connect(on_command: Callback) -> Option<Connection> {
     let connected = async {
         let connection = connection::Builder::session()?
-            .serve_at(PATH, Root { can_raise: env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() })?
+            .serve_at(PATH, Root)?
             .serve_at(PATH, Player { on_command, shown: Shown::new(Instant::now()) })?
             .build()
             .await?;
@@ -107,16 +107,13 @@ async fn serve(connection: Connection, mut states: watch::Receiver<State>, mut c
 
 /// `org.mpris.MediaPlayer2`: cloofy as an application. It lives in a terminal, which only
 /// Hyprland lets it bring to the front.
-struct Root {
-    can_raise: bool,
-}
+struct Root;
 
 #[interface(name = "org.mpris.MediaPlayer2")]
 impl Root {
     fn raise(&self) {
-        if self.can_raise {
-            // hyprctl takes a moment, which the bus shouldn't wait for.
-            let _ = thread::Builder::new().name("cloofy-raise".into()).spawn(raise_window);
+        if can_raise() {
+            raise();
         }
     }
 
@@ -129,7 +126,7 @@ impl Root {
 
     #[zbus(property(emits_changed_signal = "const"))]
     fn can_raise(&self) -> bool {
-        self.can_raise
+        can_raise()
     }
 
     #[zbus(property(emits_changed_signal = "const"))]
@@ -444,8 +441,19 @@ fn track_id(number: u64) -> OwnedObjectPath {
     OwnedObjectPath::from(ObjectPath::from_string_unchecked(format!("/cloofy/track/{number}")))
 }
 
-/// Brings cloofy's window to the front on Hyprland: the one Omarchy started it in, or else
-/// the terminal it runs in, found by walking up from cloofy's process.
+/// Whether cloofy can bring its window to the front: on Hyprland.
+pub(super) fn can_raise() -> bool {
+    env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
+/// Brings cloofy's window to the front, in the background: hyprctl takes a moment, which the
+/// bus shouldn't wait for.
+pub(super) fn raise() {
+    let _ = thread::Builder::new().name("cloofy-raise".into()).spawn(raise_window);
+}
+
+/// Focuses cloofy's window on Hyprland: the one Omarchy started it in, or else the terminal it
+/// runs in, found by walking up from cloofy's process.
 fn raise_window() {
     // A pattern without backslashes, which would need escaping twice on the way to Hyprland.
     let omarchy = String::from("class:^(org.omarchy.cloofy)$");

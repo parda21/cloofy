@@ -18,6 +18,9 @@ use macos as os;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as os;
+/// Linux only: elsewhere the terminal's own notifications are all cloofy needs.
+#[cfg(target_os = "linux")]
+pub use linux::notifications;
 
 #[cfg(not(target_os = "macos"))]
 mod fallback;

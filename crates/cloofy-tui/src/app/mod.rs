@@ -1018,7 +1018,8 @@ impl App {
     pub fn announce_track(&mut self) {
         let Some(notifier) = self.notifier.as_mut().filter(|_| self.prefs.notifications) else { return };
         let track = self.now.track.as_ref().filter(|_| !self.remote_active);
-        if let Some(sequence) = notifier.update(track, self.now.playing, self.focused) {
+        let artwork = track.and_then(|track| self.media.as_ref()?.artwork(track));
+        if let Some(sequence) = notifier.update(track, self.now.playing, self.focused, artwork) {
             let mut stdout = std::io::stdout();
             let _ = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush());
         }
