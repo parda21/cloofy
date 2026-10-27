@@ -14,7 +14,12 @@ impl Service {
     /// The service a URI such as `spotify:track:…` or `ytmusic:album:…` belongs to.
     pub fn of(uri: &str) -> Option<Service> {
         let (scheme, _) = uri.split_once(':')?;
-        Service::ALL.into_iter().find(|service| service.key() == scheme)
+        Service::from_key(scheme)
+    }
+
+    /// The service with this key, as in `spotify` or `ytmusic`.
+    pub fn from_key(key: &str) -> Option<Service> {
+        Service::ALL.into_iter().find(|service| service.key() == key)
     }
 
     /// The name people know it by.
@@ -52,7 +57,9 @@ mod tests {
     fn keys_go_back_to_the_service() {
         for service in Service::ALL {
             assert_eq!(Service::of(&format!("{}:track:1", service.key())), Some(service));
+            assert_eq!(Service::from_key(service.key()), Some(service));
         }
+        assert_eq!(Service::from_key("youtube"), None);
         assert_eq!(Service::YouTubeMusic.name(), "YouTube Music");
     }
 }

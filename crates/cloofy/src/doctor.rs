@@ -31,7 +31,7 @@ pub async fn run(paths: &Paths) -> Result<()> {
         Err(_) => not_logged_in("LIBRESPOT · Spotify internal"),
     };
     print_section(&internal, &mut tally);
-    print_section(&doctor::external().await, &mut tally);
+    print_section(&cloofy_core::doctor::external().await, &mut tally);
 
     println!(
         "  {} available · {} removed as expected · {}\n",

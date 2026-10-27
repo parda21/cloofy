@@ -1,8 +1,8 @@
 //! Probes which Spotify features are reachable, and through which path.
 
-use std::time::Duration;
-
 use anyhow::Result;
+use cloofy_core::doctor::timed;
+pub use cloofy_core::doctor::{Check, Expect, Outcome, Section};
 use librespot::{
     core::{SpotifyId, SpotifyUri, session::Session},
     metadata::{Artist, Lyrics, Metadata, Playlist, Track},
@@ -17,36 +17,9 @@ const ARTIST: &str = "4tZwfgrHOc3mvqYlEYSvVi"; // Daft Punk
 const ALBUM: &str = "2noRn2Aes5aoNVsU6iWThc"; // Discovery
 const TRACK: &str = "0DiWol3AO6WpXZgp0goxAV"; // One More Time
 const EDITORIAL_PLAYLIST: &str = "37i9dQZF1DXcBWIGoYBM5M"; // Today's Top Hits
-const TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Turns a successful response body into the detail shown next to a check.
 type Detail = fn(&Value) -> String;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Expect {
-    Available,
-    /// Spotify removed this for Development Mode apps; a failure is the expected result.
-    Removed,
-}
-
-#[derive(Debug)]
-pub enum Outcome {
-    Ok(String),
-    Failed(String),
-}
-
-#[derive(Debug)]
-pub struct Check {
-    pub name: String,
-    pub expect: Expect,
-    pub outcome: Outcome,
-}
-
-#[derive(Debug)]
-pub struct Section {
-    pub title: &'static str,
-    pub checks: Vec<Check>,
-}
 
 pub async fn web_api(api: &WebApi) -> Section {
     use Expect::{Available, Removed};
@@ -204,25 +177,6 @@ pub async fn spclient(session: &Session) -> Section {
     Section { title: "LIBRESPOT · Spotify internal", checks }
 }
 
-pub async fn external() -> Section {
-    let check = timed("Lyrics (LRCLIB)", async {
-        let results: Value = reqwest::Client::builder()
-            .user_agent(concat!("cloofy/", env!("CARGO_PKG_VERSION")))
-            .build()?
-            .get("https://lrclib.net/api/search")
-            .query(&[("track_name", "One More Time"), ("artist_name", "Daft Punk")])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        let synced = results.as_array().into_iter().flatten().filter(|r| r["syncedLyrics"].is_string()).count();
-        Ok(format!("{synced} time-synced versions"))
-    })
-    .await;
-    Section { title: "EXTERNAL", checks: vec![check] }
-}
-
 fn check_response(name: &str, expect: Expect, response: Result<crate::webapi::ApiResponse>, detail: Detail) -> Check {
     let outcome = match response {
         Ok(r) if r.status.is_success() => Outcome::Ok(detail(&r.body)),
@@ -262,15 +216,6 @@ async fn pick_playlists(api: &WebApi, my_id: &str) -> (Option<String>, Option<St
             .map(str::to_owned)
     };
     (find(true), find(false))
-}
-
-async fn timed(name: &str, probe: impl Future<Output = Result<String>>) -> Check {
-    let outcome = match tokio::time::timeout(TIMEOUT, probe).await {
-        Ok(Ok(detail)) => Outcome::Ok(detail),
-        Ok(Err(err)) => Outcome::Failed(format!("{err:#}")),
-        Err(_) => Outcome::Failed("Timed out".into()),
-    };
-    Check { name: name.into(), expect: Expect::Available, outcome }
 }
 
 fn search_path(limit: u8) -> String {
