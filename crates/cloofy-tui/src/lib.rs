@@ -9,6 +9,7 @@ mod media;
 mod notify;
 mod overlay;
 mod playback;
+mod queue;
 mod snapshot;
 mod state;
 mod theme;
@@ -163,7 +164,7 @@ async fn run_app(
         }
     });
     let start = match &demo {
-        Some(demo) => app::Start::Demo(&demo.playing),
+        Some(demo) => app::Start::Demo(demo),
         None => {
             let saved = state::load(&paths.state_file());
             let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);

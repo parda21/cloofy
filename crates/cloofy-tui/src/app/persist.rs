@@ -201,12 +201,20 @@ impl App {
     }
 
     pub(super) fn snapshot(&self) -> State {
-        let (view, selection) = match &self.view {
-            View::Home(v) => (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() }),
-            View::Library(v) => {
+        // What plays next is gone by the next start; it opens the page the queue was opened from.
+        let page = match &self.view {
+            View::Queue(_) => self.history.iter().rev().find(|view| !matches!(view, View::Queue(_))),
+            view => Some(view),
+        };
+        let (view, selection) = match page {
+            None | Some(View::Queue(_)) => (SavedView::Home, Selection::default()),
+            Some(View::Home(v)) => {
+                (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() })
+            }
+            Some(View::Library(v)) => {
                 (SavedView::Library { filter: v.filter }, Selection { index: v.cursor, ..Selection::default() })
             }
-            View::Tracks(v) => {
+            Some(View::Tracks(v)) => {
                 let view = match &v.source {
                     TrackSource::Liked => SavedView::Liked,
                     TrackSource::Playlist(p) => SavedView::Playlist {
@@ -228,11 +236,11 @@ impl App {
                 };
                 (view, Selection { index: v.list.selected, ..Selection::default() })
             }
-            View::Artist(v) => (
+            Some(View::Artist(v)) => (
                 SavedView::Artist { uri: v.uri.clone(), name: v.name.clone() },
                 Selection { index: v.row, item: v.item, ..Selection::default() },
             ),
-            View::Search(v) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
+            Some(View::Search(v)) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
         };
         let last_track = self.now.track.as_ref().map(|t| LastTrack {
             uri: t.uri.clone(),

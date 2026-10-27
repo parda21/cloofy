@@ -1,7 +1,10 @@
 //! Spotify Connect through the Web API: list devices, see what plays where, and control
-//! playback on other devices (phone, speakers, web player).
+//! playback on other devices (phone, speakers, web player). What the Web API can't do with
+//! the queue goes to the device through Spotify Connect itself, sent as cloofy's own device.
 
 use anyhow::Result;
+use librespot::{core::session::Session, protocol::player::ProvidedTrack};
+use protobuf_json_mapping::PrintOptions;
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -119,6 +122,46 @@ pub async fn send(api: &WebApi, command: Command) -> Result<()> {
     api.call(method, &path, body.as_ref()).await
 }
 
+/// Skips ahead to a track that plays later on `device`, as a click in Spotify's queue does.
+/// `uid` tells apart entries of the same track; empty where unknown.
+pub async fn skip_to(session: &Session, device: &str, uri: &str, uid: &str, provider: &str) -> Result<()> {
+    let track = json!({ "uri": uri, "uid": uid, "provider": provider });
+    command(session, device, json!({ "endpoint": "skip_next", "track": track, "logging_params": {} })).await
+}
+
+/// Replaces what plays next on `device`, as removing a track from Spotify's queue does. The
+/// tracks go back as the device listed them, under the revision it listed them in.
+pub async fn set_queue(
+    session: &Session,
+    device: &str,
+    next: &[ProvidedTrack],
+    previous: &[ProvidedTrack],
+    revision: &str,
+) -> Result<()> {
+    let tracks = |tracks: &[ProvidedTrack]| tracks.iter().map(provided_track_json).collect::<Result<Vec<_>>>();
+    let command = json!({
+        "endpoint": "set_queue",
+        "next_tracks": tracks(next)?,
+        "prev_tracks": tracks(previous)?,
+        "queue_revision": revision,
+        "logging_params": {},
+    });
+    self::command(session, device, command).await
+}
+
+async fn command(session: &Session, device: &str, command: Value) -> Result<()> {
+    let endpoint = format!("/connect-state/v1/player/command/from/{}/to/{device}", session.device_id());
+    let body = json!({ "command": command }).to_string();
+    session.spclient().request(&Method::POST, &endpoint, None, Some(body.as_bytes())).await?;
+    Ok(())
+}
+
+/// A track in Spotify's own JSON form, field names as in its protocol.
+fn provided_track_json(track: &ProvidedTrack) -> Result<Value> {
+    let options = PrintOptions { proto_field_name: true, ..PrintOptions::default() };
+    Ok(serde_json::from_str(&protobuf_json_mapping::print_to_string_with_options(track, &options)?)?)
+}
+
 fn playing_track(item: Value) -> Option<PlayingTrack> {
     let text = |pointer: &str| item.pointer(pointer).and_then(Value::as_str).unwrap_or_default().to_owned();
     let images: Vec<(u64, String)> = item
@@ -194,4 +237,26 @@ struct RawPlayback {
     repeat_state: String,
     item: Option<Value>,
     context: Option<Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracks_go_back_with_their_metadata_and_field_names() {
+        let mut track = ProvidedTrack {
+            uri: "spotify:track:1".into(),
+            uid: "q0".into(),
+            provider: "queue".into(),
+            album_uri: "spotify:album:1".into(),
+            ..ProvidedTrack::default()
+        };
+        track.metadata.insert("is_queued".into(), "true".into());
+        let json = provided_track_json(&track).unwrap();
+        assert_eq!(json["uid"], "q0");
+        assert_eq!(json["provider"], "queue");
+        assert_eq!(json["album_uri"], "spotify:album:1");
+        assert_eq!(json["metadata"]["is_queued"], "true");
+    }
 }

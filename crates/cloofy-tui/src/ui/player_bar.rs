@@ -14,9 +14,12 @@ use crate::{
     icons::icons,
     playback::Repeat,
     theme::{DANGER, FAINT, MUTED, PLAYER, RAISED, TEXT},
+    views::View,
 };
 
 const VOLUME_CELLS: u16 = 10;
+/// Blank cells between the queue button and the volume.
+const QUEUE_GAP: u16 = 3;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.buffer_mut().set_style(area, Style::new().bg(PLAYER));
@@ -52,6 +55,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let controls_x = info.right().saturating_sub(controls_width);
             let volume_width = VOLUME_CELLS + 7;
             let volume_x = info.right().saturating_sub(volume_width);
+            // The queue button sits before the volume, as in Spotify's desktop app, and lights
+            // up while the queue is open.
+            let queue_icon = icons().queue;
+            let queue_width = queue_icon.width() as u16;
+            let queue_x = volume_x.saturating_sub(queue_width + QUEUE_GAP);
+            let queue_open = matches!(app.view, View::Queue(_));
 
             let title_width = info.width.saturating_sub(controls_width + 7) as usize;
             let title = text::truncate(&track.name, title_width);
@@ -91,7 +100,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
-            let by_width = info.width.saturating_sub(volume_width + 4) as usize;
+            let by_width = info.width.saturating_sub(volume_width + queue_width + QUEUE_GAP + 4) as usize;
             buf.set_string(info.x, info.y + 1, text::truncate(&by, by_width), Style::new().fg(MUTED));
             let linked = &track.artists[..track.artist_uris.len().min(track.artists.len())];
             for (rect, artist) in super::name_spans(info.x, info.y + 1, linked, by_width.saturating_sub(1)) {
@@ -102,6 +111,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let width = track.album.width().min(by_width - album_x - 1) as u16;
                 hits.push((Rect::new(info.x + album_x as u16, info.y + 1, width, 1), Hit::Link(Link::PlayingAlbum)));
             }
+            let queue_style = if queue_open { Style::new().fg(accent) } else { Style::new().fg(FAINT) };
+            buf.set_string(queue_x, info.y + 1, queue_icon, queue_style);
+            hits.push((Rect::new(queue_x - 1, info.y + 1, queue_width + 2, 1), Hit::Command(Command::ShowQueue)));
             buf.set_line(volume_x, info.y + 1, &volume(app.now.volume, accent), volume_width);
             hits.push((
                 Rect::new(volume_x + 2, info.y + 1, VOLUME_CELLS, 1),

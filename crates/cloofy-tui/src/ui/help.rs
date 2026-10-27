@@ -44,6 +44,7 @@ const PLAYBACK: Section = (
         ("D", "Start DJ / ask DJ"),
         ("X", "Crossfade length"),
         ("z", "Now playing & lyrics"),
+        ("Q", "Queue"),
         ("d", "Switch device"),
     ],
 );

@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Queue.** See what plays next, as in Spotify's apps: the song playing now, the songs you queued under "Next in queue" and the rest of the playlist or album under "Next from". `Q`, the queue button next to the volume or the command palette opens it. It keeps up as songs change and as you add songs with `q`, on cloofy and on the device it controls. Enter or a double click skips ahead to a song, and Delete or its menu takes a song you queued out again.
+
 ## [0.3.0] - 2026-10-16
 
 The DJ takes requests, and cloofy updates itself.

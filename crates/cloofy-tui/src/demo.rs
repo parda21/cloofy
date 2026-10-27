@@ -43,6 +43,8 @@ pub struct Playing {
     /// The playlist or album it plays from.
     pub context: Option<String>,
     pub position_ms: u32,
+    /// Songs added to the queue, which play before the rest of the context.
+    pub queued: Vec<Track>,
 }
 
 impl Demo {
@@ -55,6 +57,19 @@ impl Demo {
             return self.liked.clone();
         }
         self.tracks.get(uri).cloned().unwrap_or_default()
+    }
+
+    /// A song of the sample by URI.
+    pub fn track(&self, uri: &str) -> Option<&Track> {
+        let lists = self.tracks.values().chain([&self.liked, &self.playing.queued]);
+        lists.flatten().find(|t| t.uri == uri)
+    }
+
+    /// What plays after the playing song: the queued songs, then the rest of its context.
+    pub fn upcoming(&self) -> (Vec<Track>, Vec<Track>) {
+        let context = self.playing.context.as_deref().map(|uri| self.tracks(uri)).unwrap_or_default();
+        let rest = context.iter().skip_while(|t| t.uri != self.playing.track.uri).skip(1).cloned().collect();
+        (self.playing.queued.clone(), rest)
     }
 
     /// The results saved for `query`, else whatever in the sample matches it.
@@ -81,5 +96,21 @@ impl Demo {
             || self.albums.iter().any(|a| a.uri == uri)
             || self.artists.iter().any(|a| a.uri == uri)
             || self.playlists.iter().any(|p| p.uri == uri)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sample_has_a_queue_before_the_rest_of_its_playlist() {
+        let demo = Demo::sample().unwrap();
+        let (queued, rest) = demo.upcoming();
+        assert!(!queued.is_empty());
+        let context = demo.tracks(demo.playing.context.as_deref().unwrap());
+        let playing = context.iter().position(|t| t.uri == demo.playing.track.uri).unwrap();
+        assert_eq!(rest.len(), context.len() - playing - 1);
+        assert!(queued.iter().all(|t| demo.track(&t.uri).is_some()));
     }
 }

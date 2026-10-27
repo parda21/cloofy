@@ -23,7 +23,7 @@ use cloofy_spotify::{
 };
 use futures::{StreamExt, stream};
 use image::imageops::FilterType;
-use librespot::core::session::Session;
+use librespot::core::{SpotifyUri, session::Session};
 use ratatui::layout::Size;
 use ratatui_image::{
     Resize,
@@ -42,6 +42,7 @@ use crate::{
     art,
     demo::Demo,
     playback::CurrentTrack,
+    queue::{Listed, Upcoming},
     theme::{self, Rgb},
     views::TrackSource,
 };
@@ -167,6 +168,15 @@ pub enum DataEvent {
         name: String,
         result: Result<(), String>,
     },
+    /// Details of tracks in the queue; tracks Spotify has none for are left out.
+    QueueTracks(Vec<Track>),
+    /// The Web API's list of what plays after `playing`.
+    Upcoming {
+        playing: String,
+        result: Result<Vec<Track>, String>,
+    },
+    /// The device took a skip to a track in the queue, or turned it down.
+    SkippedTo(Result<(), String>),
     /// What Spotify suggests asking DJ for.
     DjSuggestions(Result<Vec<String>, String>),
     /// DJ took a request, or turned it down.
@@ -832,6 +842,65 @@ impl Loader {
         }
         self.spawn(move |this| async move {
             if let Err(err) = catalog::queue(&this.api, &uri).await {
+                this.send(DataEvent::Failed(format!("Queue: {err:#}")));
+            }
+        });
+    }
+
+    /// Details of tracks in the queue, a batch at a time. Answers with `QueueTracks`.
+    pub fn queue_tracks(&self, uris: Vec<String>) {
+        if let Some(demo) = self.demo() {
+            let tracks = uris.iter().filter_map(|uri| demo.track(uri)).cloned().collect();
+            return self.send(DataEvent::QueueTracks(tracks));
+        }
+        self.spawn(move |this| async move {
+            let Ok(session) = this.session().await else { return };
+            let uris: Vec<SpotifyUri> = uris.iter().filter_map(|uri| SpotifyUri::from_uri(uri).ok()).collect();
+            for batch in uris.chunks(catalog::METADATA_BATCH) {
+                this.send(DataEvent::QueueTracks(catalog::tracks_metadata(&session, batch).await));
+            }
+        });
+    }
+
+    /// The Web API's list of what plays next, for when Spotify hasn't said yet in its own way.
+    /// Answers with `Upcoming`.
+    pub fn upcoming(&self, playing: String) {
+        if self.demo.is_some() {
+            return;
+        }
+        self.spawn(move |this| async move {
+            let result = catalog::upcoming(&this.api).await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::Upcoming { playing, result });
+        });
+    }
+
+    /// Skips ahead to a track in the queue of `device`. Answers with `SkippedTo`.
+    pub fn skip_to(&self, device: String, entry: Upcoming) {
+        if self.demo.is_some() {
+            return;
+        }
+        self.spawn(move |this| async move {
+            let skip = async {
+                let session = this.session().await?;
+                connect::skip_to(&session, &device, &entry.uri, &entry.uid, entry.provider_name()).await
+            };
+            let result = skip.await.map_err(|e| format!("{e:#}"));
+            this.send(DataEvent::SkippedTo(result));
+        });
+    }
+
+    /// Hands `device` its queue back with a change. Reports only failures; the device's next
+    /// state shows the change.
+    pub fn set_queue(&self, device: String, listed: Listed) {
+        if self.demo.is_some() {
+            return;
+        }
+        self.spawn(move |this| async move {
+            let set = async {
+                let session = this.session().await?;
+                connect::set_queue(&session, &device, &listed.next, &listed.previous, &listed.revision).await
+            };
+            if let Err(err) = set.await {
                 this.send(DataEvent::Failed(format!("Queue: {err:#}")));
             }
         });
