@@ -8,9 +8,10 @@ use std::{
 use cloofy_spotify::catalog::{AlbumInfo, PlaylistInfo};
 use tachyonfx::EffectManager;
 
-use super::{App, COVER_SIZE, Focus, LIBRARY_PARTS};
+use super::{App, Focus, LIBRARY_PARTS};
 use crate::{
     datacache,
+    preferences::Setting,
     state::{self, LastTrack, SavedView, Selection, State},
     views::{HomeView, TrackSource, TrackView, View},
 };
@@ -119,8 +120,10 @@ impl App {
     pub(super) fn restore(&mut self, state: State) {
         self.library_filter = state.library_filter;
         self.nav.selected = state.sidebar_selected;
-        if let Some(crossfade) = state.crossfade {
-            self.crossfade = crossfade;
+        // Crossfade used to be kept here; the last one chosen moves to the config file.
+        if let Some(crossfade) = state.crossfade.filter(|c| *c != self.prefs.crossfade) {
+            self.prefs.crossfade = crossfade.min(12);
+            self.save_setting(Setting::Crossfade);
         }
         self.restored_volume = state.volume;
         // The player starts at this volume too, so the slider can show it right away.
@@ -189,7 +192,7 @@ impl App {
         if let Some(last) = state.last_track {
             self.now.restore(&last);
             if let Some(url) = &last.cover_url {
-                self.loader.cover(url.clone(), COVER_SIZE);
+                self.load_cover(url.clone());
             }
             self.last_context = last.context.clone();
             self.notice(format!("Resume “{}” · press space", last.name));
@@ -201,12 +204,22 @@ impl App {
     }
 
     pub(super) fn snapshot(&self) -> State {
-        let (view, selection) = match &self.view {
-            View::Home(v) => (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() }),
-            View::Library(v) => {
+        // The queue and Settings are detours: the next start opens the page they were opened from.
+        let page = match &self.view {
+            View::Queue(_) | View::Settings(_) => {
+                self.history.iter().rev().find(|view| !matches!(view, View::Queue(_) | View::Settings(_)))
+            }
+            view => Some(view),
+        };
+        let (view, selection) = match page {
+            None | Some(View::Queue(_) | View::Settings(_)) => (SavedView::Home, Selection::default()),
+            Some(View::Home(v)) => {
+                (SavedView::Home, Selection { shelf: v.shelf, item: v.item, ..Selection::default() })
+            }
+            Some(View::Library(v)) => {
                 (SavedView::Library { filter: v.filter }, Selection { index: v.cursor, ..Selection::default() })
             }
-            View::Tracks(v) => {
+            Some(View::Tracks(v)) => {
                 let view = match &v.source {
                     TrackSource::Liked => SavedView::Liked,
                     TrackSource::Playlist(p) => SavedView::Playlist {
@@ -228,11 +241,11 @@ impl App {
                 };
                 (view, Selection { index: v.list.selected, ..Selection::default() })
             }
-            View::Artist(v) => (
+            Some(View::Artist(v)) => (
                 SavedView::Artist { uri: v.uri.clone(), name: v.name.clone() },
                 Selection { index: v.row, item: v.item, ..Selection::default() },
             ),
-            View::Search(v) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
+            Some(View::Search(v)) => (SavedView::Search { query: v.query.clone() }, Selection::default()),
         };
         let last_track = self.now.track.as_ref().map(|t| LastTrack {
             uri: t.uri.clone(),
@@ -257,7 +270,7 @@ impl App {
             library_filter: self.library_filter,
             last_track,
             volume,
-            crossfade: Some(self.crossfade),
+            crossfade: None,
         }
     }
 

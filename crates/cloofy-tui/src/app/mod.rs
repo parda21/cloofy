@@ -1,6 +1,8 @@
 mod library;
 mod menu;
 mod persist;
+mod queue;
+mod settings;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -20,7 +22,7 @@ use cloofy_spotify::{
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
     paths::Paths,
-    update::Release,
+    update::{PackageManager, Release},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use librespot::playback::player::PlayerEvent;
@@ -30,15 +32,18 @@ use tokio::sync::watch;
 
 use crate::{
     commands::Command,
+    graphics::{INLINE_CELL, ImageProtocol, InlineLayer},
     loader::{DataEvent, Loader, Picture, SessionState},
     media::MediaSync,
     notify::Notifier,
     overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
     playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    preferences::{AccentChoice, Preferences, Setting},
+    queue::Queue,
     snapshot::Placement,
-    theme::{Accent, BG, RAISED},
+    theme::{Accent, BG, RAISED, Rgb},
     views::{
-        ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, SearchEntry, SearchView, TrackSource,
+        ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, QueueRow, SearchEntry, SearchView, TrackSource,
         TrackView, View,
     },
 };
@@ -72,7 +77,6 @@ const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
 /// Spotify's DJ; loading it without a track asks for a fresh set.
 const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
-const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 /// How often to check which device plays, and how soon to look again while a change sent to
@@ -91,6 +95,9 @@ const TRACK_END_SLACK: Duration = Duration::from_millis(300);
 const CONFIRM_DELAY: Duration = Duration::from_millis(300);
 /// How long the device label shows a transfer that the device hasn't confirmed.
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long after a track change Spotify may take to say what plays next, before the queue
+/// page asks the Web API instead.
+const QUEUE_GRACE: Duration = Duration::from_secs(2);
 /// Session state is also saved periodically, in case cloofy gets killed.
 const STATE_SAVE_INTERVAL: Duration = Duration::from_secs(20);
 /// Rapid like/unlike toggles collapse into one request after this pause.
@@ -119,14 +126,19 @@ const LONG_SLEEP: Duration = Duration::from_secs(60);
 pub enum Start<'a> {
     /// The last session: the page, the selection and the track to resume.
     Restore(Box<crate::state::State>),
-    /// The demo's playing track, with nothing of an account restored.
-    Demo(&'a crate::demo::Playing),
+    /// The demo's playing track and queue, with nothing of an account restored.
+    Demo(&'a crate::demo::Demo),
 }
 
 /// A newer cloofy, offered in the top bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Update {
     Available(Release),
+    /// Out, but for the package manager that installed cloofy to install.
+    Managed {
+        release: Release,
+        manager: PackageManager,
+    },
     /// Downloading, with the percentage once the size is known.
     Installing {
         release: Release,
@@ -267,6 +279,11 @@ pub enum Hit {
         width: u16,
     },
     Cover,
+    /// The arrows, or the switch, that change the `index`th setting on the Settings page.
+    SettingStep {
+        index: usize,
+        forward: bool,
+    },
     OverlayArea,
     OverlayItem(usize),
 }
@@ -375,6 +392,8 @@ pub struct App {
     local_active: bool,
     /// Playback runs on another device; commands go through Spotify Connect.
     remote_active: bool,
+    /// The Spotify Connect device that plays, by ID, as Spotify last said.
+    active_device: Option<String>,
     /// Changes sent to the other device that Spotify doesn't show yet.
     remote_intent: RemoteIntent,
     /// When the last command went to another device; polls started before show older state.
@@ -385,8 +404,8 @@ pub struct App {
     devices_wanted: bool,
     /// Playback is moving to another device.
     transfer: Option<Transfer>,
-    /// Seconds consecutive tracks overlap.
-    crossfade: u64,
+    /// What the user chose on the Settings page.
+    pub prefs: Preferences,
     next_poll: Instant,
     polling: bool,
     poll_started: Instant,
@@ -397,6 +416,25 @@ pub struct App {
     paths: Paths,
     pub player_error: Option<String>,
     pub now: NowPlaying,
+    /// When the shown track last changed.
+    track_changed_at: Instant,
+    /// What plays next on the device that plays, as Spotify or cloofy's player last said.
+    queue: Queue,
+    /// Details of the tracks in the queue by URI; `None` while they load.
+    queue_tracks: HashMap<String, Option<Track>>,
+    /// Tracks in the queue Spotify has no details for; they are left off the queue page.
+    queue_tracks_missing: HashSet<String>,
+    /// Counts the reports of what plays next, so a slower answer can tell it is outdated.
+    queue_version: u64,
+    /// The track the Web API was last asked what plays after, and the report it was asked
+    /// about, so it is asked once per report.
+    upcoming_asked: Option<(String, u64)>,
+    /// The Web API's answer is on its way.
+    upcoming_pending: bool,
+    /// When to ask the Web API what plays next.
+    upcoming_due: Option<Instant>,
+    /// cloofy's player shuffled what plays next and hasn't said how.
+    queue_reshuffled: bool,
     /// The system's media controls, where there are any.
     media: Option<MediaSync>,
     /// Announces new tracks while cloofy is in the background, in terminals that can.
@@ -405,10 +443,14 @@ pub struct App {
     focused: bool,
     /// When the computer went to sleep, in wall-clock time: the monotonic clock stops meanwhile.
     slept_at: Option<std::time::SystemTime>,
-    /// Reduce Motion and Low Power Mode, as of the last check.
+    /// Reduce Motion and Low Power Mode, as the system reported them at the last check.
+    system_settings: Settings,
+    /// The system's settings with the user's choice for power saving applied.
     pub settings: Settings,
     settings_checked: Instant,
     pub accent: Accent,
+    /// The color of the playing cover, for when the accent follows it.
+    cover_accent: Option<Rgb>,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
     pub playlists_loading: bool,
@@ -490,6 +532,8 @@ pub struct App {
     pub seek_preview: Option<u32>,
     /// Images drawn in the current frame, for dev snapshots.
     pub placements: Vec<Placement>,
+    /// Writes the frame's Sixel and iTerm2 images.
+    pub inline: InlineLayer,
     /// F12 was pressed; the next frame gets written as a PNG.
     pub snapshot_requested: bool,
     last_click: Option<(Instant, Hit)>,
@@ -516,7 +560,7 @@ impl App {
     pub fn new(
         loader: Loader,
         session_tx: watch::Sender<SessionState>,
-        crossfade: u64,
+        prefs: Preferences,
         start: Start,
         paths: Paths,
         media: Option<cloofy_os::media::Controls>,
@@ -526,6 +570,11 @@ impl App {
         loader.playlists();
         loader.library();
         loader.home(0);
+        let system_settings = cloofy_os::settings::current();
+        let mut accent = Accent::new();
+        if let Some(color) = prefs.accent.fixed() {
+            accent.jump(color);
+        }
         let mut app = Self {
             loader,
             state_path: paths.state_file(),
@@ -538,12 +587,14 @@ impl App {
             device_id: None,
             local_active: false,
             remote_active: false,
+            active_device: None,
             remote_intent: RemoteIntent::default(),
             last_command: Instant::now(),
             devices_cache: None,
             devices_wanted: false,
             transfer: None,
-            crossfade,
+            settings: prefs.apply(system_settings),
+            prefs,
             next_poll: Instant::now(),
             polling: false,
             poll_started: Instant::now(),
@@ -552,13 +603,23 @@ impl App {
             paths,
             player_error: None,
             now: NowPlaying::new(),
+            track_changed_at: Instant::now(),
+            queue: Queue::default(),
+            queue_tracks: HashMap::new(),
+            queue_tracks_missing: HashSet::new(),
+            queue_version: 0,
+            upcoming_asked: None,
+            upcoming_pending: false,
+            upcoming_due: None,
+            queue_reshuffled: false,
             media: media.map(MediaSync::new),
             notifier,
             focused: true,
             slept_at: None,
-            settings: cloofy_os::settings::current(),
+            system_settings,
             settings_checked: Instant::now(),
-            accent: Accent::new(),
+            accent,
+            cover_accent: None,
             me: None,
             playlists: Vec::new(),
             playlists_loading: true,
@@ -607,6 +668,7 @@ impl App {
             lyrics_scroll: 0.0,
             hits: Vec::new(),
             placements: Vec::new(),
+            inline: InlineLayer::default(),
             snapshot_requested: false,
             mouse: None,
             hovered: None,
@@ -632,14 +694,15 @@ impl App {
                 app.restore(*state);
             }
             // A showcase starts fresh, and never touches the account's saved session.
-            Start::Demo(playing) => app.start_demo(playing),
+            Start::Demo(demo) => app.start_demo(demo),
         }
         app.cached_tracks = None;
         app
     }
 
-    /// Shows the demo's track as playing. Nothing plays: there is no player.
-    fn start_demo(&mut self, playing: &crate::demo::Playing) {
+    /// Shows the demo's track as playing, with its queue. Nothing plays: there is no player.
+    fn start_demo(&mut self, demo: &crate::demo::Demo) {
+        let playing = &demo.playing;
         let track = &playing.track;
         let last = crate::state::LastTrack {
             uri: track.uri.clone(),
@@ -659,9 +722,11 @@ impl App {
         self.now.volume = (u32::from(u16::MAX) * 7 / 10) as u16;
         self.last_context = last.context.clone();
         if let Some(url) = &last.cover_url {
-            self.loader.cover(url.clone(), COVER_SIZE);
+            self.load_cover(url.clone());
         }
         self.after_track_change(None);
+        let (queued, rest) = demo.upcoming();
+        self.start_demo_queue(queued, rest);
     }
 
     /// The last session's track is shown and ␣ would continue it.
@@ -716,14 +781,29 @@ impl App {
         if matches!(self.update, Some(Update::Installing { .. } | Update::Installed { .. })) {
             return;
         }
-        if self.update.as_ref() != Some(&Update::Available(release.clone())) {
-            self.notice(format!("cloofy {} is out · U updates", release.version()));
+        let update = match PackageManager::of_running() {
+            Some(manager) => Update::Managed { release, manager },
+            None => Update::Available(release),
+        };
+        if self.update.as_ref() != Some(&update) {
+            self.announce(&update);
         }
-        self.update = Some(Update::Available(release));
+        self.update = Some(update);
     }
 
-    /// The update button: installs the update, or restarts into the installed one. Without
-    /// either, looks for one.
+    /// Says that a newer cloofy is out, and how to get it.
+    fn announce(&mut self, update: &Update) {
+        match update {
+            Update::Available(release) => self.notice(format!("cloofy {} is out · U updates", release.version())),
+            Update::Managed { release, manager } => {
+                self.notice(format!("cloofy {} is out · {}", release.version(), manager.how_to_update()))
+            }
+            Update::Installing { .. } | Update::Installed { .. } => {}
+        }
+    }
+
+    /// The update button: installs the update, or restarts into the installed one, or says how
+    /// to update where a package manager does. Without an update, looks for one.
     fn run_update(&mut self) {
         match self.update.clone() {
             None if self.demo => self.error("This is the demo: nothing updates here".into()),
@@ -731,6 +811,7 @@ impl App {
                 self.notice("Looking for updates…".into());
                 self.check_for_update(true);
             }
+            Some(update @ Update::Managed { .. }) => self.announce(&update),
             Some(Update::Available(release)) => {
                 self.notice(format!("Updating to cloofy {}…", release.version()));
                 self.loader.install_update(release.clone());
@@ -749,6 +830,9 @@ impl App {
         match &self.update {
             None => Command::Update.label().to_owned(),
             Some(Update::Available(release)) => format!("Update to cloofy {}", release.version()),
+            Some(Update::Managed { release, manager }) => {
+                format!("cloofy {} is out · {}", release.version(), manager.how_to_update())
+            }
             Some(Update::Installing { .. }) => "Updating cloofy…".to_owned(),
             Some(Update::Installed { release, .. }) => format!("Restart into cloofy {}", release.version()),
         }
@@ -778,15 +862,14 @@ impl App {
         match event {
             AppEvent::Player(event) => return self.on_player(event),
             AppEvent::Pushed(push) => {
-                // A push only brings the next poll forward; nothing on screen changes yet.
-                self.on_push(push);
-                return false;
+                // A push brings the next poll forward; only the queue page shows it at once.
+                return self.on_push(push);
             }
             AppEvent::PlayerReady(controller) => {
                 self.player_error = None;
                 let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
                 self.device_id = Some(controller.session.device_id().to_owned());
-                controller.set_crossfade(Duration::from_secs(self.crossfade));
+                controller.set_crossfade(Duration::from_secs(self.prefs.crossfade));
                 self.controller = Some(*controller);
                 self.reload_failed_view();
             }
@@ -867,7 +950,7 @@ impl App {
 
     /// Writes a desktop notification once a new track plays while cloofy is in the background.
     pub fn announce_track(&mut self) {
-        let Some(notifier) = &mut self.notifier else { return };
+        let Some(notifier) = self.notifier.as_mut().filter(|_| self.prefs.notifications) else { return };
         let track = self.now.track.as_ref().filter(|_| !self.remote_active);
         if let Some(sequence) = notifier.update(track, self.now.playing, self.focused) {
             let mut stdout = std::io::stdout();
@@ -914,6 +997,19 @@ impl App {
     }
 
     fn on_player(&mut self, event: PlayerEvent) -> bool {
+        // What plays next, as cloofy's own player has it; while another device plays, it has
+        // nothing to say.
+        if let PlayerEvent::SetQueue { context_uri, current_track, next_tracks, .. } = event {
+            if !self.remote_active {
+                self.set_queue(Queue::from_player(context_uri, current_track, &next_tracks));
+            }
+            return matches!(self.view, View::Queue(_));
+        }
+        if matches!(event, PlayerEvent::ShuffleChanged { shuffle } if shuffle != self.now.shuffle)
+            && !self.remote_active
+        {
+            self.queue_reshuffled();
+        }
         match &event {
             PlayerEvent::SessionConnected { .. } => {
                 self.local_active = true;
@@ -959,18 +1055,22 @@ impl App {
         }
         let before = self.now.track.as_ref().map(|t| t.uri.clone());
         if let Some(url) = self.now.apply(event) {
-            self.loader.cover(url, COVER_SIZE);
+            self.load_cover(url);
         }
         self.after_track_change(before);
         true
     }
 
     /// Spotify pushed a change of what plays where; a poll brings the details.
-    fn on_push(&mut self, push: ConnectPush) {
+    /// What plays next comes with the push. Returns whether the screen shows it.
+    fn on_push(&mut self, push: ConnectPush) -> bool {
         if push.worth_polling(self.device_id.as_deref(), self.remote_active, self.last_context.as_deref()) {
             self.next_poll = self.next_poll.min(Instant::now() + PUSH_DELAY);
         }
+        self.active_device = Some(push.active_device.clone()).filter(|id| !id.is_empty());
+        self.set_queue(push.queue.clone());
         self.last_push = Some((push, Instant::now()));
+        matches!(self.view, View::Queue(_))
     }
 
     /// Returns whether anything shown changed: while cloofy plays or nothing does, the poll
@@ -997,6 +1097,7 @@ impl App {
                 return false;
             }
         }
+        self.active_device = playback.as_ref().map(|p| p.device.id.clone());
         match playback {
             Some(p) if Some(p.device.id.as_str()) == self.device_id.as_deref() => {
                 let changed = self.remote_active || (p.context.is_some() && p.context != self.last_context);
@@ -1020,7 +1121,7 @@ impl App {
                 let dragged_volume = matches!(self.dragging, Some(Hit::Volume { .. })).then_some(self.now.volume);
                 let (cover, unconfirmed) = self.now.apply_remote(&p, &mut self.remote_intent);
                 if let Some(url) = cover {
-                    self.loader.cover(url, COVER_SIZE);
+                    self.load_cover(url);
                 }
                 // The Web API may lag behind a push; look again until it catches up.
                 let behind =
@@ -1067,6 +1168,10 @@ impl App {
             if track.artist_uris.is_empty() {
                 track.artist_uris = listed.artist_uris.clone();
             }
+        }
+        if before.as_deref() != self.now.track.as_ref().map(|t| t.uri.as_str()) {
+            self.track_changed_at = Instant::now();
+            self.check_queue();
         }
         let Some(track) = &self.now.track else { return };
         if before.as_deref() == Some(track.uri.as_str()) {
@@ -1175,6 +1280,17 @@ impl App {
                     }
                 }
             }
+            // Loads still under way when cover art was turned off.
+            DataEvent::Image { .. } | DataEvent::Cover { .. } | DataEvent::LargeCover { .. } if !self.prefs.covers => {
+                return false;
+            }
+            // Encoded for the protocol used before a change in Settings: loaded again when drawn.
+            DataEvent::Image { key, result: Ok(picture) } if picture.kind() != self.loader.image_kind() => {
+                if matches!(self.images.get(&key), Some(ImageSlot::Loading(_))) {
+                    self.images.remove(&key);
+                    self.image_used.remove(&key);
+                }
+            }
             DataEvent::Image { key, result } => {
                 let slot = match result {
                     Ok(picture) => ImageSlot::Ready(picture),
@@ -1214,7 +1330,8 @@ impl App {
             }
             DataEvent::Cover { url, result } => {
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url.as_deref());
-                if current != Some(url.as_str()) {
+                let stale = result.as_ref().is_ok_and(|(picture, _)| picture.kind() != self.loader.image_kind());
+                if current != Some(url.as_str()) || stale {
                     return false;
                 }
                 match result {
@@ -1222,10 +1339,13 @@ impl App {
                         if let Some(old) = self.now.cover.replace(Cover { url, picture }) {
                             self.terminal_out.extend(old.picture.terminal_delete());
                         }
-                        if self.settings.low_power {
-                            self.accent.jump(accent);
-                        } else {
-                            self.accent.set(accent);
+                        self.cover_accent = Some(accent);
+                        if self.prefs.accent == AccentChoice::Cover {
+                            if self.settings.low_power {
+                                self.accent.jump(accent);
+                            } else {
+                                self.accent.set(accent);
+                            }
                         }
                     }
                     Err(err) => tracing::warn!("cover {url}: {err}"),
@@ -1247,6 +1367,7 @@ impl App {
                 }
                 let current = self.now.track.as_ref().and_then(|t| t.cover_url_large.as_deref());
                 let wanted = self.zen && self.zen_cover_want == Some(size) && current == Some(url.as_str());
+                let wanted = wanted && result.as_ref().is_ok_and(|picture| picture.kind() == self.loader.image_kind());
                 match result {
                     Ok(picture) if wanted => {
                         if let Some(old) = self.zen_cover.replace(LargeCover { url, size, picture }) {
@@ -1354,6 +1475,12 @@ impl App {
                     self.error(format!("Transfer: {err}"));
                 }
             },
+            DataEvent::QueueTracks { asked, tracks, reached } => {
+                self.on_queue_tracks(asked, tracks, reached);
+                return matches!(self.view, View::Queue(_));
+            }
+            DataEvent::Upcoming { playing, result } => self.on_upcoming(playing, result),
+            DataEvent::SkippedTo(result) => self.on_skipped_to(result),
             DataEvent::DjSuggestions(result) => {
                 let Some(Overlay::Dj { picker, suggestions, loading }) = &mut self.overlay else { return true };
                 *loading = false;
@@ -1468,7 +1595,8 @@ impl App {
 
         if self.settings_checked.elapsed() >= SETTINGS_INTERVAL {
             self.settings_checked = Instant::now();
-            let settings = cloofy_os::settings::current();
+            self.system_settings = cloofy_os::settings::current();
+            let settings = self.prefs.apply(self.system_settings);
             redraw |= settings != self.settings;
             self.settings = settings;
         }
@@ -1543,6 +1671,11 @@ impl App {
             self.loader.playback();
         }
 
+        if self.upcoming_due.is_some_and(|due| Instant::now() >= due) {
+            self.ask_upcoming();
+            redraw = true;
+        }
+
         if self.zen {
             self.request_zen_cover();
             redraw |= self.scroll_lyrics();
@@ -1559,10 +1692,11 @@ impl App {
     fn is_animating(&self) -> bool {
         let loading = match &self.view {
             View::Home(v) => v.loading && v.home.is_none(),
-            View::Library(_) => false,
+            View::Library(_) | View::Settings(_) => false,
             View::Artist(v) => v.page.is_none() && v.error.is_none(),
             View::Tracks(v) => v.loading,
             View::Search(v) => v.loading,
+            View::Queue(v) => v.loading,
         };
         let lyrics_loading = self.zen && self.lyrics.as_ref().is_some_and(|l| l.result.is_none());
         self.now.playing
@@ -1578,6 +1712,9 @@ impl App {
 
     /// Requests the big cover once the Now Playing layout knows its size.
     fn request_zen_cover(&mut self) {
+        if !self.prefs.covers {
+            return;
+        }
         let (Some(size), Some(track)) = (self.zen_cover_want, &self.now.track) else { return };
         let Some(url) = track.cover_url_large.clone() else { return };
         if self.zen_cover_want_since.is_none_or(|(wanted, _)| wanted != size) {
@@ -1686,6 +1823,9 @@ impl App {
     }
 
     fn on_content_key(&mut self, key: KeyEvent) {
+        if matches!(self.view, View::Settings(_)) {
+            return self.on_settings_key(key);
+        }
         if let View::Artist(artist) = &mut self.view {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => artist.move_row(-1),
@@ -1782,6 +1922,9 @@ impl App {
             KeyCode::Enter => self.activate(),
             KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Nav,
             KeyCode::Esc => self.back(),
+            KeyCode::Delete | KeyCode::Backspace if matches!(self.view, View::Queue(_)) => {
+                self.remove_selected_from_queue();
+            }
             _ => {}
         }
     }
@@ -1795,9 +1938,17 @@ impl App {
                 let rows = v.entry_rows.max(1) as usize;
                 v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
             }
+            View::Queue(v) => {
+                let rows = v.entry_rows.max(1) as usize;
+                v.list.scroll(delta.signum() * delta.unsigned_abs().div_ceil(rows) as isize);
+            }
             View::Home(v) => v.scroll_by(delta),
             View::Artist(v) => v.scroll_by(delta),
             View::Library(v) => {
+                v.top = (v.top as isize + delta).max(0) as usize;
+                v.detached = true;
+            }
+            View::Settings(v) => {
                 v.top = (v.top as isize + delta).max(0) as usize;
                 v.detached = true;
             }
@@ -1818,6 +1969,8 @@ impl App {
             View::Artist(v) => v.move_row(delta.signum()),
             View::Tracks(v) => v.list.move_by(delta, v.tracks.len()),
             View::Search(v) => v.move_by(delta),
+            View::Settings(v) => v.move_by(delta.signum()),
+            View::Queue(v) => v.move_by(delta),
         }
     }
 
@@ -2062,6 +2215,11 @@ impl App {
                             v.list.selected = index;
                         }
                     }
+                    View::Queue(v) => {
+                        if !matches!(v.rows.get(index), Some(QueueRow::Header(_)) | None) {
+                            v.list.selected = index;
+                        }
+                    }
                     View::Artist(v) => {
                         v.row = index;
                         v.item = 0;
@@ -2069,6 +2227,10 @@ impl App {
                     }
                     View::Library(v) => {
                         v.cursor = index;
+                        v.detached = true;
+                    }
+                    View::Settings(v) => {
+                        v.selected = index;
                         v.detached = true;
                     }
                     View::Home(_) => {}
@@ -2163,6 +2325,13 @@ impl App {
             Hit::Command(command) => self.run(command),
             Hit::Seek { .. } | Hit::Volume { .. } => self.drag(hit, column, true),
             Hit::Cover => self.toggle_zen(),
+            Hit::SettingStep { index, forward } => {
+                self.select(Hit::Row(index));
+                if let View::Settings(v) = &self.view {
+                    let setting = v.setting();
+                    self.change_setting(setting, forward);
+                }
+            }
             Hit::OverlayItem(position) if matches!(self.overlay, Some(Overlay::Menu(_))) => {
                 self.choose_menu_item(position);
             }
@@ -2213,7 +2382,8 @@ impl App {
                 | Hit::RowPlay(_)
                 | Hit::ShelfScroll { .. }
                 | Hit::PageChip(_)
-                | Hit::Header(_),
+                | Hit::Header(_)
+                | Hit::SettingStep { .. },
             ) => self.scroll_content(delta),
             _ => {}
         }
@@ -2298,6 +2468,7 @@ impl App {
                 self.open_search();
             }
             Command::NowPlaying => self.toggle_zen(),
+            Command::ShowQueue => self.toggle_queue(),
             Command::Like => self.toggle_saved(),
             Command::Queue => match self.target() {
                 Some(target) if target.is_track => self.queue(target.uri, target.name),
@@ -2315,14 +2486,14 @@ impl App {
                 self.play(DJ_URI.into(), None);
             }
             Command::Crossfade => {
-                let next = CROSSFADE_STEPS.iter().copied().find(|s| *s > self.crossfade).unwrap_or(0);
-                self.crossfade = next;
-                if let Some(controller) = &self.controller {
-                    controller.set_crossfade(Duration::from_secs(next));
-                }
-                let text = if next == 0 { "Crossfade off".to_owned() } else { format!("Crossfade: {next} s") };
+                self.change_setting(Setting::Crossfade, true);
+                let text = match self.prefs.crossfade {
+                    0 => "Crossfade off".to_owned(),
+                    seconds => format!("Crossfade: {seconds} s"),
+                };
                 self.notice(text);
             }
+            Command::Settings => self.open_settings(),
             Command::Devices => {
                 self.loader.devices();
                 match self.devices_cache.clone().filter(|d| !d.is_empty()) {
@@ -2519,6 +2690,8 @@ impl App {
                     SearchEntry::Playlist(p) => Some(track(&p.uri, &p.name, false)),
                     SearchEntry::Header(_) => None,
                 }),
+                View::Settings(_) => None,
+                View::Queue(v) => v.selected().and_then(QueueRow::track).map(|t| track(&t.uri, &t.name, true)),
             };
             if selected.is_some() {
                 return selected;
@@ -2539,8 +2712,11 @@ impl App {
             return;
         }
         // Kitty images are drawn through placeholder cells whose color encodes the image;
-        // recoloring them mid-animation would show the wrong picture.
-        let effect = effect.with_filter(CellFilter::eval_cell(|cell| !cell.symbol().starts_with(KITTY_PLACEHOLDER)));
+        // recoloring them mid-animation would show the wrong picture. Sixel and iTerm2 images
+        // are not recolored either, so that they keep counting as uncovered.
+        let effect = effect.with_filter(CellFilter::eval_cell(|cell| {
+            !cell.symbol().starts_with(KITTY_PLACEHOLDER) && cell.symbol() != INLINE_CELL
+        }));
         self.effects.add_unique_effect(slot, effect);
         self.last_draw = Instant::now();
     }
@@ -2629,6 +2805,7 @@ impl App {
                 Some(SearchEntry::Track(track)) => Some(track),
                 _ => None,
             },
+            View::Queue(v) => v.rows.get(row).and_then(QueueRow::track),
             _ => None,
         }
     }
@@ -2747,7 +2924,7 @@ impl App {
         self.focus = Focus::Content;
     }
 
-    /// A cover, or the drawn placeholder for items without one.
+    /// A cover, or the drawn placeholder for items without one. Nothing with cover art off.
     pub fn cover(&mut self, url: Option<&str>, size: Size, round: bool) -> Option<&Picture> {
         self.image(url.unwrap_or(crate::art::PLACEHOLDER_COVER), size, round)
     }
@@ -2779,12 +2956,47 @@ impl App {
     /// Asks for a cover that is likely shown soon, such as the next page of a shelf, so it is
     /// there when it scrolls into view. Loaded after the frame's visible covers.
     pub fn prefetch(&mut self, url: Option<&str>, size: Size, round: bool) {
+        if !self.prefs.covers {
+            return;
+        }
         let url = url.unwrap_or(crate::art::PLACEHOLDER_COVER);
         self.prefetch.push((url.to_owned(), size, round));
     }
 
+    /// What [`ImageProtocol::Auto`] draws with in this terminal, to show beside the choice.
+    pub fn auto_image_protocol(&self) -> ImageProtocol {
+        self.loader.auto_image_protocol()
+    }
+
+    /// Draws covers with `protocol` from now on, for the Settings page. Every cover is encoded
+    /// again, from the disk cache; covers that loaded for the old protocol meanwhile are dropped.
+    pub fn set_image_protocol(&mut self, protocol: ImageProtocol) {
+        if protocol == self.loader.image_protocol() {
+            return;
+        }
+        self.loader.set_image_protocol(protocol);
+        for (_, slot) in self.images.drain() {
+            if let ImageSlot::Ready(picture) = slot {
+                self.terminal_out.extend(picture.terminal_delete());
+            }
+        }
+        self.image_used.clear();
+        if let Some(cover) = self.now.cover.take() {
+            self.terminal_out.extend(cover.picture.terminal_delete());
+            self.load_cover(cover.url);
+        }
+        if let Some(cover) = self.zen_cover.take() {
+            self.terminal_out.extend(cover.picture.terminal_delete());
+        }
+        self.zen_cover_pending = None;
+        self.zen_cover_failed = None;
+    }
+
     /// The cover for `url` at `size`, loading it on first use.
     pub fn image(&mut self, url: &str, size: Size, round: bool) -> Option<&Picture> {
+        if !self.prefs.covers {
+            return None;
+        }
         let key = image_key(url, size);
         self.image_used.insert(key.clone(), Instant::now());
         match self.images.get(&key) {
@@ -2980,6 +3192,7 @@ impl App {
                     self.next_view_id += 1;
                     v.load(self.next_view_id, |id, source| self.loader.tracks(id, source));
                 }
+                self.check_queue();
                 self.focus = Focus::Content;
                 // A page seen before comes back at once, without the rest of a transition.
                 self.last_nav = Some(Instant::now());
@@ -3055,6 +3268,15 @@ impl App {
                 Some(SearchEntry::Playlist(p)) => self.open_tracks(TrackSource::Playlist(p)),
                 Some(SearchEntry::Header(_)) | None => {}
             },
+            View::Settings(v) => {
+                let setting = v.setting();
+                self.change_setting(setting, true);
+            }
+            View::Queue(v) => {
+                if let Some(row) = v.selected().cloned() {
+                    self.play_queue_row(row);
+                }
+            }
         }
     }
 
@@ -3229,7 +3451,7 @@ impl App {
             return;
         }
         if let Some(url) = cover_url {
-            self.loader.cover(url, COVER_SIZE);
+            self.load_cover(url);
         }
         // Lyrics and the like state load alongside the audio.
         self.after_track_change(before);

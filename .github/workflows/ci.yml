@@ -36,3 +36,11 @@ jobs:
       - name: Lint install.sh
         if: runner.os == 'Linux'
         run: shellcheck install.sh
+
+  packaging:
+    name: packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: shellcheck packaging/*.sh
+      - run: packaging/check.sh

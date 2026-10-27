@@ -52,20 +52,27 @@ const LIBRARY: Section = (
     &[
         ("f", "Like / save"),
         ("F", "Follow artist"),
-        ("q", "Add to queue"),
+        ("q  Q", "Add to queue / show queue"),
         ("a", "Add to playlist"),
         (".", "Actions menu"),
     ],
 );
 const GENERAL: Section = (
     "GENERAL",
-    &[("^K  :", "Command palette"), ("/", "Search"), ("?", "This help"), ("U", "Update cloofy"), ("^C  ^Q", "Quit")],
+    &[
+        ("^K  :", "Command palette"),
+        ("/", "Search"),
+        (",", "Settings"),
+        ("?", "This help"),
+        ("U", "Update cloofy"),
+        ("^C  ^Q", "Quit"),
+    ],
 );
 
 /// Everything in one column where the window is tall enough.
 const ONE_COLUMN: &[&[Section]] = &[&[NAVIGATION, PLAYBACK, LIBRARY, GENERAL]];
 /// Short windows get two columns side by side.
-const TWO_COLUMNS: &[&[Section]] = &[&[NAVIGATION, GENERAL], &[PLAYBACK, LIBRARY]];
+const TWO_COLUMNS: &[&[Section]] = &[&[NAVIGATION, LIBRARY], &[PLAYBACK, GENERAL]];
 const ONE_COLUMN_WIDTH: u16 = 58;
 const TWO_COLUMN_WIDTH: u16 = 100;
 /// Two columns narrower than this would cut most descriptions short.

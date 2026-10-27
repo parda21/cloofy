@@ -23,6 +23,57 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// What to run where cloofy can't replace itself.
 pub const INSTALLER: &str = "curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash";
 
+/// A package manager that installed cloofy. It owns the binary and updates it, so cloofy only
+/// says how.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageManager {
+    Homebrew,
+    /// The system's, such as pacman with cloofy-bin from the AUR.
+    System,
+    Nix,
+    /// mise, with `ubi:parda21/cloofy`; it keeps each version in a folder of its own.
+    Mise,
+}
+
+impl PackageManager {
+    /// The one that installed the running cloofy, if any.
+    pub fn of_running() -> Option<Self> {
+        // The real file, where a symlink such as Homebrew's in `bin` points to it.
+        Self::of(&std::env::current_exe().ok()?.canonicalize().ok()?)
+    }
+
+    /// The one that owns the binary at `path`, by where each puts its files.
+    fn of(path: &Path) -> Option<Self> {
+        if path.starts_with("/nix/store") {
+            Some(Self::Nix)
+        } else if path.components().any(|part| part.as_os_str() == "Cellar") {
+            Some(Self::Homebrew)
+        } else if path.starts_with("/usr/bin") {
+            Some(Self::System)
+        } else if path
+            .components()
+            .map(|part| part.as_os_str())
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| pair == ["mise", "installs"])
+        {
+            Some(Self::Mise)
+        } else {
+            None
+        }
+    }
+
+    /// How to update cloofy, as a sentence.
+    pub fn how_to_update(self) -> &'static str {
+        match self {
+            Self::Homebrew => "Update with brew upgrade cloofy",
+            Self::System => "Update with your package manager",
+            Self::Nix => "Update with Nix",
+            Self::Mise => "Update with mise upgrade",
+        }
+    }
+}
+
 /// A published release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
@@ -123,6 +174,9 @@ fn target() -> Option<&'static str> {
 /// in place of the running binary, which carries on until restarted. `progress` hears the bytes
 /// that arrived so far and the total, when known. Returns where the new binary is.
 pub async fn install(release: &Release, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
+    if let Some(manager) = PackageManager::of_running() {
+        bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update())
+    }
     let Some(target) = target() else {
         bail!("There is no prebuilt cloofy for this system; update with `cargo install` instead")
     };
@@ -242,6 +296,30 @@ mod tests {
         // A prerelease counts as its version; a tag that isn't one never wins.
         assert!(!newer("0.2.0-beta", "0.2.0"));
         assert!(!newer("nightly", "0.2.0"));
+    }
+
+    #[test]
+    fn knows_package_managers_by_where_the_binary_is() {
+        let of = |path: &str| PackageManager::of(Path::new(path));
+        assert_eq!(of("/opt/homebrew/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
+        assert_eq!(of("/usr/local/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
+        assert_eq!(of("/home/linuxbrew/.linuxbrew/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
+        assert_eq!(of("/usr/bin/cloofy"), Some(PackageManager::System));
+        assert_eq!(
+            of("/home/sam/.local/share/mise/installs/ubi-parda21-cloofy/0.3.0/cloofy"),
+            Some(PackageManager::Mise)
+        );
+        assert_eq!(of("/home/sam/.local/bin/cloofy"), None);
+        assert_eq!(
+            of("/nix/store/0ac6p7kvsyhwlnh7z7mfqmzjy3zcvqqg-cloofy-0.3.0/bin/cloofy"),
+            Some(PackageManager::Nix)
+        );
+        // Where the installer, cargo or a checkout put it, cloofy replaces itself.
+        assert_eq!(of("/home/me/.local/bin/cloofy"), None);
+        assert_eq!(of("/usr/local/bin/cloofy"), None);
+        assert_eq!(of("/home/me/.cargo/bin/cloofy"), None);
+        assert_eq!(of("/home/me/cloofy/target/release/cloofy"), None);
+        assert_eq!(of("/usr/bin-old/cloofy"), None);
     }
 
     #[test]

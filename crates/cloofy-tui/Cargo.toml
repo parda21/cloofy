@@ -17,6 +17,7 @@ base64.workspace = true
 crossterm.workspace = true
 fontdue.workspace = true
 futures.workspace = true
+icy_sixel.workspace = true
 image.workspace = true
 nucleo-matcher.workspace = true
 ratatui.workspace = true
@@ -32,3 +33,7 @@ unicode-width.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+toml_edit.workspace = true

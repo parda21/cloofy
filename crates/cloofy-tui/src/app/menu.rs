@@ -13,7 +13,8 @@ use crate::{
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
     playback::CurrentTrack,
-    views::{ArtistSelection, SearchEntry, TrackSource, View},
+    queue::Provider,
+    views::{ArtistSelection, QueueRow, SearchEntry, TrackSource, View},
 };
 
 impl App {
@@ -66,6 +67,17 @@ impl App {
             View::Artist(v) => match v.selected()? {
                 ArtistSelection::Track(t) => Some(track_target(&t.track, Some(v.uri.clone()))),
                 ArtistSelection::Item(item) => Some(self.home_target(item)),
+            },
+            View::Settings(_) => None,
+            View::Queue(v) => match v.selected()? {
+                QueueRow::Playing(_) => {
+                    let track = self.now.track.as_ref()?;
+                    Some(current_track_target(track, self.playing_context().map(str::to_owned)))
+                }
+                QueueRow::Next { track, entry } => {
+                    Some(ContextTarget { upcoming: Some(entry.clone()), ..track_target(track, self.queue_context()) })
+                }
+                QueueRow::Header(_) => None,
             },
         }
     }
@@ -141,6 +153,12 @@ impl App {
     }
 
     pub(super) fn run_menu(&mut self, action: MenuAction, target: ContextTarget) {
+        // A song of the queue page plays from where it is in the queue.
+        if action == MenuAction::Play
+            && let Some(entry) = target.upcoming
+        {
+            return self.skip_to_entry(entry);
+        }
         match action {
             MenuAction::Open => self.open_target(target),
             MenuAction::Play => match target.kind {
@@ -155,6 +173,11 @@ impl App {
             },
             MenuAction::Shuffle => self.play_shuffled(target.uri),
             MenuAction::Queue => self.queue(target.uri, target.name),
+            MenuAction::RemoveFromQueue => {
+                if let Some(entry) = target.upcoming {
+                    self.remove_from_queue(target.name, entry);
+                }
+            }
             MenuAction::Save => self.toggle_library(target.uri, target.name),
             MenuAction::AddToPlaylist => self.open_playlist_picker_for(target.uri),
             MenuAction::GoToAlbum => {
@@ -284,6 +307,7 @@ fn target(uri: &str, name: &str, kind: TargetKind, image_url: Option<String>) ->
         image_url,
         owned: false,
         liked_songs: false,
+        upcoming: None,
     }
 }
 
@@ -331,6 +355,9 @@ fn menu_items(target: &ContextTarget, saved: bool) -> Vec<(MenuAction, String)> 
         TargetKind::Track => {
             add(MenuAction::Play, i.play, "Play");
             add(MenuAction::Queue, i.queue, "Add to queue");
+            if target.upcoming.as_ref().is_some_and(|entry| entry.provider == Provider::Queue) {
+                add(MenuAction::RemoveFromQueue, i.remove, "Remove from queue");
+            }
             if saved {
                 add(MenuAction::Save, i.saved, "Remove from your Liked Songs");
             } else {
@@ -414,5 +441,28 @@ mod tests {
         assert!(actions.contains(&MenuAction::GoToArtist) && actions.contains(&MenuAction::GoToAlbum));
         let labels = menu_items(&track_target(&track, None), true);
         assert!(labels.iter().any(|(_, l)| l.contains("Remove")));
+        assert!(!actions.contains(&MenuAction::RemoveFromQueue));
+    }
+
+    #[test]
+    fn only_queued_songs_can_be_removed_from_the_queue() {
+        use crate::queue::Upcoming;
+        let track = Track {
+            uri: "spotify:track:1".into(),
+            name: "Digital Love".into(),
+            artists: Vec::new(),
+            artist_uris: Vec::new(),
+            album: String::new(),
+            album_uri: String::new(),
+            duration_ms: 1,
+            image_url: None,
+        };
+        let actions = |provider| {
+            let entry = Upcoming { uri: track.uri.clone(), uid: "q0".into(), provider };
+            let target = ContextTarget { upcoming: Some(entry), ..track_target(&track, None) };
+            menu_items(&target, false).into_iter().map(|(action, _)| action).collect::<Vec<_>>()
+        };
+        assert!(actions(Provider::Queue).contains(&MenuAction::RemoveFromQueue));
+        assert!(!actions(Provider::Context).contains(&MenuAction::RemoveFromQueue));
     }
 }

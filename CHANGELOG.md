@@ -4,6 +4,25 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
+Settings move into the app, the queue shows what plays next, and cloofy feels at home on Linux.
+
+### Added
+
+- **Settings.** `,`, the command palette or a click on your name in the top bar opens a Settings page: crossfade, cover art and how covers are drawn, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and are saved to `config.toml`, so nobody has to edit it by hand.
+- **Queue.** See what plays next, as in Spotify's apps: the song playing now, the songs you queued under "Next in queue" and the rest of the playlist or album under "Next from". `Q`, the queue button next to the volume or the command palette opens it. It keeps up as songs change and as you add songs with `q`, on cloofy and on the device it controls. Enter or a double click skips ahead to a song, and Delete or its menu takes a song you queued out again.
+- **Cover art off.** For slower computers: without cover art, cloofy loads and draws no covers at all. Pages show plain tiles in their place, and Now Playing gives the lyrics the whole screen.
+- **Power saving, your way.** Power saving can stay on or off for good; Auto follows the system as before.
+- **Accent color.** The accent can stay one color instead of following the cover.
+- **At home on Linux.** Media keys, playerctl and the media controls of GNOME, KDE and Waybar play, pause, skip and seek, and show the track with its cover, in `cloofy play` and `cloofy connect` too. cloofy pauses before the computer sleeps and reconnects as soon as it wakes. With animations turned off in the desktop's settings, slides become fades, lyrics jump to the current line and the equalizer stands still. In Power Saver mode animations stop and cloofy wakes the computer less often.
+- **Covers in more terminals.** Covers are real images in iTerm2, foot, Windows Terminal, Konsole, VS Code, xterm and other terminals that show Sixel or iTerm2 images, no longer only in kitty, Ghostty and WezTerm. They scroll in and out of view row by row, stay whole under menus, the command palette and the DJ panel, and reach the terminal once instead of with every frame. Inside tmux they stay blocks unless the terminal around it is kitty or Ghostty.
+- **Package managers.** Install cloofy with `brew install parda21/cloofy/cloofy` on macOS and Linux, with `mise use -g ubi:parda21/cloofy`, or on Arch Linux with `makepkg` from the PKGBUILD that comes with each release. Installed this way, cloofy still tells you about new releases, and leaves installing them to the package manager.
+
+### Changed
+
+- Crossfade (`X`) is saved with the other settings in `config.toml`. The length chosen last moves there by itself.
+
 ## [0.3.0] - 2026-10-16
 
 The DJ takes requests, and cloofy updates itself.
@@ -65,7 +84,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/parda21/cloofy/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/parda21/cloofy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/parda21/cloofy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/parda21/cloofy/releases/tag/v0.1.0

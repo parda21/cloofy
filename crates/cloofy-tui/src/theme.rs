@@ -12,7 +12,7 @@ pub const MUTED: Color = Color::Rgb(140, 140, 152);
 pub const FAINT: Color = Color::Rgb(78, 78, 88);
 pub const DANGER: Color = Color::Rgb(255, 99, 99);
 
-const DEFAULT_ACCENT: Rgb = Rgb(30, 215, 96);
+pub(crate) const DEFAULT_ACCENT: Rgb = Rgb(30, 215, 96);
 const ACCENT_FADE: Duration = Duration::from_millis(600);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

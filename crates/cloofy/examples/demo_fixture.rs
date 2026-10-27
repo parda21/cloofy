@@ -60,6 +60,8 @@ struct PlanPlaying {
     track: String,
     context: String,
     position_ms: u32,
+    /// Songs in the queue, before the rest of the context.
+    queued: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -238,6 +240,7 @@ async fn main() -> Result<()> {
 
     println!("Now playing");
     let track = builder.track(&plan.playing.track).await?;
+    let queued = builder.tracks(&plan.playing.queued).await?;
     let context = every_playlist.get(&plan.playing.context).map(|p| p.uri.clone());
     let cover_url_large = track.image_url.as_ref().map(|url| url.replace(SMALL, LARGE));
     let mut lyrics: HashMap<String, Lyrics> = HashMap::new();
@@ -350,7 +353,7 @@ async fn main() -> Result<()> {
         artist_pages,
         searches,
         lyrics,
-        playing: Playing { track, cover_url_large, context, position_ms: plan.playing.position_ms },
+        playing: Playing { track, cover_url_large, context, position_ms: plan.playing.position_ms, queued },
     };
     let out = dir.join("sample.json");
     std::fs::write(&out, serde_json::to_vec(&demo)?)?;

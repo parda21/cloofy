@@ -73,3 +73,31 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" dist/* --verify-tag --title "cloofy $version" --notes-file notes.md
+
+  packages:
+    name: Homebrew and AUR
+    needs: publish
+    # Package managers get releases, not previews such as v0.4.0-beta.
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Fill in the formula and PKGBUILDs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release download "$TAG" --pattern '*.sha256' --dir checksums
+          packaging/render.sh "${TAG#v}" checksums packages
+      # Until cloofy is in the AUR: `curl -LO …/releases/latest/download/PKGBUILD && makepkg -si`.
+      - name: Attach the PKGBUILD to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" packages/aur/cloofy-bin/PKGBUILD --clobber
+      # Each skips with a notice until its secret is set, see packaging/README.md.
+      - name: Push them to the tap and the AUR
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: packaging/publish.sh packages

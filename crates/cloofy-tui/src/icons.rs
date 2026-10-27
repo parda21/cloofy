@@ -4,7 +4,7 @@
 //! cell, which looks off. Nerd Font glyphs are made for terminal cells, and Ghostty, kitty and
 //! WezTerm bundle them.
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct Icons {
     pub home: &'static str,
@@ -29,6 +29,8 @@ pub struct Icons {
     pub podcast: &'static str,
     pub audiobook: &'static str,
     pub queue: &'static str,
+    /// Take out of the queue.
+    pub remove: &'static str,
     pub open: &'static str,
     pub link: &'static str,
     pub more: &'static str,
@@ -72,6 +74,7 @@ const NERD: Icons = Icons {
     podcast: "\u{F0994}",
     audiobook: "\u{F14F7}",
     queue: "\u{F0411}",
+    remove: "\u{F0377}",
     open: "\u{F03CC}",
     link: "\u{F0339}",
     more: "\u{F01D8}",
@@ -110,6 +113,7 @@ const TEXT: Icons = Icons {
     podcast: "◎",
     audiobook: "❡",
     queue: "≡",
+    remove: "−",
     open: "↗",
     link: "⧉",
     more: "···",
@@ -127,20 +131,21 @@ const TEXT: Icons = Icons {
     restart: "↻",
 };
 
-static ICONS: OnceLock<&'static Icons> = OnceLock::new();
+static NERD_ICONS: AtomicBool = AtomicBool::new(false);
 
-/// Picks the icon set: `"nerd"` or `"text"` from the config, else by terminal.
+/// Picks the icon set: `"nerd"` or `"text"` from the settings, else by terminal. Called again
+/// when the setting changes; the next frame draws with the new set.
 pub fn init(setting: Option<&str>) {
     let nerd = match setting {
         Some("nerd") => true,
         Some("text") => false,
         _ => terminal_bundles_nerd_font(),
     };
-    let _ = ICONS.set(if nerd { &NERD } else { &TEXT });
+    NERD_ICONS.store(nerd, Ordering::Relaxed);
 }
 
 pub fn icons() -> &'static Icons {
-    ICONS.get().copied().unwrap_or(&TEXT)
+    if NERD_ICONS.load(Ordering::Relaxed) { &NERD } else { &TEXT }
 }
 
 fn terminal_bundles_nerd_font() -> bool {

@@ -5,7 +5,7 @@ members = ["crates/*"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -32,6 +32,8 @@ flate2 = "1"
 fontdue = "0.9"
 futures = "0.3"
 iana-time-zone = "0.1"
+# Sixel images; ratatui-image encodes with it too.
+icy_sixel = "0.5"
 # Covers come as JPEG, some as WebP; PNG is for F12 snapshots. The default formats would
 # also link an AV1 encoder, EXR and TIFF, which cloofy never decodes.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -47,6 +49,7 @@ objc2-io-kit = { version = "0.3", default-features = false, features = ["std"] }
 objc2-media-player = { version = "0.3", default-features = false, features = ["std"] }
 open = "5"
 protobuf = "3"
+protobuf-json-mapping = "3"
 rand = "0.10"
 ratatui = "0.30"
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
@@ -62,10 +65,14 @@ tar = { version = "0.4", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "1"
+toml_edit = "0.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 url = "2"
+# D-Bus on Linux in pure Rust, driven by tokio rather than a runtime of its own. zbus 6 needs
+# a newer Rust than cloofy's rust-version.
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 # vendor/ holds forks as git submodules, both on branch `cloofy`:
 # - librespot (github.com/parda21/librespot) with two open upstream PRs merged, DJ with

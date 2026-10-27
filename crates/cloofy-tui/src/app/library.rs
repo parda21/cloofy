@@ -14,7 +14,8 @@ use cloofy_spotify::{
 use super::{App, NavItem};
 use crate::{
     overlay::{Overlay, PaletteAction},
-    views::{SearchEntry, TrackSource, View},
+    playback::CurrentTrack,
+    views::{QueueRow, SearchEntry, TrackSource, View},
 };
 
 /// Confirmed changes are followed by a reload of their list, once things have been quiet for
@@ -273,7 +274,7 @@ impl App {
                     return library_item(item, None);
                 }
             }
-            View::Library(_) => {}
+            View::Library(_) | View::Settings(_) | View::Queue(_) => {}
         }
         let item = self.home_cache.iter().flat_map(|h| &h.shelves).flat_map(|s| &s.items).find(|i| i.uri == uri)?;
         library_item(item, None)
@@ -290,21 +291,10 @@ impl App {
             View::Artist(v) => {
                 v.page.iter().flat_map(|p| &p.top_tracks).find(|t| t.track.uri == uri).map(|t| t.track.clone())
             }
-            View::Home(_) | View::Library(_) => None,
+            View::Queue(v) => v.rows.iter().filter_map(QueueRow::track).find(|t| t.uri == uri).cloned(),
+            View::Home(_) | View::Library(_) | View::Settings(_) => None,
         };
-        listed.or_else(|| {
-            let t = self.now.track.as_ref().filter(|t| t.uri == uri)?;
-            Some(Track {
-                uri: t.uri.clone(),
-                name: t.name.clone(),
-                artists: t.artists.clone(),
-                artist_uris: t.artist_uris.clone(),
-                album: t.album.clone(),
-                album_uri: t.album_uri.clone().unwrap_or_default(),
-                duration_ms: t.duration_ms,
-                image_url: t.cover_url.clone(),
-            })
-        })
+        listed.or_else(|| self.now.track.as_ref().filter(|t| t.uri == uri).map(CurrentTrack::to_track))
     }
 
     /// Loads the list a confirmed change touched again, as Spotify's final word on it.

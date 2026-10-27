@@ -7,6 +7,7 @@ mod library;
 mod menu;
 mod picker;
 mod player_bar;
+mod settings;
 mod sidebar;
 mod text;
 mod topbar;
@@ -18,20 +19,21 @@ use std::time::Instant;
 use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
-    buffer::{Buffer, Cell},
+    buffer::{Buffer, Cell, CellDiffOption},
     layout::{Constraint, Layout, Rect, Size},
     style::{Color, Modifier, Style},
 };
-use ratatui_image::{Image, protocol::Protocol};
+use ratatui_image::Image;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{App, Focus, Hit},
+    graphics::INLINE_CELL,
     icons::icons,
-    loader::Picture,
+    loader::{Graphic, Picture},
     overlay::Overlay,
     snapshot::Placement,
-    theme::{BG, TEXT},
+    theme::{BG, FAINT, RAISED, TEXT},
     views::View,
 };
 
@@ -104,6 +106,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();
     app.effects.process_effects(elapsed.into(), frame.buffer_mut(), area);
+    app.inline.prepare(frame.buffer_mut(), &app.placements);
     app.end_frame();
 }
 
@@ -112,11 +115,13 @@ fn draw_content(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         View::Home(_) => home::draw(frame, app, area),
         View::Library(_) => library::draw(frame, app, area),
         View::Artist(_) => artist::draw(frame, app, area),
+        View::Settings(_) => settings::draw(frame, app, area),
         _ => content::draw(frame, app, area),
     }
 }
 
-/// Draws a cover centered in `slot`, or nothing while it loads. Returns whether it drew.
+/// Draws a cover centered in `slot`, or nothing while it loads. Returns whether it drew. With
+/// cover art off, a plain tile takes its place.
 pub(super) fn cover(frame: &mut Frame, app: &mut App, url: Option<&str>, size: Size, round: bool, slot: Rect) -> bool {
     cover_in(frame, app, url, size, round, (slot.x, slot.y as i32), slot.as_size(), slot)
 }
@@ -134,6 +139,11 @@ pub(super) fn cover_in(
     slot: Size,
     clip: Rect,
 ) -> bool {
+    if !app.prefs.covers {
+        let size = Size::new(size.width.min(slot.width), size.height.min(slot.height));
+        tile(frame.buffer_mut(), (x, y), size, slot, clip, round);
+        return true;
+    }
     let placed = app.cover(url, size, round).and_then(|picture| picture_in(frame, picture, (x, y), slot, clip));
     match placed {
         Some(placement) => {
@@ -144,50 +154,92 @@ pub(super) fn cover_in(
     }
 }
 
+/// Stands in for a cover with cover art off: one flat color and an icon, which costs nothing to
+/// load or to send to the terminal.
+fn tile(buf: &mut Buffer, (x, y): (u16, i32), size: Size, slot: Size, clip: Rect, round: bool) {
+    let left = x + slot.width.saturating_sub(size.width) / 2;
+    let top = y + (slot.height.saturating_sub(size.height) / 2) as i32;
+    let visible_top = top.max(clip.y as i32);
+    let visible_bottom = (top + size.height as i32).min(clip.bottom() as i32);
+    if visible_top >= visible_bottom {
+        return;
+    }
+    let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
+    let area = area.intersection(buf.area);
+    buf.set_style(area, Style::new().bg(RAISED));
+    let icon = if round { icons().artist } else { icons().note };
+    let middle = top + (size.height / 2) as i32;
+    if area.width >= 2 && (visible_top..visible_bottom).contains(&middle) {
+        buf.set_string(left + (size.width - 1) / 2, middle as u16, icon, Style::new().fg(FAINT));
+    }
+}
+
 /// Draws an image centered in `slot`; returns where it went, for dev snapshots.
 pub(super) fn picture_at(frame: &mut Frame, picture: &Picture, slot: Rect) -> Option<Placement> {
     picture_in(frame, picture, (slot.x, slot.y as i32), slot.as_size(), slot)
 }
 
 /// Draws the part of an image centered in a slot at `(x, y)` that lies inside `clip`.
-/// Returns `None` when nothing was drawn: fully clipped, or a protocol that cannot be cut.
-fn picture_in(frame: &mut Frame, picture: &Picture, (x, y): (u16, i32), slot: Size, clip: Rect) -> Option<Placement> {
-    let size = picture.protocol.size();
+/// Returns `None` when nothing was drawn.
+pub(super) fn picture_in(
+    frame: &mut Frame,
+    picture: &Picture,
+    (x, y): (u16, i32),
+    slot: Size,
+    clip: Rect,
+) -> Option<Placement> {
+    let size = picture.size();
     let size = Size::new(size.width.min(slot.width), size.height.min(slot.height));
     let left = x + slot.width.saturating_sub(size.width) / 2;
     let top = y + (slot.height.saturating_sub(size.height) / 2) as i32;
+    let mut bottom = clip.bottom();
+    if let Graphic::Inline(_) = picture.graphic {
+        // Some terminals put the cursor below a Sixel or iTerm2 image, which in the last row
+        // scrolls the whole screen.
+        bottom = bottom.min(frame.area().bottom().saturating_sub(1));
+    }
     let visible_top = top.max(clip.y as i32);
-    let visible_bottom = (top + size.height as i32).min(clip.bottom() as i32);
+    let visible_bottom = (top + size.height as i32).min(bottom as i32);
     if visible_top >= visible_bottom || left + size.width > frame.area().right() {
         return None;
     }
     let skip = (visible_top - top) as u16;
     let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
-    let upload = if area.height == size.height {
-        frame.render_widget(Image::new(&picture.protocol), area);
-        take_upload(&mut frame.buffer_mut()[(area.x, area.y)])
-    } else {
-        // Kitty placeholders and half blocks are plain cells, so rows can be cut; Sixel and
-        // iTerm2 images are a single escape sequence and cannot.
-        if !matches!(picture.protocol, Protocol::Kitty(_) | Protocol::Halfblocks(_)) {
-            return None;
-        }
-        let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
-        Image::new(&picture.protocol).render(scratch.area, &mut scratch);
-        let upload = take_upload(&mut scratch[(0, 0)]);
-        let buf = frame.buffer_mut();
-        for row in 0..area.height {
-            for column in 0..area.width {
-                buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
+    let (upload, inline) = match &picture.graphic {
+        // Written after the frame, cut to the rows in view; the cells only mark where it goes.
+        Graphic::Inline(image) => {
+            let buf = frame.buffer_mut();
+            for position in area.positions() {
+                let cell = &mut buf[position];
+                let bg = cell.bg;
+                cell.reset();
+                cell.set_symbol(INLINE_CELL).set_bg(bg).set_diff_option(CellDiffOption::Skip);
             }
+            (None, Some(image.clone()))
         }
-        upload
+        Graphic::Cells(protocol) if area.height == size.height => {
+            frame.render_widget(Image::new(protocol), area);
+            (take_upload(&mut frame.buffer_mut()[(area.x, area.y)]), None)
+        }
+        // Kitty placeholders and half blocks are plain cells, so rows can be cut.
+        Graphic::Cells(protocol) => {
+            let mut scratch = Buffer::empty(Rect::new(0, 0, size.width, size.height));
+            Image::new(protocol).render(scratch.area, &mut scratch);
+            let upload = take_upload(&mut scratch[(0, 0)]);
+            let buf = frame.buffer_mut();
+            for row in 0..area.height {
+                for column in 0..area.width {
+                    buf[(area.x + column, area.y + row)] = scratch[(column, skip + row)].clone();
+                }
+            }
+            (upload, None)
+        }
     };
     let cells = match picture.source {
         Some(_) => area.rows().flat_map(|row| row.columns()).map(|p| frame.buffer_mut()[p].clone()).collect(),
         None => Vec::new(),
     };
-    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload })
+    Some(Placement { area, size, skip, source: picture.source.clone(), cells, upload, inline })
 }
 
 /// The first time a Kitty image is drawn, the upload of its pixels rides on its top-left cell.

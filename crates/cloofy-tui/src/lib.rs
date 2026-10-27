@@ -3,12 +3,15 @@ mod art;
 mod commands;
 mod datacache;
 pub mod demo;
+mod graphics;
 mod icons;
 mod loader;
 mod media;
 mod notify;
 mod overlay;
 mod playback;
+mod preferences;
+mod queue;
 mod snapshot;
 mod state;
 mod theme;
@@ -35,15 +38,17 @@ use crossterm::{
 };
 use futures::{FutureExt, StreamExt};
 use ratatui::{Terminal, backend::CrosstermBackend, buffer::Buffer};
-use ratatui_image::picker::Picker;
 use tokio::{
     sync::{mpsc, watch},
     time::MissedTickBehavior,
 };
 
+pub use crate::graphics::ImageProtocol;
 use crate::{
     app::{App, AppEvent},
+    graphics::ImageTerminal,
     loader::{DataEvent, Loader, SessionState},
+    preferences::Preferences,
 };
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
@@ -93,7 +98,7 @@ async fn run_ui(
     let _ = ratatui::init();
     let mut terminal = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(64 * 1024, std::io::stdout())))?;
     // Must run after entering the alternate screen and before reading input events.
-    let picker = image_picker();
+    let images = ImageTerminal::detect();
     // Focus changes tell whether notifications are worth showing.
     crossterm::execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)?;
     // ratatui's panic hook restores the screen but not mouse and focus reporting, which would
@@ -103,11 +108,12 @@ async fn run_ui(
         let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
         restore(info);
     }));
-    let crossfade = config.crossfade.unwrap_or(0).min(12);
-    let notifier =
-        if config.notifications == Some(false) || demo.is_some() { None } else { notify::Notifier::detect() };
-    let update_check = config.update_check != Some(false) && demo.is_none();
-    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier, update_check, demo).await;
+    let prefs = Preferences::from_config(&config);
+    // `CLOOFY_IMAGES` wins over the setting, for tests.
+    let image_protocol = ImageProtocol::from_env().unwrap_or(prefs.images);
+    // Detected even with notifications off, so turning them on in Settings works at once.
+    let notifier = if demo.is_some() { None } else { notify::Notifier::detect() };
+    let result = run_app(&mut terminal, paths, api, images, image_protocol, prefs, notifier, demo).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
@@ -118,10 +124,10 @@ async fn run_app(
     terminal: &mut Term,
     paths: &Paths,
     api: Arc<WebApi>,
-    picker: Picker,
-    crossfade: u64,
+    images: ImageTerminal,
+    image_protocol: ImageProtocol,
+    prefs: Preferences,
     notifier: Option<notify::Notifier>,
-    update_check: bool,
     demo: Option<Arc<demo::Demo>>,
 ) -> Result<Option<PathBuf>> {
     let (tx, mut events) = mpsc::unbounded_channel();
@@ -131,12 +137,13 @@ async fn run_app(
         api,
         tx.clone(),
         session_rx,
-        picker,
+        images,
         paths.pathfinder_hashes(),
         paths.cache.join("images"),
         snapshotter.is_some(),
     )
     .with_demo(demo.clone());
+    loader.set_image_protocol(image_protocol);
     loader.prune_image_cache();
     let notices = tx.clone();
     // The demo leaves the system alone: no media keys, no player, no saved session.
@@ -163,15 +170,16 @@ async fn run_app(
         }
     });
     let start = match &demo {
-        Some(demo) => app::Start::Demo(&demo.playing),
+        Some(demo) => app::Start::Demo(demo),
         None => {
             let saved = state::load(&paths.state_file());
             let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
-            playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, retry_now, tx.clone());
+            playback::spawn(paths.clone(), Duration::from_secs(prefs.crossfade), volume, retry_now, tx.clone());
             app::Start::Restore(Box::new(saved))
         }
     };
-    let mut app = App::new(loader, session_tx, crossfade, start, paths.clone(), media, notifier);
+    let update_check = prefs.update_check && demo.is_none();
+    let mut app = App::new(loader, session_tx, prefs, start, paths.clone(), media, notifier);
     if update_check {
         app.check_for_update(false);
     }
@@ -269,6 +277,8 @@ fn draw(terminal: &mut Term, app: &mut App, snapshot: bool) -> Result<Option<Buf
             terminal.backend_mut().write_all(upload.as_bytes())?;
         }
     }
+    // Sixel and iTerm2 images go on top of the text, once each where they show up anew.
+    app.inline.write(terminal.backend_mut())?;
     crossterm::execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
     Ok(buffer)
 }
@@ -353,20 +363,4 @@ pub(crate) fn release_freed_memory() {
     unsafe {
         libc::malloc_trim(0);
     }
-}
-
-/// Asks the terminal how it shows images. `CLOOFY_IMAGES=kitty` forces the Kitty protocol, for
-/// measuring it where the terminal cannot answer (tmux in tests).
-fn image_picker() -> Picker {
-    if std::env::var("CLOOFY_IMAGES").as_deref() == Ok("kitty") {
-        // Deprecated because a guessed font size draws images at the wrong size; fine here.
-        #[allow(deprecated)]
-        let mut picker = Picker::from_fontsize(ratatui_image::FontSize { width: 10, height: 22 });
-        picker.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
-        return picker;
-    }
-    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
-    let font = picker.font_size();
-    tracing::info!("images: {:?}, cells of {}x{} px", picker.protocol_type(), font.width, font.height);
-    picker
 }

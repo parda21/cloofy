@@ -17,6 +17,8 @@ pub enum Command {
     Repeat,
     Search,
     NowPlaying,
+    /// The queue page: what plays next.
+    ShowQueue,
     Like,
     Queue,
     AddToPlaylist,
@@ -26,19 +28,21 @@ pub enum Command {
     Menu,
     Palette,
     Help,
+    Settings,
     Update,
     Quit,
 }
 
 impl Command {
     /// Commands offered in the palette, in display order.
-    pub const PALETTE: [Command; 23] = [
+    pub const PALETTE: [Command; 25] = [
         Command::Home,
         Command::Library,
         Command::PlayPause,
         Command::Next,
         Command::Previous,
         Command::NowPlaying,
+        Command::ShowQueue,
         Command::Like,
         Command::Queue,
         Command::AddToPlaylist,
@@ -54,6 +58,7 @@ impl Command {
         Command::SeekForward,
         Command::SeekBack,
         Command::Help,
+        Command::Settings,
         Command::Update,
         Command::Quit,
     ];
@@ -73,6 +78,7 @@ impl Command {
             Command::Repeat => "Toggle repeat",
             Command::Search => "Search",
             Command::NowPlaying => "Now playing & lyrics",
+            Command::ShowQueue => "Queue",
             Command::Like => "Like / save",
             Command::Queue => "Add to queue",
             Command::AddToPlaylist => "Add to playlist…",
@@ -82,6 +88,7 @@ impl Command {
             Command::Menu => "Actions for selection…",
             Command::Palette => "Command palette",
             Command::Help => "Keyboard shortcuts",
+            Command::Settings => "Settings",
             Command::Update => "Check for updates",
             Command::Quit => "Quit cloofy",
         }
@@ -102,6 +109,7 @@ impl Command {
             Command::Repeat => "r",
             Command::Search => "/",
             Command::NowPlaying => "z",
+            Command::ShowQueue => "Q",
             Command::Like => "f",
             Command::Queue => "q",
             Command::AddToPlaylist => "a",
@@ -111,6 +119,7 @@ impl Command {
             Command::Menu => ".",
             Command::Palette => "^K",
             Command::Help => "?",
+            Command::Settings => ",",
             Command::Update => "U",
             Command::Quit => "^C",
         }
@@ -126,6 +135,7 @@ impl Command {
             _ if ctrl => return None,
             KeyCode::Char(':') => Command::Palette,
             KeyCode::Char('?') => Command::Help,
+            KeyCode::Char(',') => Command::Settings,
             KeyCode::Char('/' | '2') => Command::Search,
             KeyCode::Char('1') => Command::Home,
             KeyCode::Char('3') => Command::Library,
@@ -139,6 +149,7 @@ impl Command {
             KeyCode::Char('z') => Command::NowPlaying,
             KeyCode::Char('f') => Command::Like,
             KeyCode::Char('q') => Command::Queue,
+            KeyCode::Char('Q') => Command::ShowQueue,
             KeyCode::Char('a') => Command::AddToPlaylist,
             KeyCode::Char('d') => Command::Devices,
             KeyCode::Char('D') => Command::Dj,

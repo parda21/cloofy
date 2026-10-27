@@ -256,6 +256,14 @@ pub async fn queue(api: &WebApi, uri: &str) -> Result<()> {
     api.call(Method::POST, &format!("/me/player/queue?uri={}", encode(uri)), None).await
 }
 
+/// What plays next on the active device, queued songs first. Unlike Spotify's player state,
+/// the list doesn't say which songs were queued. Episodes are left out.
+pub async fn upcoming(api: &WebApi) -> Result<Vec<Track>> {
+    let raw: RawQueue = api.get_json("/me/player/queue").await?;
+    let tracks = raw.queue.into_iter().filter_map(|item| serde_json::from_value::<RawTrack>(item).ok());
+    Ok(tracks.filter(|t| t.uri.starts_with("spotify:track:")).map(Track::from).collect())
+}
+
 pub async fn add_to_playlist(api: &WebApi, playlist_id: &str, uris: &[String]) -> Result<()> {
     let body = json!({ "uris": uris });
     api.call(Method::POST, &format!("/playlists/{playlist_id}/items"), Some(&body)).await
@@ -428,6 +436,12 @@ struct RawSavedTrack {
 #[derive(Deserialize)]
 struct RawPlaylistItem {
     item: Option<RawTrack>,
+}
+
+#[derive(Deserialize)]
+struct RawQueue {
+    #[serde(default)]
+    queue: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]

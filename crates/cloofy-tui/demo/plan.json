@@ -238,7 +238,8 @@
   "playing": {
     "track": "Daft Punk Around the World",
     "context": "Late Night Coding",
-    "position_ms": 81000
+    "position_ms": 81000,
+    "queued": ["Daft Punk Digital Love", "Radiohead Weird Fishes/Arpeggi", "Floating Points Ratio"]
   },
   "home": {
     "greeting": "Good evening",
