@@ -176,8 +176,13 @@ pub enum DataEvent {
         name: String,
         result: Result<(), String>,
     },
-    /// Details of tracks in the queue; tracks Spotify has none for are left out.
-    QueueTracks(Vec<Track>),
+    /// Details of tracks in the queue, for the URIs in `asked`; tracks Spotify has none for are
+    /// left out. With `reached` false no request got to Spotify, so they can be asked for again.
+    QueueTracks {
+        asked: Vec<String>,
+        tracks: Vec<Track>,
+        reached: bool,
+    },
     /// The Web API's list of what plays after `playing`.
     Upcoming {
         playing: String,
@@ -892,13 +897,23 @@ impl Loader {
     pub fn queue_tracks(&self, uris: Vec<String>) {
         if let Some(demo) = self.demo() {
             let tracks = uris.iter().filter_map(|uri| demo.track(uri)).cloned().collect();
-            return self.send(DataEvent::QueueTracks(tracks));
+            return self.send(DataEvent::QueueTracks { asked: uris, tracks, reached: true });
         }
         self.spawn(move |this| async move {
-            let Ok(session) = this.session().await else { return };
-            let uris: Vec<SpotifyUri> = uris.iter().filter_map(|uri| SpotifyUri::from_uri(uri).ok()).collect();
-            for batch in uris.chunks(catalog::METADATA_BATCH) {
-                this.send(DataEvent::QueueTracks(catalog::tracks_metadata(&session, batch).await));
+            let Ok(session) = this.session().await else {
+                return this.send(DataEvent::QueueTracks { asked: uris, tracks: Vec::new(), reached: false });
+            };
+            let (parsed, unknown): (Vec<_>, Vec<_>) =
+                uris.into_iter().map(|uri| (SpotifyUri::from_uri(&uri).ok(), uri)).partition(|(id, _)| id.is_some());
+            if !unknown.is_empty() {
+                let asked = unknown.into_iter().map(|(_, uri)| uri).collect();
+                this.send(DataEvent::QueueTracks { asked, tracks: Vec::new(), reached: true });
+            }
+            for batch in parsed.chunks(catalog::METADATA_BATCH) {
+                let ids: Vec<SpotifyUri> = batch.iter().filter_map(|(id, _)| id.clone()).collect();
+                let tracks = catalog::tracks_metadata(&session, &ids).await;
+                let asked = batch.iter().map(|(_, uri)| uri.clone()).collect();
+                this.send(DataEvent::QueueTracks { asked, tracks, reached: true });
             }
         });
     }

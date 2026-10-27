@@ -38,6 +38,7 @@ impl App {
         self.queue_reshuffled = false;
         let listed: HashSet<&str> = self.queue.next.iter().map(|t| t.uri.as_str()).collect();
         self.queue_tracks.retain(|uri, _| listed.contains(uri.as_str()));
+        self.queue_tracks_missing.retain(|uri| listed.contains(uri.as_str()));
         self.check_queue();
     }
 
@@ -117,10 +118,21 @@ impl App {
     }
 
     /// Takes in details of tracks in the queue.
-    pub(super) fn on_queue_tracks(&mut self, tracks: Vec<Track>) {
+    pub(super) fn on_queue_tracks(&mut self, asked: Vec<String>, tracks: Vec<Track>, reached: bool) {
+        let found: HashSet<String> = tracks.iter().map(|t| t.uri.clone()).collect();
         for track in tracks {
             if let Some(slot) = self.queue_tracks.get_mut(&track.uri) {
                 *slot = Some(track);
+            }
+        }
+        // Unanswered tracks stop loading: ones Spotify has nothing for stay off the page, the
+        // rest are asked for again with the next report of what plays next.
+        for uri in asked.into_iter().filter(|uri| !found.contains(uri)) {
+            if matches!(self.queue_tracks.get(&uri), Some(None)) {
+                self.queue_tracks.remove(&uri);
+                if reached {
+                    self.queue_tracks_missing.insert(uri);
+                }
             }
         }
         self.refresh_queue_view();
@@ -131,7 +143,7 @@ impl App {
     fn load_queue_tracks(&mut self) {
         let (mut missing, mut unchecked) = (Vec::new(), Vec::new());
         for entry in &self.queue.next {
-            if self.queue_tracks.contains_key(&entry.uri) {
+            if self.queue_tracks.contains_key(&entry.uri) || self.queue_tracks_missing.contains(&entry.uri) {
                 continue;
             }
             let known = self.listed_tracks().find(|t| t.uri == entry.uri).cloned();

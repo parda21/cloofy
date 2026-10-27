@@ -53,29 +53,45 @@ commit_and_push() {
 	echo "${dir##*/}: pushed $message"
 }
 
-if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
-	notice "Homebrew" "HOMEBREW_TAP_TOKEN is not set, so $tap stays as it is"
-else
-	git clone -q "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/$tap.git" "$tmp/homebrew-cloofy"
-	mkdir -p "$tmp/homebrew-cloofy/Formula"
-	cp "$packages/homebrew/cloofy.rb" "$tmp/homebrew-cloofy/Formula/cloofy.rb"
-	# The tap's default branch, also while the tap is still empty.
-	commit_and_push "$tmp/homebrew-cloofy" "cloofy $version" "$(git -C "$tmp/homebrew-cloofy" symbolic-ref --short HEAD)"
-fi
+publish_homebrew() {
+	if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+		notice "Homebrew" "HOMEBREW_TAP_TOKEN is not set, so $tap stays as it is"
+	else
+		git clone -q "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/$tap.git" "$tmp/homebrew-cloofy"
+		mkdir -p "$tmp/homebrew-cloofy/Formula"
+		cp "$packages/homebrew/cloofy.rb" "$tmp/homebrew-cloofy/Formula/cloofy.rb"
+		# The tap's default branch, also while the tap is still empty.
+		commit_and_push "$tmp/homebrew-cloofy" "cloofy $version" "$(git -C "$tmp/homebrew-cloofy" symbolic-ref --short HEAD)"
+	fi
+}
 
-if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
-	notice "AUR" "AUR_SSH_PRIVATE_KEY is not set, so ${aur_packages[*]} stay as they are on the AUR"
-else
-	mkdir -m 700 "$tmp/ssh"
-	printf '%s\n' "$AUR_SSH_PRIVATE_KEY" >"$tmp/ssh/key"
-	chmod 600 "$tmp/ssh/key"
-	echo "$aur_host_key" >"$tmp/ssh/known_hosts"
-	export GIT_SSH_COMMAND="ssh -i $tmp/ssh/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$tmp/ssh/known_hosts"
-	for package in "${aur_packages[@]}"; do
-		# A package new to the AUR clones empty, and the first push creates it.
-		git clone -q "ssh://aur@aur.archlinux.org/$package.git" "$tmp/$package"
-		cp "$packages/aur/$package/PKGBUILD" "$packages/aur/$package/.SRCINFO" "$tmp/$package/"
-		# The AUR takes pushes to master only.
-		commit_and_push "$tmp/$package" "Update to $version" master
-	done
-fi
+publish_aur() {
+	if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+		notice "AUR" "AUR_SSH_PRIVATE_KEY is not set, so ${aur_packages[*]} stay as they are on the AUR"
+	else
+		mkdir -m 700 "$tmp/ssh"
+		printf '%s\n' "$AUR_SSH_PRIVATE_KEY" >"$tmp/ssh/key"
+		chmod 600 "$tmp/ssh/key"
+		echo "$aur_host_key" >"$tmp/ssh/known_hosts"
+		export GIT_SSH_COMMAND="ssh -i $tmp/ssh/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$tmp/ssh/known_hosts"
+		for package in "${aur_packages[@]}"; do
+			# A package new to the AUR clones empty, and the first push creates it.
+			git clone -q "ssh://aur@aur.archlinux.org/$package.git" "$tmp/$package"
+			cp "$packages/aur/$package/PKGBUILD" "$packages/aur/$package/.SRCINFO" "$tmp/$package/"
+			# The AUR takes pushes to master only.
+			commit_and_push "$tmp/$package" "Update to $version" master
+		done
+	fi
+}
+
+# Each on its own, so one that fails doesn't keep the other from its update. `set -e` holds in
+# the subshells only outside a condition, hence the statuses taken afterwards.
+set +e
+(set -e; publish_homebrew)
+homebrew=$?
+(set -e; publish_aur)
+aur=$?
+set -e
+[ $homebrew -eq 0 ] || echo "Publishing to the Homebrew tap failed" >&2
+[ $aur -eq 0 ] || echo "Publishing to the AUR failed" >&2
+[ $homebrew -eq 0 ] && [ $aur -eq 0 ]

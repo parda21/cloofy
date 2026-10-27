@@ -420,9 +420,10 @@ pub struct App {
     track_changed_at: Instant,
     /// What plays next on the device that plays, as Spotify or cloofy's player last said.
     queue: Queue,
-    /// Details of the tracks in the queue by URI; `None` while they load, or where Spotify has
-    /// none.
+    /// Details of the tracks in the queue by URI; `None` while they load.
     queue_tracks: HashMap<String, Option<Track>>,
+    /// Tracks in the queue Spotify has no details for; they are left off the queue page.
+    queue_tracks_missing: HashSet<String>,
     /// Counts the reports of what plays next, so a slower answer can tell it is outdated.
     queue_version: u64,
     /// The track the Web API was last asked what plays after, and the report it was asked
@@ -605,6 +606,7 @@ impl App {
             track_changed_at: Instant::now(),
             queue: Queue::default(),
             queue_tracks: HashMap::new(),
+            queue_tracks_missing: HashSet::new(),
             queue_version: 0,
             upcoming_asked: None,
             upcoming_pending: false,
@@ -1473,8 +1475,8 @@ impl App {
                     self.error(format!("Transfer: {err}"));
                 }
             },
-            DataEvent::QueueTracks(tracks) => {
-                self.on_queue_tracks(tracks);
+            DataEvent::QueueTracks { asked, tracks, reached } => {
+                self.on_queue_tracks(asked, tracks, reached);
                 return matches!(self.view, View::Queue(_));
             }
             DataEvent::Upcoming { playing, result } => self.on_upcoming(playing, result),

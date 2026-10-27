@@ -89,10 +89,13 @@ fn store_at(path: &Path, key: &str, value: Option<Value>) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
+    // A config linked from elsewhere, such as a dotfiles repository, stays linked: the file it
+    // points to gets the change.
+    let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     // Write and rename, so a crash mid-write never leaves a broken file behind.
-    let temp = path.with_extension("toml.tmp");
+    let temp = target.with_extension("toml.tmp");
     fs::write(&temp, document.to_string())?;
-    fs::rename(temp, path)?;
+    fs::rename(temp, target)?;
     Ok(())
 }
 
@@ -129,6 +132,22 @@ mod tests {
         assert_eq!(config.covers, Some(false));
         assert_eq!(config.crossfade, None);
         assert_eq!(config.accent.as_deref(), Some("violet"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_a_linked_config_linked() {
+        let dir = std::env::temp_dir().join(format!("cloofy-config-link-{}", std::process::id()));
+        let (real, link) = (dir.join("dotfiles.toml"), dir.join("config.toml"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&real, "client_id = \"abc\"\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        store_at(&link, "covers", Some(false.into())).unwrap();
+
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "client_id = \"abc\"\ncovers = false\n");
         fs::remove_dir_all(dir).unwrap();
     }
 
