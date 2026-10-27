@@ -6,7 +6,7 @@ use cloofy_spotify::{
     home::{Home, HomeItem},
 };
 
-use crate::loader::Fetch;
+use crate::{loader::Fetch, preferences::Setting};
 
 /// Cursor and scroll position of a list.
 #[derive(Debug, Default, Clone)]
@@ -495,12 +495,40 @@ pub struct LibraryView {
     pub detached: bool,
 }
 
+/// The Settings page.
+pub struct SettingsView {
+    pub id: u64,
+    /// Index into [`Setting::all`].
+    pub selected: usize,
+    /// Screen rows scrolled past at the top, when the page is taller than the window.
+    pub top: usize,
+    /// Scrolled with the mouse: the page stays put instead of following the selection.
+    pub detached: bool,
+}
+
+impl SettingsView {
+    pub fn new(id: u64) -> Self {
+        Self { id, selected: 0, top: 0, detached: false }
+    }
+
+    pub fn setting(&self) -> Setting {
+        Setting::all().nth(self.selected).unwrap_or(Setting::Crossfade)
+    }
+
+    pub fn move_by(&mut self, delta: isize) {
+        let last = Setting::all().count() as isize - 1;
+        self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
+        self.detached = false;
+    }
+}
+
 pub enum View {
     Home(HomeView),
     Library(LibraryView),
     Artist(ArtistView),
     Tracks(TrackView),
     Search(SearchView),
+    Settings(SettingsView),
 }
 
 impl View {
@@ -511,6 +539,7 @@ impl View {
             View::Artist(v) => v.id,
             View::Tracks(v) => v.id,
             View::Search(v) => v.id,
+            View::Settings(v) => v.id,
         }
     }
 }

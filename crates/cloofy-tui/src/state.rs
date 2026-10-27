@@ -16,6 +16,7 @@ pub struct State {
     pub library_filter: LibraryFilter,
     pub last_track: Option<LastTrack>,
     pub volume: Option<u16>,
+    /// Only in files from before settings moved to `config.toml`.
     pub crossfade: Option<u64>,
 }
 

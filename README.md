@@ -35,6 +35,7 @@ cloofy is a Spotify client that runs entirely in the terminal. It plays the musi
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
 - **Cover art.** Real images in terminals that speak the Kitty graphics protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
+- **Settings in the app.** Crossfade, cover art, the accent color, icons, power saving and notifications, on a Settings page like Spotify's. Slow computer? Turn cover art off.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
 - **At home on macOS.** Media keys, AirPods and Control Center, headphones that pause when they disconnect, Reduce Motion and Low Power Mode.
 
@@ -143,6 +144,7 @@ On Linux the build needs the ALSA and PulseAudio headers:
 | <kbd>z</kbd> | Now playing and lyrics |
 | <kbd>d</kbd> | Devices |
 | <kbd>D</kbd> | Start the DJ; while it plays, ask it for something |
+| <kbd>,</kbd> | Settings |
 | <kbd>U</kbd> | Update cloofy |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Command palette |
 | <kbd>?</kbd> | All shortcuts |
@@ -163,18 +165,23 @@ cloofy update               # update to the latest release
 
 When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
 
-## Configuration
+## Settings
 
-`~/.config/cloofy/config.toml`:
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
 
 ```toml
 client_id = "your client id"
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
+covers = false             # no cover art, for slower computers; on when missing
+accent = "violet"          # "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
+power_saving = "on"        # "on" or "off"; follows the system when missing
 notifications = false      # no desktop notifications for new tracks; on when missing
-credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files
 update_check = false       # don't look for new releases at start; on when missing
+credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
+
+Power saving stops animations and redraws less often. On macOS it turns on with Low Power Mode unless set otherwise.
 
 Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.
 
@@ -188,7 +195,7 @@ cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `
 | iTerm2 | Blocks | With a Nerd Font | Yes |
 | Others | Blocks | With a Nerd Font | No |
 
-Every terminal needs true color. Without a Nerd Font, set `icons = "text"`.
+Every terminal needs true color. Without a Nerd Font, pick text icons in Settings.
 
 ## FAQ
 

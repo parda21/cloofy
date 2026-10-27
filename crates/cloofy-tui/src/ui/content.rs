@@ -25,7 +25,7 @@ const HEADER_ROWS: u16 = 6;
 /// Cover in the header of playlists and albums, when the window is tall enough for it.
 const HEADER_COVER: Size = Size { width: 14, height: 7 };
 const COVER_HEADER_MIN_HEIGHT: u16 = 22;
-const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
+pub(super) const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 /// Search result thumbnails, the size the sidebar uses.
 const THUMB: Size = Size { width: 4, height: 2 };
 /// Rows per search result with a thumbnail: two lines of text beside it, then a gap.
@@ -117,7 +117,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.page_height = match &mut app.view {
         View::Tracks(view) => tracks(buf, view, inner, &style, &mut app.hits, cover_url.is_some(), page_saved),
         View::Search(view) => search(buf, view, inner, &style, searching, &mut app.hits, &mut thumbs),
-        View::Home(_) | View::Artist(_) | View::Library(_) => 0,
+        View::Home(_) | View::Artist(_) | View::Library(_) | View::Settings(_) => 0,
     };
     for (slot, url, round) in thumbs {
         if !super::cover(frame, app, url.as_deref(), THUMB, round, slot) {

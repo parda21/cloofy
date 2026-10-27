@@ -44,7 +44,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let duration_ms = track.duration_ms;
     let accent_color: Color = accent.into();
 
-    let wide = area.width >= WIDE_MIN_WIDTH && area.height >= WIDE_MIN_HEIGHT;
+    // Without cover art, the lyrics get the whole screen, as in small windows.
+    let wide = app.prefs.covers && area.width >= WIDE_MIN_WIDTH && area.height >= WIDE_MIN_HEIGHT;
     let (info, lyrics_area) = if wide {
         // Cells are about twice as tall as wide, so a square cover is twice as many columns.
         let cover_height = (area.height - INFO_ROWS - 4).min(area.width / 5);

@@ -7,6 +7,7 @@ mod library;
 mod menu;
 mod picker;
 mod player_bar;
+mod settings;
 mod sidebar;
 mod text;
 mod topbar;
@@ -31,7 +32,7 @@ use crate::{
     loader::Picture,
     overlay::Overlay,
     snapshot::Placement,
-    theme::{BG, TEXT},
+    theme::{BG, FAINT, RAISED, TEXT},
     views::View,
 };
 
@@ -112,11 +113,13 @@ fn draw_content(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         View::Home(_) => home::draw(frame, app, area),
         View::Library(_) => library::draw(frame, app, area),
         View::Artist(_) => artist::draw(frame, app, area),
+        View::Settings(_) => settings::draw(frame, app, area),
         _ => content::draw(frame, app, area),
     }
 }
 
-/// Draws a cover centered in `slot`, or nothing while it loads. Returns whether it drew.
+/// Draws a cover centered in `slot`, or nothing while it loads. Returns whether it drew. With
+/// cover art off, a plain tile takes its place.
 pub(super) fn cover(frame: &mut Frame, app: &mut App, url: Option<&str>, size: Size, round: bool, slot: Rect) -> bool {
     cover_in(frame, app, url, size, round, (slot.x, slot.y as i32), slot.as_size(), slot)
 }
@@ -134,6 +137,11 @@ pub(super) fn cover_in(
     slot: Size,
     clip: Rect,
 ) -> bool {
+    if !app.prefs.covers {
+        let size = Size::new(size.width.min(slot.width), size.height.min(slot.height));
+        tile(frame.buffer_mut(), (x, y), size, slot, clip, round);
+        return true;
+    }
     let placed = app.cover(url, size, round).and_then(|picture| picture_in(frame, picture, (x, y), slot, clip));
     match placed {
         Some(placement) => {
@@ -141,6 +149,26 @@ pub(super) fn cover_in(
             true
         }
         None => false,
+    }
+}
+
+/// Stands in for a cover with cover art off: one flat color and an icon, which costs nothing to
+/// load or to send to the terminal.
+fn tile(buf: &mut Buffer, (x, y): (u16, i32), size: Size, slot: Size, clip: Rect, round: bool) {
+    let left = x + slot.width.saturating_sub(size.width) / 2;
+    let top = y + (slot.height.saturating_sub(size.height) / 2) as i32;
+    let visible_top = top.max(clip.y as i32);
+    let visible_bottom = (top + size.height as i32).min(clip.bottom() as i32);
+    if visible_top >= visible_bottom {
+        return;
+    }
+    let area = Rect::new(left, visible_top as u16, size.width, (visible_bottom - visible_top) as u16);
+    let area = area.intersection(buf.area);
+    buf.set_style(area, Style::new().bg(RAISED));
+    let icon = if round { icons().artist } else { icons().note };
+    let middle = top + (size.height / 2) as i32;
+    if area.width >= 2 && (visible_top..visible_bottom).contains(&middle) {
+        buf.set_string(left + (size.width - 1) / 2, middle as u16, icon, Style::new().fg(FAINT));
     }
 }
 

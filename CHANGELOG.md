@@ -4,6 +4,17 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Settings.** `,`, the command palette or a click on your name in the top bar opens a Settings page: crossfade, cover art, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and are saved to `config.toml`, so nobody has to edit it by hand.
+- **Cover art off.** For slower computers: without cover art, cloofy loads and draws no covers at all. Pages show plain tiles in their place, and Now Playing gives the lyrics the whole screen.
+- **Power saving, your way.** Power saving can stay on or off for good; Auto follows the system as before.
+- **Accent color.** The accent can stay one color instead of following the cover.
+
+### Changed
+
+- Crossfade (`X`) is saved with the other settings in `config.toml`. The length chosen last moves there by itself.
+
 ## [0.3.0] - 2026-10-16
 
 The DJ takes requests, and cloofy updates itself.

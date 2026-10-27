@@ -67,6 +67,7 @@ impl App {
                 ArtistSelection::Track(t) => Some(track_target(&t.track, Some(v.uri.clone()))),
                 ArtistSelection::Item(item) => Some(self.home_target(item)),
             },
+            View::Settings(_) => None,
         }
     }
 

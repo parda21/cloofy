@@ -61,6 +61,8 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         let width = name.width() as u16;
         if right.saturating_sub(width) > search.right() + 2 {
             buf.set_string(right - width, row, name, Style::new().fg(MUTED));
+            // Like the profile menu in Spotify's apps, the name leads to the settings.
+            app.hits.push((Rect::new(right - width, row, width, 1), Hit::Command(Command::Settings)));
         }
     }
 }

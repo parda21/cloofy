@@ -273,7 +273,7 @@ impl App {
                     return library_item(item, None);
                 }
             }
-            View::Library(_) => {}
+            View::Library(_) | View::Settings(_) => {}
         }
         let item = self.home_cache.iter().flat_map(|h| &h.shelves).flat_map(|s| &s.items).find(|i| i.uri == uri)?;
         library_item(item, None)
@@ -290,7 +290,7 @@ impl App {
             View::Artist(v) => {
                 v.page.iter().flat_map(|p| &p.top_tracks).find(|t| t.track.uri == uri).map(|t| t.track.clone())
             }
-            View::Home(_) | View::Library(_) => None,
+            View::Home(_) | View::Library(_) | View::Settings(_) => None,
         };
         listed.or_else(|| {
             let t = self.now.track.as_ref().filter(|t| t.uri == uri)?;

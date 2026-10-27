@@ -1,6 +1,7 @@
 mod library;
 mod menu;
 mod persist;
+mod settings;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -35,8 +36,9 @@ use crate::{
     notify::Notifier,
     overlay::{DjChoice, MenuAction, Overlay, PaletteAction, PickItem, Picker, PickerOutcome, dj_items},
     playback::{ConnectPush, Controller, Cover, CurrentTrack, NowPlaying, RemoteIntent, Repeat, VolumeSync},
+    preferences::{AccentChoice, Preferences, Setting},
     snapshot::Placement,
-    theme::{Accent, BG, RAISED},
+    theme::{Accent, BG, RAISED, Rgb},
     views::{
         ArtistSelection, ArtistView, HomeView, LibraryView, ListCursor, SearchEntry, SearchView, TrackSource,
         TrackView, View,
@@ -72,7 +74,6 @@ const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
 /// Spotify's DJ; loading it without a track asks for a fresh set.
 const DJ_URI: &str = "spotify:playlist:37i9dQZF1EYkqdzj48dyYq";
-const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 /// How often to check which device plays, and how soon to look again while a change sent to
@@ -267,6 +268,11 @@ pub enum Hit {
         width: u16,
     },
     Cover,
+    /// The arrows, or the switch, that change the `index`th setting on the Settings page.
+    SettingStep {
+        index: usize,
+        forward: bool,
+    },
     OverlayArea,
     OverlayItem(usize),
 }
@@ -385,8 +391,8 @@ pub struct App {
     devices_wanted: bool,
     /// Playback is moving to another device.
     transfer: Option<Transfer>,
-    /// Seconds consecutive tracks overlap.
-    crossfade: u64,
+    /// What the user chose on the Settings page.
+    pub prefs: Preferences,
     next_poll: Instant,
     polling: bool,
     poll_started: Instant,
@@ -405,10 +411,14 @@ pub struct App {
     focused: bool,
     /// When the computer went to sleep, in wall-clock time: the monotonic clock stops meanwhile.
     slept_at: Option<std::time::SystemTime>,
-    /// Reduce Motion and Low Power Mode, as of the last check.
+    /// Reduce Motion and Low Power Mode, as the system reported them at the last check.
+    system_settings: Settings,
+    /// The system's settings with the user's choice for power saving applied.
     pub settings: Settings,
     settings_checked: Instant,
     pub accent: Accent,
+    /// The color of the playing cover, for when the accent follows it.
+    cover_accent: Option<Rgb>,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
     pub playlists_loading: bool,
@@ -516,7 +526,7 @@ impl App {
     pub fn new(
         loader: Loader,
         session_tx: watch::Sender<SessionState>,
-        crossfade: u64,
+        prefs: Preferences,
         start: Start,
         paths: Paths,
         media: Option<cloofy_os::media::Controls>,
@@ -526,6 +536,11 @@ impl App {
         loader.playlists();
         loader.library();
         loader.home(0);
+        let system_settings = cloofy_os::settings::current();
+        let mut accent = Accent::new();
+        if let Some(color) = prefs.accent.fixed() {
+            accent.jump(color);
+        }
         let mut app = Self {
             loader,
             state_path: paths.state_file(),
@@ -543,7 +558,8 @@ impl App {
             devices_cache: None,
             devices_wanted: false,
             transfer: None,
-            crossfade,
+            settings: prefs.apply(system_settings),
+            prefs,
             next_poll: Instant::now(),
             polling: false,
             poll_started: Instant::now(),
@@ -556,9 +572,10 @@ impl App {
             notifier,
             focused: true,
             slept_at: None,
-            settings: cloofy_os::settings::current(),
+            system_settings,
             settings_checked: Instant::now(),
-            accent: Accent::new(),
+            accent,
+            cover_accent: None,
             me: None,
             playlists: Vec::new(),
             playlists_loading: true,
@@ -659,7 +676,7 @@ impl App {
         self.now.volume = (u32::from(u16::MAX) * 7 / 10) as u16;
         self.last_context = last.context.clone();
         if let Some(url) = &last.cover_url {
-            self.loader.cover(url.clone(), COVER_SIZE);
+            self.load_cover(url.clone());
         }
         self.after_track_change(None);
     }
@@ -786,7 +803,7 @@ impl App {
                 self.player_error = None;
                 let _ = self.session_tx.send(SessionState::Ready(controller.session.clone()));
                 self.device_id = Some(controller.session.device_id().to_owned());
-                controller.set_crossfade(Duration::from_secs(self.crossfade));
+                controller.set_crossfade(Duration::from_secs(self.prefs.crossfade));
                 self.controller = Some(*controller);
                 self.reload_failed_view();
             }
@@ -867,7 +884,7 @@ impl App {
 
     /// Writes a desktop notification once a new track plays while cloofy is in the background.
     pub fn announce_track(&mut self) {
-        let Some(notifier) = &mut self.notifier else { return };
+        let Some(notifier) = self.notifier.as_mut().filter(|_| self.prefs.notifications) else { return };
         let track = self.now.track.as_ref().filter(|_| !self.remote_active);
         if let Some(sequence) = notifier.update(track, self.now.playing, self.focused) {
             let mut stdout = std::io::stdout();
@@ -959,7 +976,7 @@ impl App {
         }
         let before = self.now.track.as_ref().map(|t| t.uri.clone());
         if let Some(url) = self.now.apply(event) {
-            self.loader.cover(url, COVER_SIZE);
+            self.load_cover(url);
         }
         self.after_track_change(before);
         true
@@ -1020,7 +1037,7 @@ impl App {
                 let dragged_volume = matches!(self.dragging, Some(Hit::Volume { .. })).then_some(self.now.volume);
                 let (cover, unconfirmed) = self.now.apply_remote(&p, &mut self.remote_intent);
                 if let Some(url) = cover {
-                    self.loader.cover(url, COVER_SIZE);
+                    self.load_cover(url);
                 }
                 // The Web API may lag behind a push; look again until it catches up.
                 let behind =
@@ -1175,6 +1192,10 @@ impl App {
                     }
                 }
             }
+            // Loads still under way when cover art was turned off.
+            DataEvent::Image { .. } | DataEvent::Cover { .. } | DataEvent::LargeCover { .. } if !self.prefs.covers => {
+                return false;
+            }
             DataEvent::Image { key, result } => {
                 let slot = match result {
                     Ok(picture) => ImageSlot::Ready(picture),
@@ -1222,10 +1243,13 @@ impl App {
                         if let Some(old) = self.now.cover.replace(Cover { url, picture }) {
                             self.terminal_out.extend(old.picture.terminal_delete());
                         }
-                        if self.settings.low_power {
-                            self.accent.jump(accent);
-                        } else {
-                            self.accent.set(accent);
+                        self.cover_accent = Some(accent);
+                        if self.prefs.accent == AccentChoice::Cover {
+                            if self.settings.low_power {
+                                self.accent.jump(accent);
+                            } else {
+                                self.accent.set(accent);
+                            }
                         }
                     }
                     Err(err) => tracing::warn!("cover {url}: {err}"),
@@ -1468,7 +1492,8 @@ impl App {
 
         if self.settings_checked.elapsed() >= SETTINGS_INTERVAL {
             self.settings_checked = Instant::now();
-            let settings = cloofy_os::settings::current();
+            self.system_settings = cloofy_os::settings::current();
+            let settings = self.prefs.apply(self.system_settings);
             redraw |= settings != self.settings;
             self.settings = settings;
         }
@@ -1559,7 +1584,7 @@ impl App {
     fn is_animating(&self) -> bool {
         let loading = match &self.view {
             View::Home(v) => v.loading && v.home.is_none(),
-            View::Library(_) => false,
+            View::Library(_) | View::Settings(_) => false,
             View::Artist(v) => v.page.is_none() && v.error.is_none(),
             View::Tracks(v) => v.loading,
             View::Search(v) => v.loading,
@@ -1578,6 +1603,9 @@ impl App {
 
     /// Requests the big cover once the Now Playing layout knows its size.
     fn request_zen_cover(&mut self) {
+        if !self.prefs.covers {
+            return;
+        }
         let (Some(size), Some(track)) = (self.zen_cover_want, &self.now.track) else { return };
         let Some(url) = track.cover_url_large.clone() else { return };
         if self.zen_cover_want_since.is_none_or(|(wanted, _)| wanted != size) {
@@ -1686,6 +1714,9 @@ impl App {
     }
 
     fn on_content_key(&mut self, key: KeyEvent) {
+        if matches!(self.view, View::Settings(_)) {
+            return self.on_settings_key(key);
+        }
         if let View::Artist(artist) = &mut self.view {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => artist.move_row(-1),
@@ -1801,6 +1832,10 @@ impl App {
                 v.top = (v.top as isize + delta).max(0) as usize;
                 v.detached = true;
             }
+            View::Settings(v) => {
+                v.top = (v.top as isize + delta).max(0) as usize;
+                v.detached = true;
+            }
         }
     }
 
@@ -1818,6 +1853,7 @@ impl App {
             View::Artist(v) => v.move_row(delta.signum()),
             View::Tracks(v) => v.list.move_by(delta, v.tracks.len()),
             View::Search(v) => v.move_by(delta),
+            View::Settings(v) => v.move_by(delta.signum()),
         }
     }
 
@@ -2071,6 +2107,10 @@ impl App {
                         v.cursor = index;
                         v.detached = true;
                     }
+                    View::Settings(v) => {
+                        v.selected = index;
+                        v.detached = true;
+                    }
                     View::Home(_) => {}
                 }
             }
@@ -2163,6 +2203,13 @@ impl App {
             Hit::Command(command) => self.run(command),
             Hit::Seek { .. } | Hit::Volume { .. } => self.drag(hit, column, true),
             Hit::Cover => self.toggle_zen(),
+            Hit::SettingStep { index, forward } => {
+                self.select(Hit::Row(index));
+                if let View::Settings(v) = &self.view {
+                    let setting = v.setting();
+                    self.change_setting(setting, forward);
+                }
+            }
             Hit::OverlayItem(position) if matches!(self.overlay, Some(Overlay::Menu(_))) => {
                 self.choose_menu_item(position);
             }
@@ -2213,7 +2260,8 @@ impl App {
                 | Hit::RowPlay(_)
                 | Hit::ShelfScroll { .. }
                 | Hit::PageChip(_)
-                | Hit::Header(_),
+                | Hit::Header(_)
+                | Hit::SettingStep { .. },
             ) => self.scroll_content(delta),
             _ => {}
         }
@@ -2315,14 +2363,14 @@ impl App {
                 self.play(DJ_URI.into(), None);
             }
             Command::Crossfade => {
-                let next = CROSSFADE_STEPS.iter().copied().find(|s| *s > self.crossfade).unwrap_or(0);
-                self.crossfade = next;
-                if let Some(controller) = &self.controller {
-                    controller.set_crossfade(Duration::from_secs(next));
-                }
-                let text = if next == 0 { "Crossfade off".to_owned() } else { format!("Crossfade: {next} s") };
+                self.change_setting(Setting::Crossfade, true);
+                let text = match self.prefs.crossfade {
+                    0 => "Crossfade off".to_owned(),
+                    seconds => format!("Crossfade: {seconds} s"),
+                };
                 self.notice(text);
             }
+            Command::Settings => self.open_settings(),
             Command::Devices => {
                 self.loader.devices();
                 match self.devices_cache.clone().filter(|d| !d.is_empty()) {
@@ -2519,6 +2567,7 @@ impl App {
                     SearchEntry::Playlist(p) => Some(track(&p.uri, &p.name, false)),
                     SearchEntry::Header(_) => None,
                 }),
+                View::Settings(_) => None,
             };
             if selected.is_some() {
                 return selected;
@@ -2747,7 +2796,7 @@ impl App {
         self.focus = Focus::Content;
     }
 
-    /// A cover, or the drawn placeholder for items without one.
+    /// A cover, or the drawn placeholder for items without one. Nothing with cover art off.
     pub fn cover(&mut self, url: Option<&str>, size: Size, round: bool) -> Option<&Picture> {
         self.image(url.unwrap_or(crate::art::PLACEHOLDER_COVER), size, round)
     }
@@ -2779,12 +2828,18 @@ impl App {
     /// Asks for a cover that is likely shown soon, such as the next page of a shelf, so it is
     /// there when it scrolls into view. Loaded after the frame's visible covers.
     pub fn prefetch(&mut self, url: Option<&str>, size: Size, round: bool) {
+        if !self.prefs.covers {
+            return;
+        }
         let url = url.unwrap_or(crate::art::PLACEHOLDER_COVER);
         self.prefetch.push((url.to_owned(), size, round));
     }
 
     /// The cover for `url` at `size`, loading it on first use.
     pub fn image(&mut self, url: &str, size: Size, round: bool) -> Option<&Picture> {
+        if !self.prefs.covers {
+            return None;
+        }
         let key = image_key(url, size);
         self.image_used.insert(key.clone(), Instant::now());
         match self.images.get(&key) {
@@ -3055,6 +3110,10 @@ impl App {
                 Some(SearchEntry::Playlist(p)) => self.open_tracks(TrackSource::Playlist(p)),
                 Some(SearchEntry::Header(_)) | None => {}
             },
+            View::Settings(v) => {
+                let setting = v.setting();
+                self.change_setting(setting, true);
+            }
         }
     }
 
@@ -3229,7 +3288,7 @@ impl App {
             return;
         }
         if let Some(url) = cover_url {
-            self.loader.cover(url, COVER_SIZE);
+            self.load_cover(url);
         }
         // Lyrics and the like state load alongside the audio.
         self.after_track_change(before);

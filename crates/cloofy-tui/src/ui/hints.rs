@@ -111,6 +111,13 @@ fn hints(app: &App) -> &'static [Hint] {
             ("esc", "back", Some(Back)),
             ("^K", "commands", Some(Run(Palette))),
         ],
+        (Focus::Content, View::Settings(_)) => &[
+            ("↑ ↓", "choose", None),
+            ("← →", "change", Some(Key(KeyCode::Right))),
+            ("esc", "back", Some(Back)),
+            ("^K", "commands", Some(Run(Palette))),
+            ("?", "help", Some(Run(Help))),
+        ],
         (Focus::Content, View::Tracks(_)) => &[
             ("enter", "play", Some(Activate)),
             (".", "actions", Some(Run(Menu))),

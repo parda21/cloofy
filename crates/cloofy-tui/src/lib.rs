@@ -9,6 +9,7 @@ mod media;
 mod notify;
 mod overlay;
 mod playback;
+mod preferences;
 mod snapshot;
 mod state;
 mod theme;
@@ -44,6 +45,7 @@ use tokio::{
 use crate::{
     app::{App, AppEvent},
     loader::{DataEvent, Loader, SessionState},
+    preferences::Preferences,
 };
 
 /// Timer resolution for animations and debouncing; draws only happen when something changed.
@@ -103,11 +105,10 @@ async fn run_ui(
         let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
         restore(info);
     }));
-    let crossfade = config.crossfade.unwrap_or(0).min(12);
-    let notifier =
-        if config.notifications == Some(false) || demo.is_some() { None } else { notify::Notifier::detect() };
-    let update_check = config.update_check != Some(false) && demo.is_none();
-    let result = run_app(&mut terminal, paths, api, picker, crossfade, notifier, update_check, demo).await;
+    let prefs = Preferences::from_config(&config);
+    // Detected even with notifications off, so turning them on in Settings works at once.
+    let notifier = if demo.is_some() { None } else { notify::Notifier::detect() };
+    let result = run_app(&mut terminal, paths, api, picker, prefs, notifier, demo).await;
     let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture, DisableFocusChange);
     ratatui::restore();
     result
@@ -119,9 +120,8 @@ async fn run_app(
     paths: &Paths,
     api: Arc<WebApi>,
     picker: Picker,
-    crossfade: u64,
+    prefs: Preferences,
     notifier: Option<notify::Notifier>,
-    update_check: bool,
     demo: Option<Arc<demo::Demo>>,
 ) -> Result<Option<PathBuf>> {
     let (tx, mut events) = mpsc::unbounded_channel();
@@ -167,11 +167,12 @@ async fn run_app(
         None => {
             let saved = state::load(&paths.state_file());
             let volume = saved.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
-            playback::spawn(paths.clone(), Duration::from_secs(crossfade), volume, retry_now, tx.clone());
+            playback::spawn(paths.clone(), Duration::from_secs(prefs.crossfade), volume, retry_now, tx.clone());
             app::Start::Restore(Box::new(saved))
         }
     };
-    let mut app = App::new(loader, session_tx, crossfade, start, paths.clone(), media, notifier);
+    let update_check = prefs.update_check && demo.is_none();
+    let mut app = App::new(loader, session_tx, prefs, start, paths.clone(), media, notifier);
     if update_check {
         app.check_for_update(false);
     }

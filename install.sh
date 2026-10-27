@@ -592,7 +592,7 @@ elif $interactive; then
 	3) config_set crossfade 12 ;;
 	esac
 else
-	ok "Defaults kept. Change them in $(pretty "$config_file")"
+	ok "Defaults kept. Change them in cloofy's Settings: press ,"
 fi
 
 # ── 5. Sign in ──────────────────────────────────────────────────────────────────────────────

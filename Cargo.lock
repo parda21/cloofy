@@ -552,6 +552,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "url",
 ]
@@ -580,6 +581,8 @@ dependencies = [
  "sha2 0.11.1",
  "tachyonfx",
  "tokio",
+ "toml",
+ "toml_edit",
  "tracing",
  "unicode-width",
 ]
@@ -4986,6 +4989,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
