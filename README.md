@@ -163,6 +163,8 @@ cloofy update               # update to the latest release
 
 When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
 
+Installed with Homebrew, from the AUR or with Nix, cloofy leaves its updates to the package manager: the button shows the new version, and clicking it or `cloofy update` tells you how to update, such as `brew upgrade cloofy`.
+
 ## Configuration
 
 `~/.config/cloofy/config.toml`:

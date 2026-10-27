@@ -21,6 +21,10 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
     println!("  {} cloofy {} is out, this is {current}", style::cyan("↑"), style::bold(release.version()));
+    if let Some(manager) = update::PackageManager::of_running() {
+        println!("    {}\n", manager.how_to_update());
+        return Ok(());
+    }
     let mut progress = Progress::default();
     let installed = update::install(&release, |done, total| progress.draw(done, total)).await;
     progress.clear();

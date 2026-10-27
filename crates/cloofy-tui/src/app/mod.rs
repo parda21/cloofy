@@ -20,7 +20,7 @@ use cloofy_spotify::{
     home::{Home, HomeItem, ItemKind},
     lyrics::Lyrics,
     paths::Paths,
-    update::Release,
+    update::{PackageManager, Release},
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use librespot::playback::player::PlayerEvent;
@@ -127,6 +127,11 @@ pub enum Start<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Update {
     Available(Release),
+    /// Out, but for the package manager that installed cloofy to install.
+    Managed {
+        release: Release,
+        manager: PackageManager,
+    },
     /// Downloading, with the percentage once the size is known.
     Installing {
         release: Release,
@@ -716,14 +721,29 @@ impl App {
         if matches!(self.update, Some(Update::Installing { .. } | Update::Installed { .. })) {
             return;
         }
-        if self.update.as_ref() != Some(&Update::Available(release.clone())) {
-            self.notice(format!("cloofy {} is out · U updates", release.version()));
+        let update = match PackageManager::of_running() {
+            Some(manager) => Update::Managed { release, manager },
+            None => Update::Available(release),
+        };
+        if self.update.as_ref() != Some(&update) {
+            self.announce(&update);
         }
-        self.update = Some(Update::Available(release));
+        self.update = Some(update);
     }
 
-    /// The update button: installs the update, or restarts into the installed one. Without
-    /// either, looks for one.
+    /// Says that a newer cloofy is out, and how to get it.
+    fn announce(&mut self, update: &Update) {
+        match update {
+            Update::Available(release) => self.notice(format!("cloofy {} is out · U updates", release.version())),
+            Update::Managed { release, manager } => {
+                self.notice(format!("cloofy {} is out · {}", release.version(), manager.how_to_update()))
+            }
+            Update::Installing { .. } | Update::Installed { .. } => {}
+        }
+    }
+
+    /// The update button: installs the update, or restarts into the installed one, or says how
+    /// to update where a package manager does. Without an update, looks for one.
     fn run_update(&mut self) {
         match self.update.clone() {
             None if self.demo => self.error("This is the demo: nothing updates here".into()),
@@ -731,6 +751,7 @@ impl App {
                 self.notice("Looking for updates…".into());
                 self.check_for_update(true);
             }
+            Some(update @ Update::Managed { .. }) => self.announce(&update),
             Some(Update::Available(release)) => {
                 self.notice(format!("Updating to cloofy {}…", release.version()));
                 self.loader.install_update(release.clone());
@@ -749,6 +770,9 @@ impl App {
         match &self.update {
             None => Command::Update.label().to_owned(),
             Some(Update::Available(release)) => format!("Update to cloofy {}", release.version()),
+            Some(Update::Managed { release, manager }) => {
+                format!("cloofy {} is out · {}", release.version(), manager.how_to_update())
+            }
             Some(Update::Installing { .. }) => "Updating cloofy…".to_owned(),
             Some(Update::Installed { release, .. }) => format!("Restart into cloofy {}", release.version()),
         }
