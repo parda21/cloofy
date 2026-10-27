@@ -6,7 +6,7 @@ use cloofy_os::settings::Settings;
 
 use crate::{
     graphics::ImageProtocol,
-    theme::{Palette, Rgb},
+    theme::{self, Palette, Rgb},
 };
 
 const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
@@ -174,7 +174,7 @@ impl Setting {
             Setting::Crossfade => "Let songs fade into each other.",
             Setting::Covers => "Turn off to save memory and processor time on slower computers.",
             Setting::Images => "How covers reach the terminal. Blocks work in every terminal.",
-            Setting::Accent => "Follows the cover of the playing song, or stays one color.",
+            Setting::Accent => "Follows the cover of the playing song or the system's theme, or stays one color.",
             Setting::Icons => "Text icons work with every font; Nerd Font icons need one installed.",
             Setting::PowerSaving => "Stops animations and redraws less often. Auto follows the system.",
             Setting::Notifications => "Shows each new song while cloofy is in the background.",
@@ -187,6 +187,8 @@ impl Setting {
 pub enum AccentChoice {
     /// The dominant color of the playing cover.
     Cover,
+    /// The palette's accent, which Omarchy's theme sets; cloofy's green elsewhere.
+    Theme,
     Fixed(NamedColor),
 }
 
@@ -200,8 +202,9 @@ pub enum NamedColor {
 }
 
 impl AccentChoice {
-    const ALL: [AccentChoice; 6] = [
+    const ALL: [AccentChoice; 7] = [
         AccentChoice::Cover,
+        AccentChoice::Theme,
         AccentChoice::Fixed(NamedColor::Green),
         AccentChoice::Fixed(NamedColor::Violet),
         AccentChoice::Fixed(NamedColor::Pink),
@@ -216,6 +219,7 @@ impl AccentChoice {
     fn config(self) -> Option<&'static str> {
         match self {
             AccentChoice::Cover => None,
+            AccentChoice::Theme => Some("theme"),
             AccentChoice::Fixed(color) => Some(color.name()),
         }
     }
@@ -223,6 +227,7 @@ impl AccentChoice {
     fn label(self) -> &'static str {
         match self {
             AccentChoice::Cover => "From cover",
+            AccentChoice::Theme => "Theme",
             AccentChoice::Fixed(color) => color.label(),
         }
     }
@@ -231,7 +236,8 @@ impl AccentChoice {
     pub fn fixed(self) -> Option<Rgb> {
         match self {
             AccentChoice::Cover => None,
-            AccentChoice::Fixed(color) => Some(color.rgb()),
+            AccentChoice::Theme => Some(theme::palette().accent),
+            AccentChoice::Fixed(color) => Some(theme::readable(color.rgb())),
         }
     }
 }
@@ -257,7 +263,7 @@ impl NamedColor {
         }
     }
 
-    /// Bright enough to read on the dark background, like the colors taken from covers.
+    /// Bright enough to read on a dark background, like the colors taken from covers.
     fn rgb(self) -> Rgb {
         match self {
             // cloofy's own green, whatever accent the palette has.
@@ -398,5 +404,16 @@ mod tests {
         let preferences = Preferences::from_config(&config);
         assert_eq!(preferences.accent, AccentChoice::Cover);
         assert_eq!(preferences.power_saving, PowerSaving::Auto);
+    }
+
+    #[test]
+    fn the_theme_accent_comes_right_after_the_cover() {
+        let mut preferences = Preferences::default();
+        preferences.step(Setting::Accent, true);
+        assert_eq!(preferences.accent, AccentChoice::Theme);
+        assert_eq!(preferences.value(Setting::Accent), "Theme");
+        assert_eq!(preferences.accent.fixed(), Some(theme::palette().accent));
+        let config: Config = toml::from_str("accent = \"theme\"").unwrap();
+        assert_eq!(Preferences::from_config(&config).accent, AccentChoice::Theme);
     }
 }

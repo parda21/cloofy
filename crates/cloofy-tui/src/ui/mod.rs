@@ -311,8 +311,7 @@ pub(super) fn scrollbar(buf: &mut Buffer, x: u16, y: u16, height: u16, total: us
     let max_offset = total - visible;
     let start = (rows - thumb) * offset.min(max_offset) / max_offset;
     for row in 0..rows {
-        let (symbol, color) =
-            if (start..start + thumb).contains(&row) { ("┃", Color::Rgb(96, 96, 108)) } else { ("│", p.raised) };
+        let (symbol, color) = if (start..start + thumb).contains(&row) { ("┃", p.thumb) } else { ("│", p.raised) };
         buf.set_string(x, y + row as u16, symbol, Style::new().fg(color));
     }
 }
@@ -339,7 +338,7 @@ fn hover(buf: &mut Buffer, app: &App) {
     }
 }
 
-/// Mixes some white into the background of `area`.
+/// Mixes some of the highlight color, white on dark themes, into the background of `area`.
 fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
     let p = theme::palette();
     let area = area.intersection(buf.area);
@@ -356,7 +355,7 @@ fn tint(buf: &mut Buffer, app: &App, area: Rect, amount: f32) {
                 Color::Rgb(r, g, b) => crate::theme::Rgb(r, g, b),
                 _ => crate::theme::Rgb::of(p.bg),
             };
-            cell.bg = base.mix(crate::theme::Rgb(255, 255, 255), amount).into();
+            cell.bg = base.mix(p.highlight, amount).into();
         }
     }
 }

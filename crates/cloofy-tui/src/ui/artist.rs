@@ -3,7 +3,7 @@
 use ratatui::{
     Frame,
     layout::{Rect, Size},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 
@@ -22,7 +22,6 @@ use crate::{
 const PORTRAIT: Size = Size { width: 14, height: 7 };
 /// Portrait plus a gap.
 const HEADER_ROWS: u16 = PORTRAIT.height + 1;
-const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let p = theme::palette();
@@ -41,7 +40,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let frame_no = app.frame();
     let equalizer = super::equalizer(app);
     let accent = app.accent.color();
-    let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let selection = if focused { app.accent.selection() } else { p.unfocused };
     let playing_uri = app.now.track.as_ref().map(|t| t.uri.clone());
     let playing = app.now.playing;
     let loading_uri = app.now.pending.as_ref().and_then(|p| p.uri.clone());

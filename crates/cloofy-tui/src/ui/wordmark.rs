@@ -20,7 +20,7 @@ pub const WIDTH: u16 = 21;
 /// Draws the wordmark with its top-left corner at `x`, `y`.
 pub fn draw(buf: &mut Buffer, x: u16, y: u16, accent: Rgb) {
     let columns = columns();
-    let highlight = accent.mix(Rgb(255, 255, 255), 0.45);
+    let highlight = accent.mix(crate::theme::palette().highlight, 0.45);
     for (index, column) in columns.iter().enumerate() {
         let t = index as f32 / (columns.len().max(2) - 1) as f32;
         let color = highlight.mix(accent, t);

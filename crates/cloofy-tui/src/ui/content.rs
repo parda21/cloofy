@@ -25,7 +25,6 @@ const HEADER_ROWS: u16 = 6;
 /// Cover in the header of playlists and albums, when the window is tall enough for it.
 const HEADER_COVER: Size = Size { width: 14, height: 7 };
 const COVER_HEADER_MIN_HEIGHT: u16 = 22;
-pub(super) const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 /// Search result thumbnails, the size the sidebar uses.
 const THUMB: Size = Size { width: 4, height: 2 };
 /// Rows per search result with a thumbnail: two lines of text beside it, then a gap.
@@ -546,7 +545,7 @@ fn highlight(buf: &mut Buffer, list: Rect, y: u16, height: u16, selected: bool, 
     if !selected {
         return;
     }
-    let bg = if style.focused { style.selection } else { UNFOCUSED_SELECTION };
+    let bg = if style.focused { style.selection } else { theme::palette().unfocused };
     buf.set_style(row_band(list, y, height), Style::new().bg(bg));
     if style.focused {
         for row in y..y + height {

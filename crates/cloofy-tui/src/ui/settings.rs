@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use ratatui::{Frame, buffer::Buffer, layout::Rect, style::Style};
 use unicode_width::UnicodeWidthStr;
 
-use super::{content::UNFOCUSED_SELECTION, text};
+use super::text;
 use crate::{
     app::{App, Focus, Hit},
     graphics::ImageProtocol,
@@ -84,7 +84,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let buf = frame.buffer_mut();
     let focused = app.focus == Focus::Content;
     let accent = app.accent.color();
-    let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let selection = if focused { app.accent.selection() } else { p.unfocused };
     for (offset, row) in rows.iter().skip(top).take(height).enumerate() {
         let y = inner.y + offset as u16;
         match *row {

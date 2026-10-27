@@ -22,7 +22,6 @@ const CARD_GAP: u16 = 3;
 pub(super) const SHELF_ROWS: u16 = 1 + 1 + 7 + 2 + 2;
 const TILE_COVER: Size = Size { width: 6, height: 3 };
 const TILE_GAP: u16 = 2;
-const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 
 /// What one shelf needs for drawing, copied out of the view.
 pub(super) struct ShelfLayout {
@@ -249,7 +248,7 @@ pub(super) fn draw_shelf(
 ) {
     let p = theme::palette();
     let accent = app.accent.color();
-    let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let selection = if focused { app.accent.selection() } else { p.unfocused };
     for (url, round) in &layout.nearby {
         app.prefetch(url.as_deref(), COVER, *round);
     }
@@ -273,7 +272,7 @@ pub(super) fn draw_shelf(
             ];
             for (x, icon, forward, enabled) in arrows {
                 let arrow = Rect::new(x.saturating_sub(1), y, 3, 1);
-                let color = if enabled { p.text } else { Color::Rgb(52, 52, 60) };
+                let color = if enabled { p.text } else { p.disabled };
                 buf.set_style(arrow, Style::new().bg(p.raised));
                 buf.set_string(x, y, icon, Style::new().fg(color));
                 if enabled {
@@ -335,7 +334,7 @@ fn draw_shortcuts(
 ) {
     let p = theme::palette();
     let accent = app.accent.color();
-    let selection = if focused { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let selection = if focused { app.accent.selection() } else { p.unfocused };
     let marker = playing_marker(app);
     let columns = shortcut_columns(area.width);
     let tile_width = (area.width - TILE_GAP * (columns - 1)) / columns;

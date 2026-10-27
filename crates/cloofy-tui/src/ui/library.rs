@@ -3,7 +3,7 @@
 use ratatui::{
     Frame,
     layout::{Rect, Size},
-    style::{Color, Style},
+    style::Style,
 };
 
 use super::{content, home, sidebar, text};
@@ -19,7 +19,6 @@ const GAP: u16 = 3;
 const CARD_ROWS: u16 = COVER.height + 2 + 2;
 /// Title, gap and tabs above the grid.
 const HEADER_ROWS: u16 = 5;
-const UNFOCUSED_SELECTION: Color = Color::Rgb(25, 25, 31);
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let p = theme::palette();
@@ -30,7 +29,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let accent = app.accent.color();
-    let selection = if app.focus == Focus::Content { app.accent.selection() } else { UNFOCUSED_SELECTION };
+    let selection = if app.focus == Focus::Content { app.accent.selection() } else { p.unfocused };
     let marker = home::playing_marker(app);
     let View::Library(view) = &app.view else { return };
     let filter = view.filter;

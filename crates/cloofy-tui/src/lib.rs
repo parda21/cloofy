@@ -13,6 +13,8 @@ mod icons;
 mod loader;
 mod media;
 mod notify;
+#[cfg(target_os = "linux")]
+pub mod omarchy;
 mod overlay;
 mod playback;
 mod preferences;
@@ -205,6 +207,13 @@ async fn run_app(
     loader.set_image_protocol(image_protocol);
     loader.prune_image_cache();
     let update_check = prefs.update_check && demo.is_none();
+    // Omarchy's colors from the first frame on, and the accent the app starts with.
+    #[cfg(target_os = "linux")]
+    let mut system_theme = omarchy::ThemeWatch::new();
+    #[cfg(target_os = "linux")]
+    if let Some(palette) = system_theme.as_mut().and_then(omarchy::ThemeWatch::poll) {
+        theme::set_palette(palette);
+    }
     let mut app = App::new(loader, prefs, start, paths.clone(), media, notifier);
     if update_check {
         app.check_for_update(false);
@@ -246,6 +255,14 @@ async fn run_app(
                 redraw
             }
             _ = ticker.tick() => app.on_tick(),
+        };
+        #[cfg(target_os = "linux")]
+        let redraw = match system_theme.as_mut().and_then(omarchy::ThemeWatch::poll) {
+            Some(palette) => {
+                app.set_palette(palette);
+                true
+            }
+            None => redraw,
         };
         app.sync_media();
         app.announce_track();
