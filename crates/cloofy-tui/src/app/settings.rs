@@ -87,14 +87,7 @@ impl App {
             }
             Setting::Covers => self.drop_covers(),
             Setting::Images => self.set_image_protocol(self.prefs.images),
-            Setting::Accent => {
-                let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
-                if self.settings.low_power {
-                    self.accent.jump(color);
-                } else {
-                    self.accent.set(color);
-                }
-            }
+            Setting::Accent => self.show_accent(),
             Setting::Icons => crate::icons::init(self.prefs.icons.config()),
             Setting::PowerSaving => self.settings = self.prefs.apply(self.system_settings),
             Setting::Notifications => {}
@@ -105,6 +98,24 @@ impl App {
             }
         }
         self.save_setting(setting);
+    }
+
+    /// Moves the accent to the color the setting, the cover or the palette gives it now.
+    fn show_accent(&mut self) {
+        let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
+        if self.settings.low_power {
+            self.accent.jump(color);
+        } else {
+            self.accent.set(color);
+        }
+    }
+
+    /// Draws with the system theme's `palette` from the next frame on. The accent goes along
+    /// where it comes from the palette, and the fixed ones adapt to a light background.
+    #[cfg(target_os = "linux")]
+    pub fn set_palette(&mut self, palette: theme::Palette) {
+        theme::set_palette(palette);
+        self.show_accent();
     }
 
     /// Writes `setting` to the config file. The demo keeps changes until it closes.

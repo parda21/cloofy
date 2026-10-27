@@ -3,7 +3,10 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use cloofy_core::player::{CurrentTrack, PlayerEvent};
+use cloofy_core::{
+    player::{CurrentTrack, PlayerEvent},
+    service,
+};
 use cloofy_os::media::{Command, Controls, State, Track};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -56,7 +59,8 @@ impl Media {
             PlayerEvent::Seeked { position_ms } | PlayerEvent::PositionCorrection { position_ms } => {
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Stopped => self.state = State::default(),
+            PlayerEvent::VolumeChanged { volume } => self.state.volume = *volume,
+            PlayerEvent::Stopped => self.state = State { volume: self.state.volume, ..State::default() },
             _ => return,
         }
         if let Some(controls) = &self.controls {
@@ -107,5 +111,6 @@ fn track(current: &CurrentTrack) -> Track {
         album: current.album.clone(),
         duration: Duration::from_millis(current.duration_ms.into()),
         artwork: None,
+        link: service::web_link(&current.uri),
     }
 }

@@ -4,7 +4,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 use unicode_width::UnicodeWidthStr;
@@ -21,7 +21,6 @@ use crate::{
 pub const HEIGHT: u16 = 5;
 /// A square-ish button with its icon in the middle cell.
 const BUTTON_WIDTH: u16 = 5;
-const DISABLED: Color = Color::Rgb(58, 58, 68);
 /// The search field in a small window keeps this much room for its prompt before the update
 /// button takes any.
 const COMPACT_SEARCH_MIN: u16 = 30;
@@ -120,7 +119,7 @@ fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &
     let area = Rect::new(x, y, 2 * padding + 1, 1).intersection(buf.area);
     buf.set_style(area, Style::new().bg(p.raised));
     let color = match hit {
-        _ if !enabled => DISABLED,
+        _ if !enabled => p.disabled,
         Hit::Command(Command::Home) if app.is_open(NavItem::Home) => app.accent.color(),
         _ => p.text,
     };

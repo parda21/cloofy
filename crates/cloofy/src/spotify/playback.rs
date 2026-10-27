@@ -153,6 +153,7 @@ fn control(spirc: &Spirc, command: Command) -> Result<()> {
         Command::Next => spirc.next()?,
         Command::Previous => spirc.prev()?,
         Command::Seek(position) => spirc.set_position_ms(position.as_millis().try_into().unwrap_or(u32::MAX))?,
+        Command::Volume(volume) => spirc.set_volume(volume)?,
     }
     Ok(())
 }

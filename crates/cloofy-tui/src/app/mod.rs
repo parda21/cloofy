@@ -1010,6 +1010,7 @@ impl App {
             Media::Next => self.run(Command::Next),
             Media::Previous => self.run(Command::Previous),
             Media::Seek(position) => self.seek_to(position.as_millis().try_into().unwrap_or(u32::MAX)),
+            Media::Volume(volume) => self.set_volume(volume),
         }
     }
 
@@ -1017,7 +1018,8 @@ impl App {
     pub fn announce_track(&mut self) {
         let Some(notifier) = self.notifier.as_mut().filter(|_| self.prefs.notifications) else { return };
         let track = self.now.track.as_ref().filter(|_| !self.remote_active);
-        if let Some(sequence) = notifier.update(track, self.now.playing, self.focused) {
+        let artwork = track.and_then(|track| self.media.as_ref()?.artwork(track));
+        if let Some(sequence) = notifier.update(track, self.now.playing, self.focused, artwork) {
             let mut stdout = std::io::stdout();
             let _ = stdout.write_all(sequence.as_bytes()).and_then(|()| stdout.flush());
         }

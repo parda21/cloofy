@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cloofy_core::player::CurrentTrack;
+use cloofy_core::{player::CurrentTrack, service};
 use cloofy_os::media::{Controls, State, Track};
 
 use crate::playback::NowPlaying;
@@ -36,6 +36,7 @@ struct Shown {
     position: Duration,
     at: Option<Instant>,
     artwork: bool,
+    volume: u16,
 }
 
 impl Shown {
@@ -89,13 +90,14 @@ impl MediaSync {
     /// of its own, and showing it here would take them over.
     pub fn sync(&mut self, now: &NowPlaying, local: bool) {
         let track = now.track.as_ref().filter(|_| local);
-        let artwork = track.and_then(|t| self.artwork_for(t)).cloned();
+        let artwork = track.and_then(|t| self.artwork(t)).cloned();
         let playing = track.is_some() && now.playing;
         let position = Duration::from_millis(now.position_ms().into());
         let shown = &self.shown;
         let unchanged = track.map(|t| t.uri.as_str()) == shown.uri.as_deref()
             && playing == shown.playing
             && artwork.is_some() == shown.artwork
+            && (track.is_none() || now.volume == shown.volume)
             && shown.position().abs_diff(position) < DRIFT;
         if unchanged {
             return;
@@ -107,6 +109,7 @@ impl MediaSync {
             position,
             at: Some(Instant::now()),
             artwork: artwork.is_some(),
+            volume: now.volume,
         };
         let track = track.map(|t| Track {
             title: t.name.clone(),
@@ -114,11 +117,13 @@ impl MediaSync {
             album: t.album.clone(),
             duration: Duration::from_millis(t.duration_ms.into()),
             artwork,
+            link: service::web_link(&t.uri),
         });
-        (self.send)(State { track, playing, position });
+        (self.send)(State { track, playing, position, volume: now.volume });
     }
 
-    fn artwork_for(&self, track: &CurrentTrack) -> Option<&Arc<[u8]>> {
+    /// The cover of `track` the controls show, once it has loaded.
+    pub fn artwork(&self, track: &CurrentTrack) -> Option<&Arc<[u8]>> {
         let (url, bytes) = self.artwork.as_ref()?;
         (artwork_url(track) == Some(url.as_str())).then_some(bytes)
     }
@@ -171,6 +176,7 @@ mod tests {
         let track = sent[0].track.as_ref().expect("a track is shown");
         assert_eq!(track.artist, "Daft Punk, Romanthony");
         assert_eq!(track.duration, Duration::from_secs(320));
+        assert_eq!(track.link.as_deref(), Some("https://open.spotify.com/track/1"));
         assert_eq!(sent[0].position, Duration::from_secs(10));
         assert!(!sent[0].playing);
     }
@@ -203,6 +209,18 @@ mod tests {
         assert_eq!(sent.len(), 3);
         assert!(sent[1].playing);
         assert_eq!(sent[2].position, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn follows_the_volume() {
+        let (mut media, sent) = recorder();
+        let mut now = paused_at(0);
+        media.sync(&now, true);
+        now.volume = 1000;
+        media.sync(&now, true);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1].volume, 1000);
     }
 
     #[test]

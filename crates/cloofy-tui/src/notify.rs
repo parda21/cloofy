@@ -1,8 +1,12 @@
 //! Desktop notifications for new tracks while cloofy's window is in the background. They go
 //! through the terminal's own escape sequence, so they need no permission of their own and a
-//! click leads back to the terminal.
+//! click leads back to the terminal. Under Omarchy they go to the desktop directly instead,
+//! which shows the cover with them.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use cloofy_core::player::CurrentTrack;
@@ -22,18 +26,34 @@ enum Protocol {
 }
 
 pub struct Notifier {
-    protocol: Protocol,
-    /// Inside tmux, which passes the sequence on only when wrapped.
-    tmux: bool,
+    channel: Channel,
     /// The track playing, and since when.
     pending: Option<(String, Instant)>,
     /// The track last announced, or that played while cloofy was in front.
     announced: Option<String>,
 }
 
+enum Channel {
+    Terminal {
+        protocol: Protocol,
+        /// Inside tmux, which passes the sequence on only when wrapped.
+        tmux: bool,
+    },
+    /// The desktop's notification server, under Omarchy: its notifications show the cover, and
+    /// a click on one brings cloofy's window to the front.
+    #[cfg(target_os = "linux")]
+    Desktop(cloofy_os::notifications::Notifications),
+}
+
 impl Notifier {
-    /// `None` in terminals without notifications.
+    /// `None` in terminals without notifications, unless Omarchy shows them.
     pub fn detect() -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        if crate::omarchy::state_dir().is_some()
+            && let Some(desktop) = cloofy_os::notifications::Notifications::new()
+        {
+            return Some(Self::new(Channel::Desktop(desktop)));
+        }
         let var = |name| std::env::var(name).unwrap_or_default();
         let set = |name| std::env::var_os(name).is_some();
         let protocol = if set("KITTY_WINDOW_ID") || var("TERM").contains("kitty") {
@@ -49,12 +69,23 @@ impl Notifier {
                 _ => return None,
             }
         };
-        Some(Self { protocol, tmux: set("TMUX"), pending: None, announced: None })
+        Some(Self::new(Channel::Terminal { protocol, tmux: set("TMUX") }))
     }
 
-    /// The escape sequence to write when a track has been playing for a moment while cloofy
-    /// is in the background. `track` is cloofy's own playback only.
-    pub fn update(&mut self, track: Option<&CurrentTrack>, playing: bool, focused: bool) -> Option<String> {
+    fn new(channel: Channel) -> Self {
+        Self { channel, pending: None, announced: None }
+    }
+
+    /// Announces a track that has been playing for a moment while cloofy is in the background,
+    /// with its cover where the desktop shows one. Returns the escape sequence to write, when
+    /// the terminal is the one to tell. `track` is cloofy's own playback only.
+    pub fn update(
+        &mut self,
+        track: Option<&CurrentTrack>,
+        playing: bool,
+        focused: bool,
+        artwork: Option<&Arc<[u8]>>,
+    ) -> Option<String> {
         let Some(track) = track.filter(|_| playing) else {
             self.pending = None;
             return None;
@@ -69,7 +100,10 @@ impl Notifier {
                 }
                 self.pending = None;
                 self.announced = Some(track.uri.clone());
-                (!focused).then(|| self.sequence(&track.name, &byline(track)))
+                if focused {
+                    return None;
+                }
+                self.announce(track, artwork)
             }
             _ => {
                 self.pending = Some((track.uri.clone(), Instant::now()));
@@ -78,22 +112,34 @@ impl Notifier {
         }
     }
 
-    fn sequence(&self, title: &str, body: &str) -> String {
-        let (title, body) = (clean(title), clean(body));
-        let sequence = match self.protocol {
-            Protocol::Kitty => {
-                let app = STANDARD.encode("cloofy");
-                let (title, body) = (STANDARD.encode(title), STANDARD.encode(body));
-                format!(
-                    "\x1b]99;i=cloofy:d=0:e=1:o=unfocused:f={app};{title}\x1b\\\x1b]99;i=cloofy:p=body:e=1;{body}\x1b\\"
-                )
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    fn announce(&self, track: &CurrentTrack, artwork: Option<&Arc<[u8]>>) -> Option<String> {
+        match &self.channel {
+            Channel::Terminal { protocol, tmux } => Some(sequence(*protocol, *tmux, &track.name, &byline(track))),
+            #[cfg(target_os = "linux")]
+            Channel::Desktop(desktop) => {
+                desktop.show(&track.name, &byline(track), artwork.cloned());
+                None
             }
-            Protocol::Rxvt => format!("\x1b]777;notify;{title};{body}\x07"),
-            Protocol::ITerm if body.is_empty() => format!("\x1b]9;{title}\x07"),
-            Protocol::ITerm => format!("\x1b]9;{title} · {body}\x07"),
-        };
-        if self.tmux { passthrough(&sequence) } else { sequence }
+        }
     }
+}
+
+fn sequence(protocol: Protocol, tmux: bool, title: &str, body: &str) -> String {
+    let (title, body) = (clean(title), clean(body));
+    let sequence = match protocol {
+        Protocol::Kitty => {
+            let app = STANDARD.encode("cloofy");
+            let (title, body) = (STANDARD.encode(title), STANDARD.encode(body));
+            format!(
+                "\x1b]99;i=cloofy:d=0:e=1:o=unfocused:f={app};{title}\x1b\\\x1b]99;i=cloofy:p=body:e=1;{body}\x1b\\"
+            )
+        }
+        Protocol::Rxvt => format!("\x1b]777;notify;{title};{body}\x07"),
+        Protocol::ITerm if body.is_empty() => format!("\x1b]9;{title}\x07"),
+        Protocol::ITerm => format!("\x1b]9;{title} · {body}\x07"),
+    };
+    if tmux { passthrough(&sequence) } else { sequence }
 }
 
 /// Artists and album, leaving out what is missing: episodes have no album.
@@ -122,7 +168,7 @@ mod tests {
     use super::*;
 
     fn notifier(protocol: Protocol) -> Notifier {
-        Notifier { protocol, tmux: false, pending: None, announced: None }
+        Notifier::new(Channel::Terminal { protocol, tmux: false })
     }
 
     fn track(uri: &str) -> CurrentTrack {
@@ -141,9 +187,9 @@ mod tests {
 
     /// Plays `track` until it settles.
     fn settle(notifier: &mut Notifier, track: &CurrentTrack, focused: bool) -> Option<String> {
-        assert_eq!(notifier.update(Some(track), true, focused), None, "not before it settled");
+        assert_eq!(notifier.update(Some(track), true, focused, None), None, "not before it settled");
         notifier.pending.as_mut().unwrap().1 -= SETTLE;
-        notifier.update(Some(track), true, focused)
+        notifier.update(Some(track), true, focused, None)
     }
 
     #[test]
@@ -152,7 +198,7 @@ mod tests {
         let one = track("spotify:track:1");
         let sequence = settle(&mut notifier, &one, false);
         assert_eq!(sequence.as_deref(), Some("\x1b]777;notify;One More Time;Daft Punk · Discovery\x07"));
-        assert_eq!(notifier.update(Some(&one), true, false), None, "only once");
+        assert_eq!(notifier.update(Some(&one), true, false, None), None, "only once");
     }
 
     #[test]
@@ -160,7 +206,7 @@ mod tests {
         let mut notifier = notifier(Protocol::Rxvt);
         let one = track("spotify:track:1");
         assert_eq!(settle(&mut notifier, &one, true), None);
-        assert_eq!(notifier.update(Some(&one), true, false), None);
+        assert_eq!(notifier.update(Some(&one), true, false, None), None);
         assert!(settle(&mut notifier, &track("spotify:track:2"), false).is_some());
     }
 
@@ -168,8 +214,8 @@ mod tests {
     fn waits_while_paused() {
         let mut notifier = notifier(Protocol::Rxvt);
         let one = track("spotify:track:1");
-        notifier.update(Some(&one), true, false);
-        notifier.update(Some(&one), false, false);
+        notifier.update(Some(&one), true, false, None);
+        notifier.update(Some(&one), false, false, None);
         assert!(notifier.pending.is_none(), "pausing starts the wait over");
     }
 
@@ -196,8 +242,7 @@ mod tests {
     #[test]
     fn keeps_titles_from_breaking_the_sequence() {
         assert_eq!(clean("a;b\x07c\x1bd"), "a,bcd");
-        let mut tmux = notifier(Protocol::Rxvt);
-        tmux.tmux = true;
+        let mut tmux = Notifier::new(Channel::Terminal { protocol: Protocol::Rxvt, tmux: true });
         let sequence = settle(&mut tmux, &track("spotify:track:1"), false).unwrap();
         assert!(sequence.starts_with("\x1bPtmux;\x1b\x1b]777;notify;"));
         assert!(sequence.ends_with("\x07\x1b\\"));

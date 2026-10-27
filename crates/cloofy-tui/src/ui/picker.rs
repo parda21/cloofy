@@ -149,7 +149,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
 
     for (area, url) in thumbs {
         if !super::cover(frame, app, url.as_deref(), THUMB, false, area) {
-            frame.buffer_mut().set_style(area, Style::new().bg(ratatui::style::Color::Rgb(40, 40, 48)));
+            frame.buffer_mut().set_style(area, Style::new().bg(p.placeholder));
         }
     }
     app.hits.extend(hits);

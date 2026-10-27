@@ -142,7 +142,7 @@ fn draw_lyrics(buf: &mut Buffer, app: &App, area: Rect, accent: Color) {
             Some(c) => {
                 let distance = (index as f32 - c as f32).abs();
                 let fade = (distance / 6.0).min(1.0);
-                let color: Color = Rgb(200, 200, 210).mix(Rgb(70, 70, 80), fade).into();
+                let color: Color = Rgb::of(p.lyric_near).mix(Rgb::of(p.lyric_far), fade).into();
                 Style::new().fg(color)
             }
             None => Style::new().fg(p.muted),
