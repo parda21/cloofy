@@ -10,15 +10,15 @@ description = "A Spotify client for the terminal"
 # The music services built in; a release ships one build per choice. Without any, only
 # `cloofy demo` runs.
 [features]
-default = ["spotify"]
+default = ["spotify", "ytmusic"]
 spotify = ["cloofy-tui/spotify", "dep:cloofy-spotify", "dep:cloofy-player", "dep:librespot"]
-# Nothing yet: YouTube Music is on its way.
-ytmusic = ["cloofy-tui/ytmusic"]
+ytmusic = ["cloofy-tui/ytmusic", "dep:cloofy-ytmusic"]
 
 [dependencies]
 cloofy-core.workspace = true
 cloofy-spotify = { workspace = true, optional = true }
 cloofy-player = { workspace = true, optional = true }
+cloofy-ytmusic = { workspace = true, optional = true }
 cloofy-tui.workspace = true
 cloofy-os.workspace = true
 anyhow.workspace = true

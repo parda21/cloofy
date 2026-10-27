@@ -466,6 +466,8 @@ pub struct App {
     /// Parts of the library still on their way at startup.
     library_pending: u8,
     pub library_filter: LibraryFilter,
+    /// The service browses and plays without an account, so there is no library to show.
+    pub signed_out: bool,
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
     home_fetched_at: Option<Instant>,
@@ -569,9 +571,12 @@ impl App {
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
     ) -> Self {
-        loader.me();
-        loader.playlists();
-        loader.library();
+        let signed_out = !loader.signed_in();
+        if !signed_out {
+            loader.me();
+            loader.playlists();
+            loader.library();
+        }
         loader.home(0);
         let system_settings = cloofy_os::settings::current();
         let mut accent = Accent::new();
@@ -625,14 +630,15 @@ impl App {
             cover_accent: None,
             me: None,
             playlists: Vec::new(),
-            playlists_loading: true,
+            playlists_loading: !signed_out,
             albums: Vec::new(),
             artists: Vec::new(),
             shows: Vec::new(),
             liked_total: None,
-            library_loading: true,
-            library_pending: LIBRARY_PARTS,
+            library_loading: !signed_out,
+            library_pending: if signed_out { 0 } else { LIBRARY_PARTS },
             library_filter: LibraryFilter::All,
+            signed_out,
             home_cache: None,
             home_fetched_at: None,
             data_dirty: false,
@@ -2665,12 +2671,14 @@ impl App {
     }
 
     pub(super) fn open_playlist_picker_for(&mut self, uri: String) {
-        let me = self.me.as_ref().map(|u| u.id.as_str());
+        if let Some(note) = self.library_note() {
+            return self.error(note);
+        }
         let items: Vec<_> = self
             .playlists
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.collaborative || Some(p.owner_id.as_str()) == me)
+            .filter(|(_, p)| p.collaborative || self.owns(p))
             .map(|(index, p)| PickItem {
                 label: p.name.clone(),
                 detail: format!("{} songs", p.total),
@@ -2682,6 +2690,14 @@ impl App {
             return self.error("You don’t own any playlists yet.".into());
         }
         self.open_overlay(Overlay::AddToPlaylist { uris: vec![uri], picker: Picker::new(items) });
+    }
+
+    /// Whether the user made `playlist`. Some services name owners only, not their IDs.
+    pub fn owns(&self, playlist: &PlaylistInfo) -> bool {
+        self.me.as_ref().is_some_and(|me| match playlist.owner_id.as_str() {
+            "" => playlist.owner_name == me.name,
+            id => id == me.id,
+        })
     }
 
     fn add_to_playlist(&mut self, index: usize) {
@@ -2829,7 +2845,9 @@ impl App {
     pub fn library_entries_for(&self, filter: LibraryFilter) -> Vec<LibraryEntry> {
         let mut entries = Vec::new();
         if filter.shows(LibraryFilter::Playlists) {
-            entries.push(LibraryEntry::Liked);
+            if !self.signed_out {
+                entries.push(LibraryEntry::Liked);
+            }
             entries.extend((0..self.playlists.len()).map(LibraryEntry::Playlist));
         }
         if filter.shows(LibraryFilter::Albums) {
@@ -2842,6 +2860,17 @@ impl App {
             entries.extend((0..self.shows.len()).map(LibraryEntry::Show));
         }
         entries
+    }
+
+    /// What the library says instead of its entries: how to sign in, where the service plays
+    /// without an account.
+    pub fn library_note(&self) -> Option<String> {
+        let service = self.loader.service().filter(|_| self.signed_out)?;
+        Some(format!(
+            "Sign in to {} to see your library here: run `cloofy login {}` in a terminal.",
+            service.name(),
+            service.key()
+        ))
     }
 
     /// The sidebar list; Home and Search are in the top bar.
@@ -3347,6 +3376,11 @@ impl App {
                 self.show_early(&track, cover_url);
             }
             View::Search(v) => match v.selected().cloned() {
+                // A song without an album, like a video, plays by itself and what follows it.
+                Some(SearchEntry::Track(t)) if t.album_uri.is_empty() => {
+                    self.play(t.uri.clone(), None);
+                    self.show_early(&t, t.image_url.clone());
+                }
                 Some(SearchEntry::Track(t)) => {
                     self.play(t.album_uri.clone(), Some(t.uri.clone()));
                     self.show_early(&t, None);

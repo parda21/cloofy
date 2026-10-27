@@ -281,6 +281,16 @@ impl Loader {
         self.service
     }
 
+    /// The services started, in the order the config lists them.
+    pub fn services(&self) -> Vec<Service> {
+        self.catalogs.iter().map(Catalog::service).collect()
+    }
+
+    /// Whether the service shown knows who listens; without, it has no library to load.
+    pub fn signed_in(&self) -> bool {
+        self.demo.is_some() || self.shown().is_ok_and(|catalog| catalog.signed_in())
+    }
+
     /// The catalog of `service`, if it was started.
     fn catalog(&self, service: Option<Service>) -> Result<Catalog> {
         let service = service.context("No music service to ask")?;

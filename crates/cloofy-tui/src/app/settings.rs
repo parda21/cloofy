@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, COVER_SIZE, Focus, ImageSlot};
 use crate::{
+    backend,
     commands::Command,
     preferences::{AccentChoice, Setting},
     theme,
@@ -41,10 +42,10 @@ impl App {
         self.focus = Focus::Content;
     }
 
-    /// The settings that mean something here; crossfade, say, only where the service has it.
+    /// The settings that mean something here; crossfade, say, only with a service that has it.
     fn shown_settings(&self) -> Vec<Setting> {
         let shown = |setting: &Setting| match setting {
-            Setting::Crossfade => self.supports_crossfade(),
+            Setting::Crossfade => self.loader.services().into_iter().any(backend::supports_crossfade),
             Setting::UpdateCheck => self.offers(Command::Update),
             _ => true,
         };

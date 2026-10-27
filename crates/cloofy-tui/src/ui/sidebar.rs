@@ -5,6 +5,7 @@ use ratatui::{
     layout::{Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
+    widgets::{Paragraph, Widget, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -53,6 +54,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let entries = app.library_entries();
     let list = Rect::new(area.x, area.y + LIST_TOP, area.width, area.bottom().saturating_sub(area.y + LIST_TOP));
+    if entries.is_empty()
+        && let Some(note) = app.library_note()
+    {
+        let text = Rect::new(list.x + 3, list.y, list.width.saturating_sub(5), list.height);
+        Paragraph::new(note).wrap(Wrap { trim: true }).style(Style::new().fg(p.muted)).render(text, frame.buffer_mut());
+        return;
+    }
     let mut cursor = ListCursor {
         selected: app.nav.selected.saturating_sub(NavItem::FIXED),
         offset: app.nav.offset,

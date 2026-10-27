@@ -1,5 +1,6 @@
-// What only a service's player sends, like its events, has nobody to send it in a build
-// without one, which runs the demo only.
+// What only Spotify's player sends (Connect pushes, lost connections and audio outputs) and
+// what only it takes (remote commands, crossfade) has nobody to send or take it in a build
+// without Spotify. One without any service runs the demo only.
 #![cfg_attr(not(feature = "spotify"), allow(dead_code))]
 
 mod app;

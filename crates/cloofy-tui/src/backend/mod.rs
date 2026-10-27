@@ -10,11 +10,14 @@
 //! falls back to an error or to nothing for the others. Without any service, the enums are
 //! empty and their methods can never be called; only the demo runs.
 
-// With no service built in, nothing below has a variant to hand its arguments to.
-#![cfg_attr(not(feature = "spotify"), allow(unused_variables))]
+// What only one service does leaves its arguments unused in a build without that service, and
+// with no service built in, nothing below has a variant to hand its arguments to.
+#![cfg_attr(not(all(feature = "spotify", feature = "ytmusic")), allow(unused_variables))]
 
 #[cfg(feature = "spotify")]
 pub mod spotify;
+#[cfg(feature = "ytmusic")]
+pub mod ytmusic;
 
 use std::{sync::Arc, time::Duration};
 
@@ -38,6 +41,8 @@ use crate::{app::AppEvent, playback::Repeat, queue::Upcoming, views::TrackSource
 pub const COMPILED: &[Service] = &[
     #[cfg(feature = "spotify")]
     Service::Spotify,
+    #[cfg(feature = "ytmusic")]
+    Service::YouTubeMusic,
 ];
 
 /// The release this build belongs to, as its archive is named: `spotify`, `ytmusic`, or `full`
@@ -58,6 +63,8 @@ macro_rules! dispatch {
         match *$value {
             #[cfg(feature = "spotify")]
             $enum::Spotify(ref $inner) => $body,
+            #[cfg(feature = "ytmusic")]
+            $enum::YouTubeMusic(ref $inner) => $body,
         }
     };
 }
@@ -161,6 +168,8 @@ pub fn supports_crossfade(service: Service) -> bool {
 pub enum Account {
     #[cfg(feature = "spotify")]
     Spotify(spotify::Account),
+    #[cfg(feature = "ytmusic")]
+    YouTubeMusic(ytmusic::Account),
 }
 
 /// What a service's player starts with.
@@ -180,6 +189,8 @@ impl Account {
         match service {
             #[cfg(feature = "spotify")]
             Service::Spotify => Ok(Account::Spotify(spotify::Account::open(paths, config).await?)),
+            #[cfg(feature = "ytmusic")]
+            Service::YouTubeMusic => Ok(Account::YouTubeMusic(ytmusic::Account::open(paths)?)),
             #[allow(unreachable_patterns)]
             other => bail!("{} isn't built into this cloofy", other.name()),
         }
@@ -191,6 +202,8 @@ impl Account {
         match self {
             #[cfg(feature = "spotify")]
             Account::Spotify(account) => Catalog::Spotify(account.start(launch)),
+            #[cfg(feature = "ytmusic")]
+            Account::YouTubeMusic(account) => Catalog::YouTubeMusic(account.start(launch)),
         }
     }
 }
@@ -202,6 +215,8 @@ impl Account {
 pub enum Player {
     #[cfg(feature = "spotify")]
     Spotify(spotify::Controller),
+    #[cfg(feature = "ytmusic")]
+    YouTubeMusic(ytmusic::Controller),
 }
 
 impl Player {
@@ -209,6 +224,8 @@ impl Player {
         match *self {
             #[cfg(feature = "spotify")]
             Player::Spotify(_) => Service::Spotify,
+            #[cfg(feature = "ytmusic")]
+            Player::YouTubeMusic(_) => Service::YouTubeMusic,
         }
     }
 
@@ -275,6 +292,17 @@ impl Player {
     }
 
     // What only some services can do; the others say so, or do nothing.
+
+    /// Jumps ahead to `uri` in what plays next, where the player keeps that list itself.
+    /// `false` where it doesn't: the app gets there with the queue's commands instead.
+    pub fn skip_to(&self, uri: &str) -> Result<bool> {
+        match self {
+            #[cfg(feature = "ytmusic")]
+            Player::YouTubeMusic(player) => player.skip_to(uri),
+            #[allow(unreachable_patterns)]
+            _ => Ok(false),
+        }
+    }
 
     /// Jumps DJ to its next segment of picks.
     pub fn next_segment(&self) -> Result<()> {
@@ -399,6 +427,8 @@ pub struct Found {
 pub enum Catalog {
     #[cfg(feature = "spotify")]
     Spotify(spotify::Catalog),
+    #[cfg(feature = "ytmusic")]
+    YouTubeMusic(ytmusic::Catalog),
 }
 
 impl Catalog {
@@ -406,6 +436,19 @@ impl Catalog {
         match *self {
             #[cfg(feature = "spotify")]
             Catalog::Spotify(_) => Service::Spotify,
+            #[cfg(feature = "ytmusic")]
+            Catalog::YouTubeMusic(_) => Service::YouTubeMusic,
+        }
+    }
+
+    /// Whether the service knows who listens. Without, it browses and plays, but has no
+    /// library, likes or user to show.
+    pub fn signed_in(&self) -> bool {
+        match self {
+            #[cfg(feature = "ytmusic")]
+            Catalog::YouTubeMusic(catalog) => catalog.signed_in(),
+            #[allow(unreachable_patterns)]
+            _ => true,
         }
     }
 

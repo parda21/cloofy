@@ -93,7 +93,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let page_saved = match &app.view {
         View::Tracks(v) => match &v.source {
             TrackSource::Liked => None,
-            TrackSource::Playlist(p) if app.me.as_ref().is_some_and(|me| me.id == p.owner_id) => None,
+            TrackSource::Playlist(p) if app.owns(p) => None,
             TrackSource::Playlist(p) => Some(app.is_saved(&p.uri)),
             TrackSource::Album(a) => Some(app.is_saved(&a.uri)),
         },

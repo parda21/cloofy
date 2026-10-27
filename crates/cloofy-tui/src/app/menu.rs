@@ -58,7 +58,7 @@ impl App {
                 v.tracks.get(v.list.selected).map(|t| track_target(t, context))
             }
             View::Search(v) => match v.selected()? {
-                SearchEntry::Track(t) => Some(track_target(t, Some(t.album_uri.clone()))),
+                SearchEntry::Track(t) => Some(track_target(t, Some(t.album_uri.clone()).filter(|uri| !uri.is_empty()))),
                 SearchEntry::Album(a) => Some(album_target(a)),
                 SearchEntry::Playlist(p) => Some(self.playlist_target(p)),
                 SearchEntry::Artist(a) => Some(target(&a.uri, &a.name, TargetKind::Artist, a.image_url.clone())),
@@ -121,9 +121,8 @@ impl App {
     }
 
     fn playlist_target(&self, playlist: &PlaylistInfo) -> ContextTarget {
-        let owned = self.me.as_ref().is_some_and(|me| me.id == playlist.owner_id);
         ContextTarget {
-            owned,
+            owned: self.owns(playlist),
             ..target(&playlist.uri, &playlist.name, TargetKind::Playlist, playlist.image_url.clone())
         }
     }
@@ -220,15 +219,26 @@ impl App {
         if let Some(a) = self.artists.iter().find(|a| a.uri == uri) {
             return label("Artist", &a.name);
         }
-        let item = self.home_cache.as_ref()?.shelves.iter().flat_map(|s| &s.items).find(|i| i.uri == uri)?;
-        label(
-            match item.kind {
+        let item = self.home_cache.iter().flat_map(|home| &home.shelves).flat_map(|s| &s.items).find(|i| i.uri == uri);
+        if let Some(item) = item {
+            let kind = match item.kind {
                 ItemKind::Album => "Album",
                 ItemKind::Artist => "Artist",
                 _ => "Playlist",
+            };
+            return label(kind, &item.title);
+        }
+        // A page it was played from, such as an album found by searching.
+        let (kind, name) = std::iter::once(&self.view).chain(&self.history).find_map(|view| match view {
+            View::Tracks(v) if v.source.key() == uri => match &v.source {
+                TrackSource::Album(a) => Some(("Album", &a.name)),
+                TrackSource::Playlist(p) => Some(("Playlist", &p.name)),
+                TrackSource::Liked => None,
             },
-            &item.title,
-        )
+            View::Artist(v) if v.uri == uri => Some(("Artist", &v.name)),
+            _ => None,
+        })?;
+        label(kind, name).filter(|_| !name.is_empty())
     }
 
     /// Opens the page of a playlist, album or artist known only by its URI.

@@ -4,6 +4,7 @@ use ratatui::{
     Frame,
     layout::{Rect, Size},
     style::Style,
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use super::{content, home, sidebar, text};
@@ -44,12 +45,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let grid = Rect::new(inner.x, inner.y + HEADER_ROWS, inner.width, inner.height.saturating_sub(HEADER_ROWS));
     let loading = app.playlists_loading || app.library_loading;
     if entries.is_empty() {
-        let message = if loading {
-            format!("{}  Loading…", text::spinner(app.frame()))
-        } else {
-            "Nothing here yet.".to_owned()
+        let message = match app.library_note() {
+            _ if loading => format!("{}  Loading…", text::spinner(app.frame())),
+            Some(note) => note,
+            None => "Nothing here yet.".to_owned(),
         };
-        frame.buffer_mut().set_string(grid.x, grid.y, message, Style::new().fg(p.muted));
+        Paragraph::new(message)
+            .wrap(Wrap { trim: true })
+            .style(Style::new().fg(p.muted))
+            .render(grid, frame.buffer_mut());
         return;
     }
     // Too little room for covers: one entry per row instead.

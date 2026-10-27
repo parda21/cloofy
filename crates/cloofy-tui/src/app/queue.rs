@@ -258,7 +258,14 @@ impl App {
     /// Skips ahead on cloofy's own player, with its own commands rather than a command sent
     /// through Spotify to the device it comes from.
     fn skip_here(&mut self, track: Track, entry: Upcoming) {
-        if entry.provider == Provider::Queue {
+        let mut skipped = false;
+        if !self.control(|p| p.skip_to(&entry.uri).map(|done| skipped = done)) {
+            return;
+        }
+        if skipped {
+            // A player that keeps the list itself jumps there directly.
+            self.now.start(Some(track.uri.clone()));
+        } else if entry.provider == Provider::Queue {
             // The queued songs before it are passed over; the ones after it stay queued.
             let playing = self.now.track.as_ref().map(|t| t.uri.as_str());
             let queued: Vec<String> = self
