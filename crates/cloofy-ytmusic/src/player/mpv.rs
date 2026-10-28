@@ -11,7 +11,10 @@ use std::{
         unix::net::UnixStream as StdStream,
     },
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -32,6 +35,12 @@ pub(crate) const TIME_POS: u64 = 1;
 pub(crate) const PAUSE: u64 = 2;
 pub(crate) const DURATION: u64 = 3;
 
+/// Counts the mpvs started, so the events of one that is gone can be told apart.
+static INSTANCES: AtomicU64 = AtomicU64::new(0);
+
+/// Events come with the instance of the mpv that sent them.
+pub(crate) type Events = UnboundedSender<(u64, MpvEvent)>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MpvEvent {
     /// An observed property changed.
@@ -49,6 +58,8 @@ pub(crate) enum MpvEvent {
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value>>>>>;
 
 pub(crate) struct Mpv {
+    /// Which mpv this is, as its events say.
+    pub instance: u64,
     child: Child,
     writer: OwnedWriteHalf,
     pending: Pending,
@@ -58,7 +69,8 @@ pub(crate) struct Mpv {
 }
 
 impl Mpv {
-    pub async fn spawn(args: &[String], events: UnboundedSender<MpvEvent>) -> Result<Mpv> {
+    pub async fn spawn(args: &[String], events: Events) -> Result<Mpv> {
+        let instance = INSTANCES.fetch_add(1, Ordering::Relaxed) + 1;
         let (ours, theirs) = StdStream::pair().context("Can't create a socket for mpv")?;
         let fd = theirs.as_raw_fd();
         let mut command = Command::new("mpv");
@@ -118,8 +130,8 @@ impl Mpv {
         ours.set_nonblocking(true)?;
         let (reader, writer) = UnixStream::from_std(ours)?.into_split();
         let pending: Pending = Arc::default();
-        tokio::spawn(read(reader, pending.clone(), events));
-        let mut mpv = Mpv { child, writer, pending, next_id: 0, legacy_loadfile: false };
+        tokio::spawn(read(reader, pending.clone(), instance, events));
+        let mut mpv = Mpv { instance, child, writer, pending, next_id: 0, legacy_loadfile: false };
         let version = match mpv.get("mpv-version").await {
             Ok(version) => version,
             Err(err) => {
@@ -197,7 +209,7 @@ fn inherit(fd: RawFd) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn read(reader: tokio::net::unix::OwnedReadHalf, pending: Pending, events: UnboundedSender<MpvEvent>) {
+async fn read(reader: tokio::net::unix::OwnedReadHalf, pending: Pending, instance: u64, events: Events) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
@@ -212,11 +224,11 @@ async fn read(reader: tokio::net::unix::OwnedReadHalf, pending: Pending, events:
             continue;
         }
         if let Some(event) = parse_event(&message) {
-            let _ = events.send(event);
+            let _ = events.send((instance, event));
         }
     }
     pending.lock().unwrap().clear();
-    let _ = events.send(MpvEvent::Exited);
+    let _ = events.send((instance, MpvEvent::Exited));
 }
 
 fn parse_event(message: &Value) -> Option<MpvEvent> {
