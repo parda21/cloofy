@@ -434,9 +434,7 @@ impl Engine {
         position_ms: u32,
         shuffle: Option<bool>,
     ) -> Result<()> {
-        // Every start makes this the player that plays, also after another service's played.
-        self.active = true;
-        self.emit(PlayerEvent::Activated);
+        self.activate();
         self.generation += 1;
         self.context_loaded = false;
         self.autoplay = Autoplay::default();
@@ -460,6 +458,15 @@ impl Engine {
         self.starting = Some(Starting { context: context.clone(), track, position_ms, shuffle, tracks: Vec::new() });
         self.loader = Some(load_context(self.client.clone(), self.jobs.clone(), self.generation, context));
         Ok(())
+    }
+
+    /// Every start makes this the player that plays, also after another service's played.
+    fn activate(&mut self) {
+        self.active = true;
+        self.emit(PlayerEvent::Activated);
+        // The interface may have shown another player's queue since, so this one's is reported
+        // again, even unchanged.
+        self.reported = None;
     }
 
     /// Silences mpv; what was loaded is gone.
@@ -1087,6 +1094,25 @@ mod tests {
             }
         }
         true
+    }
+
+    #[tokio::test]
+    async fn each_start_reports_the_queue_again() {
+        let (mut engine, (mut events, _)) = idle_engine("report");
+        let track = tone(&mut engine, "a", 440, 10);
+        engine.queue.load("ytmusic:album:a".into(), vec![track], None, false);
+        let mut reports = || {
+            std::iter::from_fn(|| events.try_recv().ok())
+                .filter(|e| matches!(e, PlayerEvent::QueueChanged { .. }))
+                .count()
+        };
+        engine.queue_changed().await.unwrap();
+        engine.queue_changed().await.unwrap();
+        assert_eq!(reports(), 1, "a queue that didn't change isn't reported again");
+        // Another service played meanwhile, and the same album starts here again.
+        engine.activate();
+        engine.queue_changed().await.unwrap();
+        assert_eq!(reports(), 1);
     }
 
     #[tokio::test]

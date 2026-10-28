@@ -3839,6 +3839,8 @@ impl App {
         // The slider shows the volume of the player before, which this one takes on once it plays.
         self.volume_sync = VolumeSync::default();
         self.volume_sync.defer(self.now.volume);
+        // What plays next was the other player's; this one says what it has once it plays.
+        self.set_queue(Queue::default());
     }
 
     /// Whether `uri` plays on the service that plays now, rather than on another one.
