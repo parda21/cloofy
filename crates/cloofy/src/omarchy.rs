@@ -28,6 +28,9 @@ const PLUGIN: [(&str, &str); 4] = [
     ("Marquee.qml", include_str!("../../../integrations/omarchy/plugin/Marquee.qml")),
 ];
 const ICON: &str = include_str!("../../../integrations/omarchy/cloofy.svg");
+/// The theme templates earlier releases put in place, which `install` brings up to date and
+/// `remove` takes out as unedited. When the template changes, its old text goes here.
+const OLDER_TEMPLATES: &[&str] = &[];
 /// Next to the clock, which stays in the middle of the bar.
 const PLACEMENT: &str = r#"{"section":"center","after":"omarchy.clock"}"#;
 /// How long a freshly copied plugin may take until the shell knows it.
@@ -270,21 +273,37 @@ impl Omarchy {
     }
 
     fn install_theme(&self) -> Result<Step> {
-        write_if_changed(&self.template(), theme::TEMPLATE)?;
+        let path = self.template();
+        // A template the user edited stays as it is, and is the one rendered.
+        let edited = match fs::read_to_string(&path) {
+            Ok(template) => (!is_stock_template(&template)).then_some(template),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err).with_context(|| format!("Couldn't read {}", path.display())),
+        };
+        if edited.is_none() {
+            write_if_changed(&path, theme::TEMPLATE)?;
+        }
+        let yours = if edited.is_some() { " with your template" } else { "" };
         let name = self.theme_name();
         if self.theme_ships_colors(&name) {
-            return Ok(Step::Done(format!("follows the theme; {name} brings colors for cloofy")));
+            return Ok(Step::Done(format!("follows the theme{yours}; {name} brings colors for cloofy")));
         }
         // Rendered now, so the colors don't have to wait for the next theme switch.
         let colors = self.state.join("current/theme/colors.toml");
         let variables = omarchy_variables(&colors)
             .unwrap_or_else(|| theme::variables(&fs::read_to_string(&colors).unwrap_or_default()));
-        write_if_changed(&self.rendered(), &theme::render(theme::TEMPLATE, &variables))?;
-        Ok(Step::Done(format!("follows the theme, now {name}")))
+        let template = edited.as_deref().unwrap_or(theme::TEMPLATE);
+        write_if_changed(&self.rendered(), &theme::render(template, &variables))?;
+        Ok(Step::Done(format!("follows the theme{yours}, now {name}")))
     }
 
     fn remove_theme(&self) -> Result<Step> {
-        let had_template = remove_file(&self.template())?;
+        let path = self.template();
+        if fs::read_to_string(&path).is_ok_and(|template| !is_stock_template(&template)) {
+            // Omarchy goes on rendering it for every theme, and cloofy goes on following it.
+            return Ok(Step::Nothing(format!("{} has your changes, so it stays", path.display())));
+        }
+        let had_template = remove_file(&path)?;
         // The theme's own file stays; the one rendered from the template goes with it.
         let rendered = !self.theme_ships_colors(&self.theme_name()) && remove_file(&self.rendered())?;
         Ok(removed(had_template || rendered, "the template"))
@@ -365,6 +384,11 @@ impl Omarchy {
                 .iter()
                 .any(|themes| themes.join(name).join("cloofy.toml").is_file())
     }
+}
+
+/// Whether `template` is one cloofy put in place, rather than one the user edited.
+fn is_stock_template(template: &str) -> bool {
+    template == theme::TEMPLATE || OLDER_TEMPLATES.contains(&template)
 }
 
 /// Asks before taking Super+Shift+M from Spotify; no answer without a terminal.
@@ -619,6 +643,37 @@ mod tests {
             cleaned.push(*c);
         }
         serde_json::from_str(&cleaned).expect("the menu file stays valid")
+    }
+
+    /// An Omarchy of its own in the temp folder, with a dark theme set.
+    fn scratch(name: &str) -> Omarchy {
+        let root = env::temp_dir().join(format!("cloofy-omarchy-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let state = root.join("state");
+        fs::create_dir_all(state.join("current/theme")).unwrap();
+        fs::write(state.join("current/theme.name"), "scratch\n").unwrap();
+        fs::write(state.join("current/theme/colors.toml"), "background = \"#000000\"\nforeground = \"#ffffff\"\n")
+            .unwrap();
+        Omarchy { home: root.join("home"), state, path: root.join("omarchy") }
+    }
+
+    #[test]
+    fn keeps_a_template_the_user_edited() {
+        let omarchy = scratch("template");
+        omarchy.install_theme().unwrap();
+        assert_eq!(fs::read_to_string(omarchy.template()).unwrap(), theme::TEMPLATE);
+        assert!(fs::read_to_string(omarchy.rendered()).unwrap().contains("bg = \"#000000\""));
+        omarchy.remove_theme().unwrap();
+        assert!(!omarchy.template().exists() && !omarchy.rendered().exists(), "unedited, both go");
+
+        let edited = "# mine\nbg = \"{{ foreground }}\"\n";
+        write_if_changed(&omarchy.template(), edited).unwrap();
+        omarchy.install_theme().unwrap();
+        assert_eq!(fs::read_to_string(omarchy.template()).unwrap(), edited, "install keeps the user's");
+        assert_eq!(fs::read_to_string(omarchy.rendered()).unwrap(), "# mine\nbg = \"#ffffff\"\n", "and renders it");
+        assert!(matches!(omarchy.remove_theme(), Ok(Step::Nothing(_))));
+        assert_eq!(fs::read_to_string(omarchy.template()).unwrap(), edited, "remove leaves it too");
+        fs::remove_dir_all(omarchy.home.parent().unwrap()).unwrap();
     }
 
     #[test]
