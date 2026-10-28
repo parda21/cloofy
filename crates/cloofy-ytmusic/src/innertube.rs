@@ -52,20 +52,33 @@ pub(crate) struct InnerTube {
 
 struct Auth {
     jar: Jar,
-    store: Secret,
+    /// Where the cookies are kept; `None` for a sign-in that isn't kept, or no longer is.
+    store: Option<Stored>,
     dirty: bool,
     saved: Instant,
 }
 
+/// The kept sign-in, and what it held when this client read or last wrote it.
+struct Stored {
+    secret: Secret,
+    bytes: Vec<u8>,
+}
+
 impl InnerTube {
     pub fn new(store: Secret) -> Result<Self> {
-        let jar = store.read()?.map(|bytes| Jar::parse(&String::from_utf8_lossy(&bytes)));
-        let auth = jar.filter(|jar| jar.get("LOGIN_INFO").is_some() && sapisid(jar).is_some()).map(|jar| Auth {
-            jar,
-            store,
-            dirty: false,
-            saved: Instant::now(),
+        let auth = store.read()?.and_then(|bytes| {
+            let jar = Jar::parse(&String::from_utf8_lossy(&bytes));
+            signed_in(&jar).then(|| Auth::new(jar, Some(Stored { secret: store, bytes })))
         });
+        Self::with_auth(auth)
+    }
+
+    /// Signed in with cookies that aren't kept, to try them before they are.
+    pub fn unsaved(jar: Jar) -> Result<Self> {
+        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, None)))
+    }
+
+    fn with_auth(auth: Option<Auth>) -> Result<Self> {
         let http = cloofy_core::http::client(BROWSER).build()?;
         Ok(Self { http, version: web_version(), gl: country(), visitor: Mutex::new(None), auth: Mutex::new(auth) })
     }
@@ -208,22 +221,51 @@ impl InnerTube {
             }
         }
         if auth.dirty && auth.saved.elapsed() >= SAVE_INTERVAL {
-            auth.dirty = false;
-            auth.saved = Instant::now();
-            if let Err(err) = auth.store.write(auth.jar.to_text().as_bytes()) {
-                tracing::warn!("saving YouTube Music cookies: {err:#}");
-            }
+            auth.save();
         }
     }
 
     /// Writes cookie updates that are still waiting for the next save.
     pub fn flush(&self) {
-        let mut auth = self.auth.lock().unwrap();
-        if let Some(auth) = auth.as_mut().filter(|auth| auth.dirty) {
-            auth.dirty = false;
-            if let Err(err) = auth.store.write(auth.jar.to_text().as_bytes()) {
-                tracing::warn!("saving YouTube Music cookies: {err:#}");
+        if let Some(auth) = self.auth.lock().unwrap().as_mut().filter(|auth| auth.dirty) {
+            auth.save();
+        }
+    }
+
+    /// The cookies as they are now, with what YouTube refreshed; `None` signed out.
+    pub fn jar(&self) -> Option<Jar> {
+        self.auth.lock().unwrap().as_ref().map(|auth| auth.jar.clone())
+    }
+}
+
+impl Auth {
+    fn new(jar: Jar, store: Option<Stored>) -> Self {
+        Self { jar, store, dirty: false, saved: Instant::now() }
+    }
+
+    /// Writes the cookies back, unless the sign-in was replaced or removed since this client
+    /// read it, by `cloofy login` or `logout`: that one stays, and this client keeps its
+    /// cookies to itself from then on.
+    fn save(&mut self) {
+        self.dirty = false;
+        self.saved = Instant::now();
+        let Some(store) = &mut self.store else { return };
+        match store.secret.read() {
+            Ok(Some(bytes)) if bytes == store.bytes => {}
+            Ok(_) => {
+                tracing::info!("The YouTube Music sign-in changed elsewhere; leaving it as it is");
+                self.store = None;
+                return;
             }
+            Err(err) => {
+                tracing::warn!("reading YouTube Music cookies: {err:#}");
+                return;
+            }
+        }
+        let bytes = self.jar.to_text().into_bytes();
+        match store.secret.write(&bytes) {
+            Ok(()) => store.bytes = bytes,
+            Err(err) => tracing::warn!("saving YouTube Music cookies: {err:#}"),
         }
     }
 }
@@ -293,6 +335,11 @@ fn country() -> Option<String> {
     })
 }
 
+/// Whether the cookies are those of a sign-in.
+fn signed_in(jar: &Jar) -> bool {
+    jar.get("LOGIN_INFO").is_some() && sapisid(jar).is_some()
+}
+
 /// Reads a sign-in from a cookies file, for checks before it is saved.
 pub(crate) fn check_jar(jar: &Jar) -> Result<()> {
     if jar.is_empty() {
@@ -340,6 +387,53 @@ mod tests {
         let headers: std::collections::HashMap<_, _> = signed_out.headers(ClientKind::Web).into_iter().collect();
         assert_eq!(headers["Cookie"], "SOCS=CAI");
         assert!(!headers.contains_key("Authorization"));
+    }
+
+    #[test]
+    fn refreshed_cookies_never_undo_a_sign_out_or_another_sign_in() {
+        let dir = std::env::temp_dir().join(format!("cloofy-ytm-keep-{}", std::process::id()));
+        let file = dir.join("cookies.txt");
+        let sign_in = |sapisid: &str| {
+            let jar = Jar::from_header(&format!("SAPISID={sapisid}; LOGIN_INFO=x"));
+            cloofy_core::paths::write_private(&file, jar.to_text().as_bytes()).unwrap();
+        };
+        // YouTube refreshes a cookie, which the client writes back right away.
+        let refresh = |api: InnerTube, value: &str| {
+            let mut headers = HeaderMap::new();
+            let cookie = format!("SIDCC={value}; Domain=.youtube.com; Path=/; Secure");
+            headers.insert(reqwest::header::SET_COOKIE, cookie.parse().unwrap());
+            api.keep_cookies(&headers);
+            api.flush();
+            api
+        };
+        let saved = || Jar::parse(&std::fs::read_to_string(&file).unwrap_or_default());
+
+        sign_in("first");
+        let api = refresh(InnerTube::new(Secret::File(file.clone())).unwrap(), "1");
+        assert_eq!(saved().get("SIDCC"), Some("1"), "what YouTube refreshes is kept");
+        let api = refresh(api, "2");
+        assert_eq!(saved().get("SIDCC"), Some("2"), "also after the client wrote it itself");
+
+        // `cloofy logout ytmusic` while the interface runs.
+        std::fs::remove_file(&file).unwrap();
+        drop(refresh(api, "3"));
+        assert!(!file.exists(), "signed out stays signed out");
+
+        // `cloofy login ytmusic --force` with another account.
+        sign_in("first");
+        let api = InnerTube::new(Secret::File(file.clone())).unwrap();
+        sign_in("second");
+        let api = refresh(api, "4");
+        assert_eq!((saved().get("SAPISID"), saved().get("SIDCC")), (Some("second"), None));
+        assert!(api.signed_in(), "the client goes on with its own cookies");
+        drop(refresh(api, "5"));
+        assert_eq!(saved().get("SAPISID"), Some("second"));
+
+        // Cookies being tried are never written anywhere.
+        let api = refresh(InnerTube::unsaved(Jar::from_header("SAPISID=tried; LOGIN_INFO=x")).unwrap(), "6");
+        assert_eq!(api.jar().unwrap().get("SIDCC"), Some("6"));
+        assert_eq!(saved().get("SAPISID"), Some("second"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

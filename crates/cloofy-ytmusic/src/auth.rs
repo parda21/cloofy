@@ -11,10 +11,13 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cloofy_core::paths::{Paths, write_private};
+use cloofy_core::{
+    catalog::User,
+    paths::{Paths, write_private},
+};
 use tokio::process::Command;
 
-use crate::{cookies::Jar, innertube};
+use crate::{YtMusic, cookies::Jar, innertube, library};
 
 /// A browser yt-dlp can read cookies from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,9 +80,33 @@ pub fn browsers() -> Vec<Browser> {
     found
 }
 
-/// Signs in with the cookies of `browser`, which must be signed in to YouTube. The browser's
-/// cookie store may be locked while it runs (Chromium-based browsers on Windows); yt-dlp says so.
-pub async fn import_from_browser(paths: &Paths, browser: &Browser) -> Result<()> {
+/// A sign-in read from a browser or pasted, not kept yet: it replaces the one before only once
+/// YouTube Music took it, so one that doesn't work leaves a working one in place.
+pub struct SignIn {
+    client: YtMusic,
+}
+
+impl SignIn {
+    fn new(jar: Jar) -> Result<Self> {
+        Ok(Self { client: YtMusic::unsaved(jar)? })
+    }
+
+    /// Asks YouTube Music whose sign-in it is; fails when it turns the cookies down.
+    pub async fn check(&self) -> Result<User> {
+        library::me(self.client.api()).await
+    }
+
+    /// Keeps it in place of the sign-in before, with the cookies YouTube refreshed meanwhile.
+    pub fn save(self, paths: &Paths) -> Result<()> {
+        let jar = self.client.api().jar().context("No cookies to keep")?;
+        private_dir(paths)?;
+        save(paths, &jar)
+    }
+}
+
+/// Reads the cookies of `browser`, which must be signed in to YouTube. The browser's cookie
+/// store may be locked while it runs (Chromium-based browsers on Windows); yt-dlp says so.
+pub async fn from_browser(paths: &Paths, browser: &Browser) -> Result<SignIn> {
     let dir = private_dir(paths)?;
     // yt-dlp writes every site's cookies; they stay in this private folder only until cloofy
     // picked out YouTube's.
@@ -95,7 +122,7 @@ pub async fn import_from_browser(paths: &Paths, browser: &Browser) -> Result<()>
     }
     innertube::check_jar(&jar)
         .with_context(|| format!("{} isn't signed in to YouTube – sign in at music.youtube.com first", browser.name))?;
-    save(paths, &jar)
+    SignIn::new(jar)
 }
 
 /// Runs yt-dlp; returns what it printed to stderr.
@@ -128,13 +155,12 @@ fn reason(stderr: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Signs in with a `Cookie` header copied from the browser's developer tools, for when
-/// yt-dlp can't read the browser.
-pub fn import_cookie_header(paths: &Paths, header: &str) -> Result<()> {
+/// Reads a `Cookie` header copied from the browser's developer tools, for when yt-dlp can't
+/// read the browser.
+pub fn from_cookie_header(header: &str) -> Result<SignIn> {
     let jar = Jar::from_header(header);
     innertube::check_jar(&jar)?;
-    private_dir(paths)?;
-    save(paths, &jar)
+    SignIn::new(jar)
 }
 
 /// Forgets the cookies; YouTube Music is signed out on the next start.
@@ -172,9 +198,11 @@ mod tests {
     #[test]
     fn a_pasted_header_signs_in_and_out() {
         let paths = paths("header");
-        assert!(import_cookie_header(&paths, "PREF=x").is_err(), "not signed in without LOGIN_INFO");
-        import_cookie_header(&paths, "Cookie: SAPISID=abc; LOGIN_INFO=def; SID=ghi").unwrap();
+        assert!(from_cookie_header("PREF=x").is_err(), "not signed in without LOGIN_INFO");
+        let sign_in = from_cookie_header("Cookie: SAPISID=abc; LOGIN_INFO=def; SID=ghi").unwrap();
         let file = paths.ytmusic_cookies().file().to_owned();
+        assert!(!file.exists(), "kept only once it is saved");
+        sign_in.save(&paths).unwrap();
         let saved = Jar::parse(&fs::read_to_string(&file).unwrap());
         assert_eq!(saved.get("SAPISID"), Some("abc"));
         #[cfg(unix)]
@@ -185,6 +213,9 @@ mod tests {
         }
         let client = crate::YtMusic::new(&paths).unwrap();
         assert!(client.signed_in());
+        // One that YouTube Music turned down is never saved, which leaves this one.
+        drop(from_cookie_header("SAPISID=other; LOGIN_INFO=other").unwrap());
+        assert_eq!(Jar::parse(&fs::read_to_string(&file).unwrap()).get("SAPISID"), Some("abc"));
         sign_out(&paths).unwrap();
         assert!(!file.exists());
         assert!(!crate::YtMusic::new(&paths).unwrap().signed_in());

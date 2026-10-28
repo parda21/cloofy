@@ -47,13 +47,13 @@ pub async fn login(paths: &Paths, force: bool, optional: bool) -> Result<bool> {
         println!();
         return Ok(false);
     };
-    match browsers.get(choice) {
+    let sign_in = match browsers.get(choice) {
         Some(browser) => {
             println!(
                 "  {}",
                 style::dim(&format!("Reading {}'s cookies, which may ask for your keyring…", browser.name))
             );
-            auth::import_from_browser(paths, browser).await?;
+            auth::from_browser(paths, browser).await?
         }
         None => {
             println!();
@@ -63,19 +63,16 @@ pub async fn login(paths: &Paths, force: bool, optional: bool) -> Result<bool> {
                 println!("  {}\n", style::dim("cancelled"));
                 return Ok(false);
             };
-            auth::import_cookie_header(paths, &header)?;
-        }
-    }
-    // Cookies YouTube turns down aren't kept.
-    let user = match YtMusic::new(paths)?.me().await {
-        Ok(user) => user,
-        Err(err) => {
-            auth::sign_out(paths)?;
-            bail!("YouTube Music doesn't take this sign-in, so cloofy didn't keep it: {err:#}");
+            auth::from_cookie_header(&header)?
         }
     };
-    let name = user.map(|user| user.name).unwrap_or_default();
-    println!("  {} signed in as {name}\n", style::green("✓"));
+    // Cookies YouTube turns down aren't kept, and the sign-in before stays.
+    let user = match sign_in.check().await {
+        Ok(user) => user,
+        Err(err) => bail!("YouTube Music doesn't take this sign-in, so cloofy didn't keep it: {err:#}"),
+    };
+    sign_in.save(paths)?;
+    println!("  {} signed in as {}\n", style::green("✓"), user.name);
     Ok(true)
 }
 

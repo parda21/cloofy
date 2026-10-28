@@ -62,7 +62,16 @@ struct Inner {
 impl YtMusic {
     /// Signs in with the cookies saved by `cloofy login ytmusic`, if any; signed out otherwise.
     pub fn new(paths: &Paths) -> Result<Self> {
-        let api = InnerTube::new(paths.ytmusic_cookies())?;
+        Self::with_api(InnerTube::new(paths.ytmusic_cookies())?)
+    }
+
+    /// Signed in with cookies that aren't kept, to try a sign-in before it replaces the one
+    /// before.
+    pub(crate) fn unsaved(jar: cookies::Jar) -> Result<Self> {
+        Self::with_api(InnerTube::unsaved(jar)?)
+    }
+
+    fn with_api(api: InnerTube) -> Result<Self> {
         let http = cloofy_core::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
         Ok(Self { inner: Arc::new(Inner { api, http, library: Library::default() }) })
     }
