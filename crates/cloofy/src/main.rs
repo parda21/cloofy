@@ -46,6 +46,9 @@ enum Command {
         /// Sign in again, even where already signed in
         #[arg(long)]
         force: bool,
+        /// Only check, quietly: exit with 0 when signed in, 1 when not
+        #[arg(long, conflicts_with = "force")]
+        check: bool,
     },
     /// Sign out of YouTube Music; it browses and plays without an account then
     #[cfg(feature = "ytmusic")]
@@ -159,7 +162,13 @@ async fn run() -> Result<()> {
     paths.keychain = Config::load(&paths)?.keychain()?;
     init_logging(&paths, matches!(cli.command, None | Some(Command::Demo)))?;
     match cli.command {
-        Some(Command::Login { service, force }) => login(&paths, service.as_deref(), force).await,
+        Some(Command::Login { service, check: true, .. }) => {
+            if !signed_in(&paths, service.as_deref()).await? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Some(Command::Login { service, force, .. }) => login(&paths, service.as_deref(), force).await,
         #[cfg(feature = "ytmusic")]
         Some(Command::Logout { .. }) => ytmusic::logout(&paths),
         Some(Command::Doctor) => doctor::run(&paths, &services(&paths, None)?).await,
@@ -239,6 +248,25 @@ async fn login(paths: &Paths, named: Option<&str>, force: bool) -> Result<()> {
     }
     println!("  Done. Test everything with {}\n", style::bold("cloofy doctor"));
     Ok(())
+}
+
+/// Whether the service `named`, or every one in use, has a sign-in saved, wherever it keeps
+/// it: files or the keychain. Nothing goes online, so the installer can ask in passing.
+async fn signed_in(paths: &Paths, named: Option<&str>) -> Result<bool> {
+    for service in services(paths, named)? {
+        let signed_in: bool = match service {
+            #[cfg(feature = "spotify")]
+            Service::Spotify => spotify::signed_in(paths, &Config::load(paths)?).await?,
+            #[cfg(feature = "ytmusic")]
+            Service::YouTubeMusic => ytmusic::signed_in(paths)?,
+            #[allow(unreachable_patterns)]
+            other => bail!("{} isn't built into this cloofy", other.name()),
+        };
+        if !signed_in {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Plays a URI or link of a service without the interface.

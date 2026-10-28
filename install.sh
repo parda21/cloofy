@@ -991,9 +991,18 @@ heading "Sign in"
 # Without YouTube Music, `cloofy login` is Spotify's, as it has been before 0.5.
 spotify_login=(login)
 if $ytmusic; then spotify_login=(login spotify); fi
+
+# Whether cloofy has the sign-in that `cloofy login` with these arguments makes. Asked rather than
+# looked for, as with credentials = "keychain" it isn't in a file.
+signed_in_with() {
+	"$bin" "$@" --check </dev/null >/dev/null 2>&1
+}
+
 signed_in=false
 if $spotify; then
-	if [ -f "$data_dir/webapi-token.json" ] && [ -d "$data_dir/session" ]; then
+	# A package manager's cloofy from before 0.5 knows no --check; its files tell then.
+	if signed_in_with "${spotify_login[@]}" ||
+		{ [ -f "$data_dir/webapi-token.json" ] && [ -d "$data_dir/session" ]; }; then
 		signed_in=true
 		ok "Signed in to Spotify"
 	elif [ -z "$client_id" ]; then
@@ -1017,7 +1026,7 @@ fi
 
 if $ytmusic; then
 	if $spotify; then printf '\n'; fi
-	if grep -q LOGIN_INFO "$data_dir/ytmusic/cookies.txt" 2>/dev/null; then
+	if signed_in_with login ytmusic; then
 		ok "Signed in to YouTube Music"
 	elif $interactive; then
 		note "YouTube Music plays without an account. Signing in adds your library and likes:"

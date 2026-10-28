@@ -37,6 +37,13 @@ pub async fn login(paths: &Paths, config: &Config, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Whether both sign-ins are saved, the Web API's with the user's app and librespot's.
+pub async fn signed_in(paths: &Paths, config: &Config) -> Result<bool> {
+    let Ok(client_id) = config.client_id(paths) else { return Ok(false) };
+    let api = WebApi::new(client_id, paths.webapi_token())?;
+    Ok(api.is_logged_in().await && session::is_logged_in(paths)?)
+}
+
 /// What `cloofy doctor` finds through the Web API and through librespot, each section handed
 /// to `report` as soon as it is done.
 pub async fn doctor(paths: &Paths, config: &Config, mut report: impl FnMut(Section)) -> Result<()> {

@@ -79,6 +79,11 @@ pub async fn login(paths: &Paths, force: bool, optional: bool) -> Result<bool> {
     Ok(true)
 }
 
+/// Whether a sign-in is saved.
+pub fn signed_in(paths: &Paths) -> Result<bool> {
+    Ok(YtMusic::new(paths)?.signed_in())
+}
+
 /// Forgets the sign-in; YouTube Music browses and plays signed out from then on.
 pub fn logout(paths: &Paths) -> Result<()> {
     let signed_in = YtMusic::new(paths)?.signed_in();
