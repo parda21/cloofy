@@ -558,18 +558,36 @@ fn is_ours(desktop_entry: &Path) -> bool {
 }
 
 /// Writes `content` unless the file has it already, through a temporary file so that a reader
-/// never sees half of it.
+/// never sees half of it. A symlink, as stow or chezmoi put in place, stays one: the file it
+/// points to gets the content, and keeps its permissions.
 fn write_if_changed(path: &Path, content: &str) -> Result<()> {
     if fs::read_to_string(path).is_ok_and(|current| current == content) {
         return Ok(());
     }
+    let path = &link_target(path);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).with_context(|| format!("Couldn't create {}", dir.display()))?;
     }
     let file_name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
     let temporary = path.with_file_name(format!(".{file_name}.cloofy"));
     fs::write(&temporary, content).with_context(|| format!("Couldn't write {}", temporary.display()))?;
+    if let Ok(metadata) = fs::metadata(path) {
+        fs::set_permissions(&temporary, metadata.permissions())
+            .with_context(|| format!("Couldn't write {}", temporary.display()))?;
+    }
     fs::rename(&temporary, path).with_context(|| format!("Couldn't write {}", path.display()))
+}
+
+/// The file at the end of `path`'s symlinks, or `path` itself where it is none.
+fn link_target(path: &Path) -> PathBuf {
+    let mut path = path.to_path_buf();
+    // As many as Linux follows.
+    for _ in 0..40 {
+        let Ok(target) = fs::read_link(&path) else { break };
+        // A relative target starts from the link's folder; an absolute one replaces it all.
+        path = path.parent().unwrap_or(Path::new("")).join(target);
+    }
+    path
 }
 
 /// Removes a file; whether there was one.
@@ -648,6 +666,28 @@ mod tests {
         let err = remove_block_from(&path, "//").unwrap_err();
         assert!(format!("{err:#}").contains(&path.display().to_string()), "says which file: {err:#}");
         assert_eq!(fs::read_to_string(&path).unwrap(), broken, "the user's entries and the brace stay");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn writes_through_a_symlink() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = env::temp_dir().join(format!("cloofy-omarchy-symlink-{}", std::process::id()));
+        let dotfiles = dir.join("dotfiles/hypr");
+        fs::create_dir_all(&dotfiles).unwrap();
+        fs::create_dir_all(dir.join("config")).unwrap();
+        let real = dotfiles.join("bindings.lua");
+        fs::write(&real, "-- mine\n").unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.join("config/bindings.lua");
+        symlink("../dotfiles/hypr/bindings.lua", &link).unwrap();
+
+        write_if_changed(&link, "-- mine\n-- cloofy's\n").unwrap();
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "the link stays a link");
+        assert_eq!(fs::read_to_string(&real).unwrap(), "-- mine\n-- cloofy's\n");
+        assert_eq!(fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600, "the mode stays");
+        assert!(!dotfiles.join(".bindings.lua.cloofy").exists());
         fs::remove_dir_all(dir).unwrap();
     }
 
