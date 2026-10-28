@@ -739,8 +739,11 @@ else
       Try again later, or pick one at https://github.com/$repo/releases and set CLOOFY_VERSION to its tag."
 	fi
 
+	# Copied next to the cloofy there, then moved over it in one step: one that is running keeps
+	# its file, and nothing ever starts half of the new one.
 	install_binary() {
-		$sudo install -m 755 "$1" "$bin_dir/cloofy"
+		$sudo install -m 755 "$1" "$bin_dir/.cloofy.new"
+		$sudo mv -f "$bin_dir/.cloofy.new" "$bin_dir/cloofy"
 	}
 
 	installed=false
