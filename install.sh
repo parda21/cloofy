@@ -719,19 +719,24 @@ else
 		$sudo mkdir -p "$bin_dir"
 	fi
 
-	if [ -n "${CLOOFY_VERSION:-}" ]; then
-		tag=$CLOOFY_VERSION
-	else
-		tag=$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null |
-			sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1 || true)
+	# A checkout of cloofy that has this script as a file installs itself, for trying out changes.
+	# Piped from curl the script is no file, and the folder it runs in is anyone's.
+	source_dir=""
+	script=${BASH_SOURCE[0]:-}
+	if [ -f "$script" ] && [ -f "$(dirname "$script")/crates/cloofy/Cargo.toml" ]; then
+		source_dir=$(cd "$(dirname "$script")" && pwd)
 	fi
 
-	# A checkout of cloofy next to the script installs itself, for trying out changes.
-	source_dir=$(dirname "$0")
-	if [ -f "$source_dir/crates/cloofy/Cargo.toml" ]; then
-		source_dir=$(cd "$source_dir" && pwd)
-	else
-		source_dir=""
+	tag=""
+	if [ -n "${CLOOFY_VERSION:-}" ]; then
+		tag=$CLOOFY_VERSION
+	elif [ -z "$source_dir" ]; then
+		if download "https://api.github.com/repos/$repo/releases/latest" "$tmp/latest.json" 2>/dev/null; then
+			tag=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$tmp/latest.json" | head -n 1 || true)
+		fi
+		# Without a release, there would be nothing checked to download, and no code to build.
+		[ -n "$tag" ] || fail "Couldn't look up the latest release on GitHub, which may limit requests for a while.
+      Try again later, or pick one at https://github.com/$repo/releases and set CLOOFY_VERSION to its tag."
 	fi
 
 	install_binary() {
@@ -739,7 +744,7 @@ else
 	}
 
 	installed=false
-	if [ -z "$source_dir" ] && [ -n "$tag" ]; then
+	if [ -z "$source_dir" ]; then
 		base=${CLOOFY_RELEASE_URL:-https://github.com/$repo/releases/download/$tag}
 		archive="cloofy-$variant-$target.tar.gz"
 		# Releases before 0.5 have Spotify's build only, named without the service.
@@ -774,10 +779,8 @@ else
 			run "Building cloofy from $(pretty "$source_dir")" \
 				cargo install --locked --root "$tmp/build" --path "$source_dir/crates/cloofy" "${features[@]}" || exit 1
 		else
-			ref=()
-			[ -n "$tag" ] && ref=(--tag "$tag")
-			run "Building cloofy from source, this takes a few minutes" \
-				cargo install --locked --root "$tmp/build" --git "https://github.com/$repo" ${ref[@]+"${ref[@]}"} "${features[@]}" cloofy || exit 1
+			run "Building cloofy $tag from source, this takes a few minutes" \
+				cargo install --locked --root "$tmp/build" --git "https://github.com/$repo" --tag "$tag" "${features[@]}" cloofy || exit 1
 		fi
 		install_binary "$tmp/build/bin/cloofy"
 	fi
