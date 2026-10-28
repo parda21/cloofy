@@ -25,7 +25,7 @@ pub async fn run() -> Result<()> {
     }
     println!("  {} cloofy {} is out, this is {current}", style::cyan("↑"), style::bold(release.version()));
     if let Some(manager) = update::PackageManager::of_running() {
-        println!("    {}\n", manager.how_to_update());
+        println!("    {}\n", manager.how_to_update(variant));
         return Ok(());
     }
     let mut progress = Progress::default();

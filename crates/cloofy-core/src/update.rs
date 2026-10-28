@@ -31,7 +31,8 @@ pub enum PackageManager {
     /// The system's, such as pacman with cloofy-bin from the AUR.
     System,
     Nix,
-    /// mise, with `ubi:parda21/cloofy`; it keeps each version in a folder of its own.
+    /// mise, with `github:parda21/cloofy[matching=…]`; it keeps each version in a folder of its
+    /// own.
     Mise,
 }
 
@@ -63,14 +64,23 @@ impl PackageManager {
         }
     }
 
-    /// How to update cloofy, as a sentence.
-    pub fn how_to_update(self) -> &'static str {
+    /// How to update the `variant` build of cloofy, as a sentence.
+    pub fn how_to_update(self, variant: &str) -> String {
         match self {
-            Self::Homebrew => "Update with brew upgrade cloofy",
-            Self::System => "Update with your package manager",
-            Self::Nix => "Update with Nix",
-            Self::Mise => "Update with mise upgrade",
+            Self::Homebrew => format!("Update with brew upgrade {}", homebrew_formula(variant)),
+            Self::System => "Update with your package manager".into(),
+            Self::Nix => "Update with Nix".into(),
+            Self::Mise => "Update with mise upgrade".into(),
         }
+    }
+}
+
+/// Homebrew's formula for the `variant` build: `cloofy` is Spotify's, the others are named
+/// after theirs.
+fn homebrew_formula(variant: &str) -> String {
+    match variant {
+        "ytmusic" | "full" => format!("cloofy-{variant}"),
+        _ => "cloofy".into(),
     }
 }
 
@@ -183,7 +193,7 @@ fn archive_name(variant: &str, target: &str) -> String {
 /// is.
 pub async fn install(release: &Release, variant: &str, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
     if let Some(manager) = PackageManager::of_running() {
-        bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update())
+        bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update(variant))
     }
     let Some(target) = target() else {
         bail!("There is no prebuilt cloofy for this system; update with `cargo install` instead")
@@ -314,7 +324,7 @@ mod tests {
         assert_eq!(of("/home/linuxbrew/.linuxbrew/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
         assert_eq!(of("/usr/bin/cloofy"), Some(PackageManager::System));
         assert_eq!(
-            of("/home/sam/.local/share/mise/installs/ubi-parda21-cloofy/0.3.0/cloofy"),
+            of("/home/sam/.local/share/mise/installs/github-parda21-cloofy/0.3.0/cloofy"),
             Some(PackageManager::Mise)
         );
         assert_eq!(of("/home/sam/.local/bin/cloofy"), None);
@@ -328,6 +338,15 @@ mod tests {
         assert_eq!(of("/home/me/.cargo/bin/cloofy"), None);
         assert_eq!(of("/home/me/cloofy/target/release/cloofy"), None);
         assert_eq!(of("/usr/bin-old/cloofy"), None);
+    }
+
+    #[test]
+    fn homebrew_upgrades_the_formula_of_the_build() {
+        let brew = |variant| PackageManager::Homebrew.how_to_update(variant);
+        assert_eq!(brew("spotify"), "Update with brew upgrade cloofy");
+        assert_eq!(brew("ytmusic"), "Update with brew upgrade cloofy-ytmusic");
+        assert_eq!(brew("full"), "Update with brew upgrade cloofy-full");
+        assert_eq!(PackageManager::Mise.how_to_update("full"), "Update with mise upgrade");
     }
 
     #[test]

@@ -150,6 +150,13 @@ pub enum Update {
     },
 }
 
+/// That `release` is out, and how `manager` updates this build to it.
+fn managed_update(release: &Release, manager: PackageManager) -> String {
+    // Only builds with a service look for updates, and each has its own package.
+    let variant = backend::VARIANT.unwrap_or_default();
+    format!("cloofy {} is out · {}", release.version(), manager.how_to_update(variant))
+}
+
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
@@ -864,9 +871,7 @@ impl App {
     fn announce(&mut self, update: &Update) {
         match update {
             Update::Available(release) => self.notice(format!("cloofy {} is out · U updates", release.version())),
-            Update::Managed { release, manager } => {
-                self.notice(format!("cloofy {} is out · {}", release.version(), manager.how_to_update()))
-            }
+            Update::Managed { release, manager } => self.notice(managed_update(release, *manager)),
             Update::Installing { .. } | Update::Installed { .. } => {}
         }
     }
@@ -899,9 +904,7 @@ impl App {
         match &self.update {
             None => Command::Update.label().to_owned(),
             Some(Update::Available(release)) => format!("Update to cloofy {}", release.version()),
-            Some(Update::Managed { release, manager }) => {
-                format!("cloofy {} is out · {}", release.version(), manager.how_to_update())
-            }
+            Some(Update::Managed { release, manager }) => managed_update(release, *manager),
             Some(Update::Installing { .. }) => "Updating cloofy…".to_owned(),
             Some(Update::Installed { release, .. }) => format!("Restart into cloofy {}", release.version()),
         }
