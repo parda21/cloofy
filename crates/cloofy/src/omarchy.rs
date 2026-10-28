@@ -9,7 +9,7 @@ use std::{
     env, fs,
     io::{self, BufRead, IsTerminal, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{self, Command},
     thread,
     time::{Duration, Instant},
 };
@@ -83,20 +83,27 @@ pub enum Action {
     },
     /// Take out everything `install` added
     Remove,
-    /// Show what is set up
+    /// Show what is set up; exits with 1 when nothing is
     Status,
 }
 
 pub fn run(action: Action) -> Result<()> {
+    // From the exit code of `status`, the installer tells whether to offer the setup or to
+    // bring it up to date.
     let Some(omarchy) = Omarchy::find() else {
         println!("\n  {} Omarchy not found, so there is nothing to set up.\n", style::dim("–"));
+        if matches!(action, Action::Status) {
+            process::exit(1);
+        }
         return Ok(());
     };
     match action {
         Action::Install { bind_music_key, yes } => omarchy.install(omarchy.music_key(bind_music_key, yes)),
         Action::Remove => omarchy.remove(),
         Action::Status => {
-            omarchy.status();
+            if !omarchy.status() {
+                process::exit(1);
+            }
             Ok(())
         }
     }
@@ -195,11 +202,14 @@ impl Omarchy {
         Ok(())
     }
 
-    fn status(&self) {
+    /// Shows what is set up; returns whether anything is. An edited theme template doesn't
+    /// count, as `remove` leaves it.
+    fn status(&self) -> bool {
         println!("\n  {}\n", style::bold("cloofy for Omarchy"));
         let shell = shell_plugins();
         let in_bar = shell.as_deref().map(|plugins| plugin_enabled(plugins, PLUGIN_ID));
-        match (self.plugin_dir().join("manifest.json").is_file(), in_bar) {
+        let widget = self.plugin_dir().join("manifest.json").is_file();
+        match (widget, in_bar) {
             (true, Some(true)) => ok("Bar widget", &format!("{PLUGIN_ID}, in the bar")),
             (true, Some(false)) => {
                 skipped("Bar widget", "installed, not in the bar · `omarchy plugin enable cloofy.nowplaying`")
@@ -212,19 +222,20 @@ impl Omarchy {
             (false, true) => ok("Theme", &format!("{} brings colors for cloofy", self.theme_name())),
             (false, false) => skipped("Theme", "cloofy derives its colors from the theme itself"),
         }
-        let menu = fs::read_to_string(self.menu()).unwrap_or_default();
-        if has_block(&menu, "//") {
+        let menu = fs::read_to_string(self.menu()).is_ok_and(|menu| has_block(&menu, "//"));
+        if menu {
             ok("Menu", "Music in the Omarchy menu");
         } else {
             skipped("Menu", "not installed");
         }
-        if is_ours(&self.desktop_entry()) {
+        let launcher = is_ours(&self.desktop_entry());
+        if launcher {
             ok("Launcher", "cloofy in the app launcher");
         } else {
             skipped("Launcher", "not installed");
         }
-        let bindings = fs::read_to_string(self.bindings()).unwrap_or_default();
-        if has_block(&bindings, "--") {
+        let binding = fs::read_to_string(self.bindings()).is_ok_and(|bindings| has_block(&bindings, "--"));
+        if binding {
             ok("Super+Shift+M", "opens cloofy");
         } else if let Some(path) = self.own_music_key() {
             skipped("Super+Shift+M", &format!("as {} binds it", path.display()));
@@ -232,6 +243,7 @@ impl Omarchy {
             skipped("Super+Shift+M", "opens Spotify, as Omarchy has it");
         }
         println!();
+        widget || menu || launcher || binding
     }
 
     fn install_widget(&self) -> Result<Step> {

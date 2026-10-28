@@ -551,14 +551,11 @@ if $uninstall; then
 		"Remove everything|also settings, sign-ins and caches" \
 		"Cancel"
 	[ "$choice" -eq 2 ] && exit 0
-	# While the binary is still there: it knows what it added to Omarchy.
-	if [ "$(uname -s)" = Linux ] && "$bin" omarchy --help </dev/null >/dev/null 2>&1; then
-		set_up=false
-		if "$bin" omarchy status </dev/null >/dev/null 2>&1; then
-			set_up=true
-		fi
+	# While the binary is still there: it knows what it added to Omarchy. `status` fails where
+	# nothing is set up, as it does in a cloofy without Omarchy's setup.
+	if [ "$(uname -s)" = Linux ] && "$bin" omarchy status </dev/null >/dev/null 2>&1; then
 		if run "Removing cloofy from Omarchy" "$bin" omarchy remove; then
-			if $set_up; then ok "Removed cloofy from Omarchy"; fi
+			ok "Removed cloofy from Omarchy"
 		else
 			warn "Some of cloofy may be left in Omarchy's settings"
 		fi
@@ -1046,7 +1043,8 @@ if $omarchy; then
 	if ! "$bin" omarchy --help </dev/null >/dev/null 2>&1; then
 		note "This version of cloofy has no Omarchy setup yet."
 	elif "$bin" omarchy status </dev/null >/dev/null 2>&1; then
-		# Set up before, so brought up to date: a release may change the bar widget.
+		# Set up before, as `status` succeeds only then, so brought up to date: a release may
+		# change the bar widget.
 		if run "Updating cloofy in Omarchy" "$bin" omarchy install; then
 			ok "Bar widget, theme, menu and launcher are up to date"
 		fi
