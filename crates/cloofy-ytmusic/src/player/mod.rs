@@ -30,7 +30,7 @@ use tokio::{
 };
 
 use self::{
-    mpv::{Mpv, MpvEvent},
+    mpv::{Events, Mpv, MpvEvent},
     queue::Queue,
     stream::Stream,
 };
@@ -49,6 +49,8 @@ const APPEND_BEFORE_END_MS: u32 = 20_000;
 const ATTEMPTS: u8 = 3;
 /// Playback stops after this many songs in a row couldn't play.
 const MAX_SKIPS_IN_A_ROW: u32 = 5;
+/// A seek mpv took but never said it finished holds back the position this long at most.
+const SEEK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The YouTube Music player.
 #[derive(Clone)]
@@ -99,37 +101,10 @@ impl Player {
         let (commands, commands_rx) = mpsc::unbounded_channel();
         let (jobs, jobs_rx) = mpsc::unbounded_channel();
         let engine = Engine {
-            client,
-            events,
             mpv: Some(mpv),
             mpv_args,
-            mpv_events: mpv_tx,
-            jobs,
             cache_dir: Some(paths.cache.join("ytmusic").join("yt-dlp")),
-            queue: Queue::default(),
-            adding: VecDeque::new(),
-            streams: HashMap::new(),
-            resolving: HashSet::new(),
-            unresolvable: HashSet::new(),
-            attempts: HashMap::new(),
-            skipped_in_a_row: 0,
-            generation: 0,
-            loader: None,
-            context_loaded: false,
-            starting: None,
-            current: None,
-            next: None,
-            waiting: None,
-            started: false,
-            paused: false,
-            position_ms: 0,
-            duration_ms: None,
-            seeking: None,
-            volume,
-            active: false,
-            autoplay: Autoplay::default(),
-            ended_at: None,
-            reported: None,
+            ..Engine::new(client, events, mpv_tx, jobs, volume)
         };
         let _ = engine.events.send(PlayerEvent::VolumeChanged { volume });
         tokio::spawn(engine.run(commands_rx, mpv_rx, jobs_rx));
@@ -258,7 +233,7 @@ struct Engine {
     events: UnboundedSender<PlayerEvent>,
     mpv: Option<Mpv>,
     mpv_args: Vec<String>,
-    mpv_events: UnboundedSender<MpvEvent>,
+    mpv_events: Events,
     jobs: UnboundedSender<Job>,
     cache_dir: Option<PathBuf>,
     queue: Queue,
@@ -283,6 +258,9 @@ struct Engine {
     current: Option<Loaded>,
     /// The song after it, loaded ahead.
     next: Option<Loaded>,
+    /// The entry of a song loaded ahead that was taken out again, in case mpv had gone on to it
+    /// already, its events still on their way.
+    dropped: Option<u64>,
     /// The current song waits for its URL, to start at this position.
     waiting: Option<u32>,
     /// mpv began playing the current song.
@@ -291,8 +269,8 @@ struct Engine {
     position_ms: u32,
     /// The current song's length as mpv has it, which beats the catalog's.
     duration_ms: Option<u32>,
-    /// A seek on its way, to this position.
-    seeking: Option<u32>,
+    /// A seek mpv took, to this position, and when.
+    seeking: Option<(u32, Instant)>,
     volume: u16,
     active: bool,
     autoplay: Autoplay,
@@ -303,10 +281,54 @@ struct Engine {
 }
 
 impl Engine {
+    /// Without mpv yet, which starts with the first command that needs it.
+    fn new(
+        client: YtMusic,
+        events: UnboundedSender<PlayerEvent>,
+        mpv_events: Events,
+        jobs: UnboundedSender<Job>,
+        volume: u16,
+    ) -> Self {
+        Self {
+            client,
+            events,
+            mpv: None,
+            mpv_args: Vec::new(),
+            mpv_events,
+            jobs,
+            cache_dir: None,
+            queue: Queue::default(),
+            adding: VecDeque::new(),
+            streams: HashMap::new(),
+            resolving: HashSet::new(),
+            unresolvable: HashSet::new(),
+            attempts: HashMap::new(),
+            skipped_in_a_row: 0,
+            generation: 0,
+            loader: None,
+            context_loaded: false,
+            starting: None,
+            current: None,
+            next: None,
+            dropped: None,
+            waiting: None,
+            started: false,
+            paused: false,
+            position_ms: 0,
+            duration_ms: None,
+            seeking: None,
+            volume,
+            active: false,
+            autoplay: Autoplay::default(),
+            ended_at: None,
+            reported: None,
+        }
+    }
+
     async fn run(
         mut self,
         mut commands: UnboundedReceiver<Command>,
-        mut mpv_events: UnboundedReceiver<MpvEvent>,
+        mut mpv_events: UnboundedReceiver<(u64, MpvEvent)>,
         mut jobs: UnboundedReceiver<Job>,
     ) {
         let mut tick = tokio::time::interval(POSITION_INTERVAL);
@@ -317,7 +339,7 @@ impl Engine {
                     Some(Command::Shutdown) | None => break,
                     Some(command) => self.command(command).await,
                 },
-                Some(event) = mpv_events.recv() => self.mpv_event(event).await,
+                Some((instance, event)) = mpv_events.recv() => self.mpv_event(instance, event).await,
                 Some(job) = jobs.recv() => self.job(job).await,
                 _ = tick.tick() => self.tick().await,
             };
@@ -412,9 +434,7 @@ impl Engine {
         position_ms: u32,
         shuffle: Option<bool>,
     ) -> Result<()> {
-        // Every start makes this the player that plays, also after another service's played.
-        self.active = true;
-        self.emit(PlayerEvent::Activated);
+        self.activate();
         self.generation += 1;
         self.context_loaded = false;
         self.autoplay = Autoplay::default();
@@ -440,10 +460,20 @@ impl Engine {
         Ok(())
     }
 
+    /// Every start makes this the player that plays, also after another service's played.
+    fn activate(&mut self) {
+        self.active = true;
+        self.emit(PlayerEvent::Activated);
+        // The interface may have shown another player's queue since, so this one's is reported
+        // again, even unchanged.
+        self.reported = None;
+    }
+
     /// Silences mpv; what was loaded is gone.
     async fn stop_audio(&mut self) -> Result<()> {
         self.current = None;
         self.next = None;
+        self.dropped = None;
         self.waiting = None;
         self.started = false;
         self.seeking = None;
@@ -488,7 +518,11 @@ impl Engine {
         let start = (start_ms > 0).then(|| f64::from(start_ms) / 1000.0);
         let entry = self.mpv().await?.load(&url, false, start).await?;
         self.current = Some(Loaded { entry, uri: track.uri });
+        // Loading in place of what played empties mpv's playlist, the song loaded ahead too.
+        self.next = None;
+        self.dropped = None;
         self.started = false;
+        self.seeking = None;
         Ok(())
     }
 
@@ -516,8 +550,10 @@ impl Engine {
         if self.next.as_ref().map(|n| &n.uri) == wanted.as_ref() {
             return Ok(());
         }
-        if self.next.take().is_some() {
-            // Removes every entry but the one that plays.
+        if let Some(next) = self.next.take() {
+            // Removes every entry but the one that plays: the one loaded ahead, unless mpv has
+            // gone on to it already, which its start then shows.
+            self.dropped = Some(next.entry);
             self.mpv().await?.command(json!(["playlist-clear"])).await?;
         }
         let Some(uri) = wanted else { return Ok(()) };
@@ -608,9 +644,12 @@ impl Engine {
         if self.current.is_none() {
             return Ok(());
         }
-        self.seeking = Some(position_ms);
         let seconds = f64::from(position_ms) / 1000.0;
-        self.mpv().await?.command(json!(["seek", seconds, "absolute"])).await.map(drop)
+        // mpv turns a seek down while it still opens the song; only one it took holds back the
+        // position until it got there.
+        self.mpv().await?.command(json!(["seek", seconds, "absolute"])).await?;
+        self.seeking = Some((position_ms, Instant::now()));
+        Ok(())
     }
 
     /// Nothing is left to play, unless the radio is on its way.
@@ -631,6 +670,10 @@ impl Engine {
 
     /// Reports the position, and loads the next song when the end draws near.
     async fn tick(&mut self) -> Result<()> {
+        if self.seeking.is_some_and(|(_, since)| since.elapsed() >= SEEK_TIMEOUT) {
+            tracing::debug!("mpv didn't finish seeking");
+            self.seeking = None;
+        }
         if !self.started || self.paused || self.seeking.is_some() || self.current.is_none() {
             return Ok(());
         }
@@ -641,7 +684,13 @@ impl Engine {
         Ok(())
     }
 
-    async fn mpv_event(&mut self, event: MpvEvent) -> Result<()> {
+    async fn mpv_event(&mut self, instance: u64, event: MpvEvent) -> Result<()> {
+        // An mpv that is gone, such as one that failed to start, says so once its connection
+        // closes, maybe after another one started; its playlist entries aren't this one's either.
+        if self.mpv.as_ref().is_none_or(|mpv| mpv.instance != instance) {
+            tracing::debug!("mpv {instance}, gone: {event:?}");
+            return Ok(());
+        }
         if !matches!(event, MpvEvent::Property { id: mpv::TIME_POS, .. }) {
             tracing::debug!("mpv: {event:?}");
         }
@@ -672,6 +721,12 @@ impl Engine {
             MpvEvent::StartFile { entry } => {
                 if self.next.as_ref().is_some_and(|next| next.entry == entry) {
                     self.moved_on().await?;
+                } else if self.dropped == Some(entry) {
+                    // mpv went on to a song that isn't next any more before it was taken out:
+                    // the one before ended, and what comes next now plays instead.
+                    tracing::debug!("mpv went on to a song taken out of its playlist");
+                    self.dropped = None;
+                    self.ended().await?;
                 }
             }
             MpvEvent::PlaybackRestart => {
@@ -694,7 +749,7 @@ impl Engine {
                         PlayerEvent::Playing { position_ms }
                     });
                     self.sync_next().await?;
-                } else if let Some(position_ms) = self.seeking.take() {
+                } else if let Some((position_ms, _)) = self.seeking.take() {
                     self.position_ms = position_ms;
                     self.emit(PlayerEvent::Seeked { position_ms });
                     // Maybe close to the end now.
@@ -718,7 +773,9 @@ impl Engine {
                 self.mpv = None;
                 if self.current.take().is_some() || self.waiting.take().is_some() {
                     self.next = None;
+                    self.dropped = None;
                     self.started = false;
+                    self.seeking = None;
                     self.emit(PlayerEvent::Stopped);
                 }
             }
@@ -736,7 +793,9 @@ impl Engine {
         }
         let track = track.expect("checked above");
         self.current = Some(next);
+        self.dropped = None;
         self.started = false;
+        self.seeking = None;
         self.position_ms = 0;
         self.emit(PlayerEvent::TrackChanged { track: current_track(&track) });
         // The song that ended is still first in mpv's playlist.
@@ -974,5 +1033,169 @@ mod tests {
         let current = current_track(&track);
         assert_eq!(current.album_uri, None);
         assert_eq!(current.cover_url_large.as_deref(), Some("https://lh3.googleusercontent.com/a=w800-h800-l90-rj"));
+    }
+
+    type Reports = (UnboundedReceiver<PlayerEvent>, UnboundedReceiver<(u64, MpvEvent)>);
+
+    /// An engine that never loads a context, with what it reports and mpv's events, which the
+    /// test hands it.
+    fn idle_engine(name: &str) -> (Engine, Reports) {
+        let root = std::env::temp_dir().join(format!("cloofy-ytm-player-{name}-{}", std::process::id()));
+        let paths =
+            Paths { config: root.join("config"), data: root.join("data"), cache: root.join("cache"), keychain: false };
+        let (events, events_rx) = mpsc::unbounded_channel();
+        let (mpv_events, mpv_rx) = mpsc::unbounded_channel();
+        let (jobs, _) = mpsc::unbounded_channel();
+        let engine = Engine::new(YtMusic::new(&paths).unwrap(), events, mpv_events, jobs, u16::MAX / 2);
+        (engine, (events_rx, mpv_rx))
+    }
+
+    /// [`idle_engine`] with mpv running, silently; `None` where mpv isn't installed.
+    async fn engine(name: &str) -> Option<(Engine, Reports)> {
+        let (mut engine, events) = idle_engine(name);
+        engine.mpv_args = vec!["--ao=null".into()];
+        match engine.mpv().await {
+            Ok(_) => Some((engine, events)),
+            Err(err) if format!("{err:#}").contains("not installed") => {
+                eprintln!("skipped: {err:#}");
+                None
+            }
+            Err(err) => panic!("{err:#}"),
+        }
+    }
+
+    /// A song whose stream is a tone mpv makes itself.
+    fn tone(engine: &mut Engine, id: &str, hz: u32, seconds: u32) -> Track {
+        let url = format!("av://lavfi:sine=frequency={hz}:duration={seconds}");
+        engine.streams.insert(id.into(), Stream { url, until: Instant::now() + Duration::from_secs(3600) });
+        Track {
+            uri: format!("{TRACK}{id}"),
+            name: id.into(),
+            artists: Vec::new(),
+            artist_uris: Vec::new(),
+            album: String::new(),
+            album_uri: String::new(),
+            duration_ms: seconds * 1000,
+            image_url: None,
+        }
+    }
+
+    /// Hands mpv's events to the engine until `done`; false when that takes too long.
+    async fn pump(
+        engine: &mut Engine,
+        mpv_events: &mut UnboundedReceiver<(u64, MpvEvent)>,
+        done: impl Fn(&Engine) -> bool,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !done(engine) {
+            match tokio::time::timeout_at(deadline, mpv_events.recv()).await {
+                Ok(Some((instance, event))) => engine.mpv_event(instance, event).await.unwrap(),
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    #[tokio::test]
+    async fn each_start_reports_the_queue_again() {
+        let (mut engine, (mut events, _)) = idle_engine("report");
+        let track = tone(&mut engine, "a", 440, 10);
+        engine.queue.load("ytmusic:album:a".into(), vec![track], None, false);
+        let mut reports = || {
+            std::iter::from_fn(|| events.try_recv().ok())
+                .filter(|e| matches!(e, PlayerEvent::QueueChanged { .. }))
+                .count()
+        };
+        engine.queue_changed().await.unwrap();
+        engine.queue_changed().await.unwrap();
+        assert_eq!(reports(), 1, "a queue that didn't change isn't reported again");
+        // Another service played meanwhile, and the same album starts here again.
+        engine.activate();
+        engine.queue_changed().await.unwrap();
+        assert_eq!(reports(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_mpv_that_failed_to_start_leaves_the_next_one_alone() {
+        let Some((mut engine, (_, mut mpv_events))) = engine("restart").await else { return };
+        // mpv went away; one started in its place quits at once, and says so once it's gone…
+        engine.mpv = None;
+        let failed = Mpv::spawn(&["--no-such-option".into()], engine.mpv_events.clone()).await;
+        assert!(failed.is_err());
+        // …which the engine hears only after yet another one started.
+        let instance = engine.mpv().await.unwrap().instance;
+        while let Ok(Some((from, event))) = tokio::time::timeout(Duration::from_millis(500), mpv_events.recv()).await {
+            engine.mpv_event(from, event).await.unwrap();
+        }
+        let mpv = engine.mpv.as_mut().expect("the mpv that started is kept");
+        assert_eq!(mpv.instance, instance);
+        assert!(mpv.get("mpv-version").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_seek_mpv_turns_down_holds_nothing_back() {
+        let Some((mut engine, (mut events, _))) = engine("seek").await else { return };
+        // mpv doesn't seek in a song it is still opening, such as a pipe nothing is written to.
+        let dir = std::env::temp_dir().join(format!("cloofy-ytm-seek-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let pipe = dir.join("song");
+        let path = std::ffi::CString::new(pipe.to_str().unwrap()).unwrap();
+        // SAFETY: a valid C string, for a path in a folder of this test.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+        let track = tone(&mut engine, "pipe", 440, 10);
+        engine.streams.get_mut("pipe").unwrap().url = pipe.display().to_string();
+        engine.queue.load("c".into(), vec![track], None, false);
+        engine.begin(0).await.unwrap();
+        assert!(engine.seek(5_000).await.is_err());
+        assert!(engine.seeking.is_none(), "a seek turned down holds back no position");
+
+        // One mpv took but never finished stops holding it back after a while.
+        engine.started = true;
+        engine.seeking = Some((5_000, Instant::now() - SEEK_TIMEOUT));
+        engine.tick().await.unwrap();
+        assert!(engine.seeking.is_none());
+        let reported = std::iter::from_fn(|| events.try_recv().ok());
+        assert!(reported.into_iter().any(|e| matches!(e, PlayerEvent::PositionChanged { .. })));
+        drop(engine);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_song_mpv_went_on_to_before_the_queue_changed_doesnt_play_unseen() {
+        let Some((mut engine, (mut events, mut mpv_events))) = engine("dropped").await else { return };
+        let first = tone(&mut engine, "first", 440, 1);
+        let second = tone(&mut engine, "second", 550, 30);
+        let queued = tone(&mut engine, "queued", 660, 30);
+        engine.queue.load("c".into(), vec![first, second.clone()], None, false);
+        engine.begin(0).await.unwrap();
+        // Close to its end from the start, the first song has the second loaded after it.
+        assert!(pump(&mut engine, &mut mpv_events, |e| e.next.is_some()).await);
+        let ahead = engine.next.as_ref().unwrap().entry;
+        // mpv goes on to it while the engine is busy with a song being queued, which comes
+        // before the second.
+        let mut held = Vec::new();
+        while held.last().is_none_or(|(_, event)| *event != MpvEvent::StartFile { entry: ahead }) {
+            let event = tokio::time::timeout(Duration::from_secs(10), mpv_events.recv()).await;
+            held.push(event.unwrap().unwrap());
+        }
+        engine.queue.add(queued.clone());
+        engine.queue_changed().await.unwrap();
+        for (instance, event) in held {
+            engine.mpv_event(instance, event).await.unwrap();
+        }
+        // The queued song plays, and shows; the second one comes after it.
+        assert_eq!(engine.queue.current().map(|t| &t.uri), Some(&queued.uri));
+        assert_eq!(engine.queue.peek().map(|t| &t.uri), Some(&second.uri));
+        let entry = engine.current.as_ref().map(|c| c.entry);
+        let playlist = engine.mpv.as_mut().unwrap().get("playlist").await.unwrap();
+        let listed: Vec<_> =
+            playlist.as_array().unwrap().iter().map(|e| (e["id"].as_u64(), e["filename"].clone())).collect();
+        assert_eq!(listed, [(entry, json!(engine.streams["queued"].url))], "mpv has only the queued song");
+        let shown = std::iter::from_fn(|| events.try_recv().ok()).filter_map(|event| match event {
+            PlayerEvent::TrackChanged { track } => Some(track.uri),
+            _ => None,
+        });
+        assert_eq!(shown.last(), Some(queued.uri));
     }
 }

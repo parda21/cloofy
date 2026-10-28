@@ -341,7 +341,10 @@ impl App {
 mod tests {
     use std::collections::BTreeMap;
 
-    use cloofy_core::paths::Paths;
+    use cloofy_core::{
+        paths::Paths,
+        player::{PlayerEvent, QueueTrack},
+    };
     use tokio::sync::mpsc;
 
     use super::*;
@@ -350,6 +353,7 @@ mod tests {
         commands::Command,
         loader::Loader,
         preferences::Preferences,
+        queue::Queue,
         state::{SavedView, State},
     };
 
@@ -423,6 +427,27 @@ mod tests {
         assert!(app.library_note().is_some_and(|note| note.contains(problem)));
         // Its page stays for when it can start again.
         assert_eq!(app.snapshot().page.view, artist);
+    }
+
+    #[tokio::test]
+    async fn the_queue_is_the_one_of_the_service_that_plays() {
+        let mut app = app("queue", &BOTH, &[], State::default());
+        let report = |context: &str, current: &str, next: &str| PlayerEvent::QueueChanged {
+            context_uri: context.into(),
+            current: Some(current.into()),
+            next: vec![QueueTrack { uri: next.into(), provider: "context".into() }],
+        };
+        app.take_over(Service::YouTubeMusic);
+        app.on_player(Service::YouTubeMusic, report("ytmusic:album:a", "ytmusic:track:3", "ytmusic:track:4"));
+        assert!(app.queue.knows("ytmusic:track:3"));
+        // Spotify starts playing, and says what plays next there.
+        app.on_player(Service::Spotify, PlayerEvent::Playing { position_ms: 0 });
+        assert_eq!(app.queue, Queue::default(), "YouTube Music's queue goes");
+        app.on_player(Service::Spotify, report("spotify:album:b", "spotify:track:1", "spotify:track:2"));
+        assert!(app.queue.knows("spotify:track:1"));
+        // The same album plays on YouTube Music again: Spotify's queue isn't shown for it.
+        app.take_over(Service::YouTubeMusic);
+        assert_eq!(app.queue, Queue::default());
     }
 
     #[tokio::test]

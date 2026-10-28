@@ -151,7 +151,12 @@ impl Queue {
             match current.origin {
                 Origin::Queue => self.queued.push_front(current.track),
                 Origin::Autoplay => self.autoplay.push_front(current.track),
-                Origin::Context(_) => {}
+                // The context goes on from this song again, also when a queued song came before.
+                Origin::Context(index) => {
+                    if let Some(at) = self.order.iter().position(|&i| i == index) {
+                        self.position = at.checked_sub(1);
+                    }
+                }
             }
         }
         if let Origin::Context(index) = previous.origin {
@@ -167,7 +172,11 @@ impl Queue {
             self.queued.drain(..at);
             return self.advance(false);
         }
-        if let Some(at) = self.order.iter().position(|&i| self.context[i].uri == uri) {
+        // Where it comes up next: a playlist can have a song twice. One that played already is
+        // found further back.
+        let next = self.position.map_or(0, |p| p + 1).min(self.order.len());
+        let found = (next..self.order.len()).chain(0..next).find(|&at| self.context[self.order[at]].uri == uri);
+        if let Some(at) = found {
             let entry = Entry { track: self.context[self.order[at]].clone(), origin: Origin::Context(self.order[at]) };
             self.position = Some(at);
             self.history.extend(self.current.replace(entry));
@@ -313,6 +322,19 @@ mod tests {
     }
 
     #[test]
+    fn previous_to_a_queued_song_then_next_skips_nothing() {
+        let mut queue = Queue::default();
+        queue.load("ytmusic:album:a".into(), tracks(0..4), None, false);
+        queue.add(track(10));
+        assert_eq!(uri(queue.advance(false)), Some("ytmusic:track:10"));
+        assert_eq!(uri(queue.advance(false)), Some("ytmusic:track:1"));
+        assert_eq!(uri(queue.back()), Some("ytmusic:track:10"));
+        assert_eq!(upcoming(&queue)[0], ("1".into(), "context".into()));
+        assert_eq!(uri(queue.advance(false)), Some("ytmusic:track:1"), "the song gone back from comes again");
+        assert_eq!(uri(queue.advance(false)), Some("ytmusic:track:2"));
+    }
+
+    #[test]
     fn repeat_track_repeats_only_when_the_song_ends() {
         let mut queue = Queue::default();
         queue.load("c".into(), tracks(0..3), None, false);
@@ -401,6 +423,18 @@ mod tests {
         assert_eq!(uri(queue.skip_to("ytmusic:track:3")), Some("ytmusic:track:3"));
         assert_eq!(uri(queue.peek()), Some("ytmusic:track:4"));
         assert!(queue.skip_to("ytmusic:track:99").is_none());
+    }
+
+    #[test]
+    fn skips_to_where_a_song_comes_up_next() {
+        let mut queue = Queue::default();
+        let mut playlist = tracks(0..4);
+        playlist.push(track(1));
+        queue.load("c".into(), playlist, Some("ytmusic:track:3"), false);
+        assert_eq!(uri(queue.skip_to("ytmusic:track:1")), Some("ytmusic:track:1"));
+        assert!(upcoming(&queue).is_empty(), "the playlist's last song played, not its second");
+        assert_eq!(uri(queue.skip_to("ytmusic:track:2")), Some("ytmusic:track:2"), "one that played is found too");
+        assert_eq!(uri(queue.peek()), Some("ytmusic:track:3"));
     }
 
     #[test]
