@@ -297,7 +297,7 @@ impl Omarchy {
             Err(err) if err.kind() == io::ErrorKind::NotFound => None,
             Err(err) => return Err(err).with_context(|| format!("Couldn't read {}", path.display())),
         };
-        write_if_changed(&path, &add_menu_entries(current.as_deref()))?;
+        write_if_changed(&path, &add_menu_entries(current.as_deref()).with_context(|| left_alone(&path))?)?;
         Ok(Step::Done("Music in the Omarchy menu".into()))
     }
 
@@ -331,7 +331,7 @@ impl Omarchy {
     fn install_binding(&self) -> Result<Step> {
         let path = self.bindings();
         let current = fs::read_to_string(&path).with_context(|| format!("Couldn't read {}", path.display()))?;
-        let bound = add_block(&current, "--", BINDING);
+        let bound = add_block(&current, "--", BINDING).with_context(|| left_alone(&path))?;
         if bound == current {
             return Ok(Step::Done("opens cloofy instead of Spotify".into()));
         }
@@ -447,11 +447,11 @@ fn omarchy_variables(colors: &Path) -> Option<HashMap<String, String>> {
 /// The menu file with cloofy's entries in it: a file of cloofy's own where there was none,
 /// else the user's with the entries right after its opening brace, which keeps every comma
 /// of theirs valid.
-fn add_menu_entries(current: Option<&str>) -> String {
+fn add_menu_entries(current: Option<&str>) -> Result<String> {
     let Some(current) = current else {
-        return format!(
+        return Ok(format!(
             "{{\n  // {BEGIN}. `cloofy omarchy remove` takes these out again; {CREATED}.\n{MENU_ENTRIES}  // {END}\n}}\n"
-        );
+        ));
     };
     // A file cloofy created stays one, so that `remove` takes it away whole.
     let created = if current.lines().any(|line| line.contains(BEGIN) && line.contains(CREATED)) {
@@ -459,7 +459,7 @@ fn add_menu_entries(current: Option<&str>) -> String {
     } else {
         String::new()
     };
-    let current = remove_block(current, "//");
+    let current = remove_block(current, "//")?;
     let mut out = String::with_capacity(current.len() + MENU_ENTRIES.len() + 200);
     let mut placed = false;
     for line in current.split_inclusive('\n') {
@@ -485,27 +485,28 @@ fn add_menu_entries(current: Option<&str>) -> String {
         // Not an object to add to: start one.
         return add_menu_entries(None);
     }
-    out
+    Ok(out)
 }
 
 /// `text` with cloofy's block at the end, in place of one it had.
-fn add_block(text: &str, comment: &str, block: &str) -> String {
-    let mut out = remove_block(text, comment);
+fn add_block(text: &str, comment: &str, block: &str) -> Result<String> {
+    let mut out = remove_block(text, comment)?;
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
     out.push_str(&format!(
         "\n{comment} {BEGIN}. `cloofy omarchy remove` takes this out again.\n{block}{comment} {END}\n"
     ));
-    out
+    Ok(out)
 }
 
 fn has_block(text: &str, comment: &str) -> bool {
     text.lines().any(|line| line.trim_start().starts_with(&format!("{comment} {BEGIN}")))
 }
 
-/// `text` without cloofy's block, and without the blank line `add_block` put before it.
-fn remove_block(text: &str, comment: &str) -> String {
+/// `text` without cloofy's block, and without the blank line `add_block` put before it. Where
+/// the block's end line is gone, there is no telling where it ended, so that is an error.
+fn remove_block(text: &str, comment: &str) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut inside = false;
     for line in text.split_inclusive('\n') {
@@ -523,7 +524,16 @@ fn remove_block(text: &str, comment: &str) -> String {
         }
         out.push_str(line);
     }
-    out
+    anyhow::ensure!(
+        !inside,
+        "“{comment} {BEGIN}” has no “{comment} {END}” after it. Add that line where cloofy's lines end, or delete them, and try again"
+    );
+    Ok(out)
+}
+
+/// What an error about a file says first: that the file stayed as it was.
+fn left_alone(path: &Path) -> String {
+    format!("Left {} as it was", path.display())
 }
 
 /// Takes cloofy's block out of the file at `path`, and the file too where cloofy created it.
@@ -534,7 +544,7 @@ fn remove_block_from(path: &Path, comment: &str) -> Result<bool> {
         return Ok(false);
     }
     let created = text.lines().any(|line| line.contains(BEGIN) && line.contains(CREATED));
-    let rest = remove_block(&text, comment);
+    let rest = remove_block(&text, comment).with_context(|| left_alone(path))?;
     if created && rest.chars().all(|c| c.is_whitespace() || c == '{' || c == '}') {
         remove_file(path)?;
     } else {
@@ -595,28 +605,28 @@ mod tests {
 
     #[test]
     fn adds_menu_entries_without_touching_the_user_s() {
-        let added = add_menu_entries(Some(USER_MENU));
+        let added = add_menu_entries(Some(USER_MENU)).unwrap();
         let menu = parse_menu(&added);
         assert_eq!(menu["about"]["label"], "About");
         assert_eq!(menu["music"]["label"], "Music");
         assert_eq!(menu["music.open"]["action"], "omarchy-launch-or-focus-tui cloofy");
         assert!(added.contains("// \"personal\""), "comments stay");
-        assert_eq!(add_menu_entries(Some(&added)), added, "a second install changes nothing");
-        assert_eq!(remove_block(&added, "//"), USER_MENU, "remove gives back the file as it was");
+        assert_eq!(add_menu_entries(Some(&added)).unwrap(), added, "a second install changes nothing");
+        assert_eq!(remove_block(&added, "//").unwrap(), USER_MENU, "remove gives back the file as it was");
     }
 
     #[test]
     fn creates_the_menu_file_and_takes_it_away_again() {
         let dir = env::temp_dir().join(format!("cloofy-omarchy-menu-{}", std::process::id()));
         let path = dir.join("omarchy-menu.jsonc");
-        let created = add_menu_entries(None);
+        let created = add_menu_entries(None).unwrap();
         assert_eq!(parse_menu(&created)["music.next"]["label"], "Next");
-        assert_eq!(add_menu_entries(Some(&created)), created, "installing again keeps it cloofy's");
+        assert_eq!(add_menu_entries(Some(&created)).unwrap(), created, "installing again keeps it cloofy's");
         write_if_changed(&path, &created).unwrap();
         assert!(remove_block_from(&path, "//").unwrap());
         assert!(!path.exists(), "cloofy created it, so it goes");
 
-        write_if_changed(&path, &add_menu_entries(Some("{}\n"))).unwrap();
+        write_if_changed(&path, &add_menu_entries(Some("{}\n")).unwrap()).unwrap();
         assert!(remove_block_from(&path, "//").unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\n}\n", "the user's file stays, if empty");
         assert!(!remove_block_from(&path, "//").unwrap(), "nothing left to remove");
@@ -624,8 +634,26 @@ mod tests {
     }
 
     #[test]
+    fn leaves_a_file_alone_whose_block_lost_its_end() {
+        let dir = env::temp_dir().join(format!("cloofy-omarchy-no-end-{}", std::process::id()));
+        let path = dir.join("omarchy-menu.jsonc");
+        let added = add_menu_entries(Some(USER_MENU)).unwrap();
+        let broken = added.replace("  // cloofy: end\n", "");
+        assert!(remove_block(&broken, "//").is_err(), "no guessing where the block ends");
+        assert!(add_menu_entries(Some(&broken)).is_err());
+        assert!(add_block(&broken.replace("//", "--"), "--", BINDING).is_err());
+
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, &broken).unwrap();
+        let err = remove_block_from(&path, "//").unwrap_err();
+        assert!(format!("{err:#}").contains(&path.display().to_string()), "says which file: {err:#}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken, "the user's entries and the brace stay");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn handles_a_menu_on_one_line() {
-        let added = add_menu_entries(Some("{ \"about\": {\"label\":\"About\"} }\n"));
+        let added = add_menu_entries(Some("{ \"about\": {\"label\":\"About\"} }\n")).unwrap();
         let menu = parse_menu(&added);
         assert_eq!(menu["about"]["label"], "About");
         assert_eq!(menu["music"]["icon"], "󰝚");
@@ -634,13 +662,16 @@ mod tests {
     #[test]
     fn appends_the_binding_and_takes_it_out_exactly() {
         let bindings = "-- Keep only your personal keybinding overrides here.\n-- o.bind(\"SUPER + SHIFT + R\", \"SSH\", \"alacritty -e ssh\")\n";
-        let added = add_block(bindings, "--", BINDING);
+        let added = add_block(bindings, "--", BINDING).unwrap();
         assert!(added.starts_with(bindings));
         assert!(added.contains("hl.unbind(\"SUPER + SHIFT + M\")\no.bind(\"SUPER + SHIFT + M\", \"Music\", { tui = \"cloofy\", focus = true })\n-- cloofy: end\n"));
-        assert_eq!(add_block(&added, "--", BINDING), added, "only once");
-        assert_eq!(remove_block(&added, "--"), bindings);
+        assert_eq!(add_block(&added, "--", BINDING).unwrap(), added, "only once");
+        assert_eq!(remove_block(&added, "--").unwrap(), bindings);
         let no_newline = "o.bind(\"SUPER + X\", nil, \"x\")";
-        assert_eq!(remove_block(&add_block(no_newline, "--", BINDING), "--"), format!("{no_newline}\n"));
+        assert_eq!(
+            remove_block(&add_block(no_newline, "--", BINDING).unwrap(), "--").unwrap(),
+            format!("{no_newline}\n")
+        );
     }
 
     #[test]
