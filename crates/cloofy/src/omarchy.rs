@@ -77,7 +77,7 @@ pub enum Action {
         /// Also make Super+Shift+M open cloofy instead of Spotify
         #[arg(long)]
         bind_music_key: bool,
-        /// Don't ask: everything, Super+Shift+M included
+        /// Don't ask: everything, Super+Shift+M included unless your own config binds it
         #[arg(short, long)]
         yes: bool,
     },
@@ -93,11 +93,7 @@ pub fn run(action: Action) -> Result<()> {
         return Ok(());
     };
     match action {
-        Action::Install { bind_music_key, yes } => {
-            // Bound before, it stays bound without asking again.
-            let bound = fs::read_to_string(omarchy.bindings()).is_ok_and(|text| has_block(&text, "--"));
-            omarchy.install(bind_music_key || yes || bound || ask_music_key())
-        }
+        Action::Install { bind_music_key, yes } => omarchy.install(omarchy.music_key(bind_music_key, yes)),
         Action::Remove => omarchy.remove(),
         Action::Status => {
             omarchy.status();
@@ -110,6 +106,16 @@ pub fn run(action: Action) -> Result<()> {
 enum Step {
     Done(String),
     Nothing(String),
+}
+
+/// What `install` does about Super+Shift+M.
+enum MusicKey {
+    /// Makes it open cloofy.
+    Bind,
+    /// Leaves it to Spotify, as Omarchy has it.
+    Leave,
+    /// Leaves it as the user's own config file binds it.
+    Theirs(PathBuf),
 }
 
 /// Where Omarchy keeps what cloofy adds to it.
@@ -161,16 +167,18 @@ impl Omarchy {
         self.home.join(".config/hypr/bindings.lua")
     }
 
-    fn install(&self, bind_music_key: bool) -> Result<()> {
+    fn install(&self, music_key: MusicKey) -> Result<()> {
         println!("\n  {}\n", style::bold("cloofy for Omarchy"));
         report("Bar widget", self.install_widget());
         report("Theme", self.install_theme());
         report("Menu", self.install_menu());
         report("Launcher", self.install_launcher());
-        if bind_music_key {
-            report("Super+Shift+M", self.install_binding());
-        } else {
-            skipped("Super+Shift+M", "still opens Spotify · `cloofy omarchy install --bind-music-key`");
+        match music_key {
+            MusicKey::Bind => report("Super+Shift+M", self.install_binding()),
+            MusicKey::Leave => {
+                skipped("Super+Shift+M", "still opens Spotify · `cloofy omarchy install --bind-music-key`")
+            }
+            MusicKey::Theirs(path) => skipped("Super+Shift+M", &format!("bound in {}, so it stays", path.display())),
         }
         println!("\n  Done. {} takes it all out again.\n", style::bold("cloofy omarchy remove"));
         Ok(())
@@ -218,6 +226,8 @@ impl Omarchy {
         let bindings = fs::read_to_string(self.bindings()).unwrap_or_default();
         if has_block(&bindings, "--") {
             ok("Super+Shift+M", "opens cloofy");
+        } else if let Some(path) = self.own_music_key() {
+            skipped("Super+Shift+M", &format!("as {} binds it", path.display()));
         } else {
             skipped("Super+Shift+M", "opens Spotify, as Omarchy has it");
         }
@@ -356,24 +366,57 @@ impl Omarchy {
         let current = fs::read_to_string(&path).with_context(|| format!("Couldn't read {}", path.display()))?;
         let bound = add_block(&current, "--", BINDING).with_context(|| left_alone(&path))?;
         if bound == current {
-            return Ok(Step::Done("opens cloofy instead of Spotify".into()));
+            return Ok(Step::Done("opens cloofy".into()));
         }
+        // Errors the config had before aren't the binding's.
+        let before = config_errors();
         write_if_changed(&path, &bound)?;
+        let Some(before) = before else {
+            return Ok(Step::Done("opens cloofy from your next login".into()));
+        };
         // Hyprland would read the file again by itself; reloading now is to hear about a mistake.
         let _ = Command::new("hyprctl").arg("reload").output();
-        let errors = Command::new("hyprctl").arg("configerrors").output();
-        if let Ok(output) = errors
-            && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
-        {
+        let after = config_errors().unwrap_or_default();
+        if let Some(error) = after.iter().find(|error| !before.contains(error)) {
             write_if_changed(&path, &current)?;
             let _ = Command::new("hyprctl").arg("reload").output();
-            anyhow::bail!("Hyprland didn't take the binding, so it's left as it was");
+            anyhow::bail!("Hyprland didn't take the binding, so it's left as it was: {error}");
         }
-        Ok(Step::Done("opens cloofy instead of Spotify".into()))
+        Ok(Step::Done("opens cloofy".into()))
     }
 
     fn remove_binding(&self) -> Result<Step> {
         remove_block_from(&self.bindings(), "--").map(|done| removed(done, "the binding"))
+    }
+
+    /// Whether to make Super+Shift+M open cloofy. Bound before, it stays bound without asking
+    /// again. Omarchy's, which opens Spotify, goes when told to or when the user says yes; one of
+    /// the user's own only when they say yes.
+    fn music_key(&self, bind: bool, yes: bool) -> MusicKey {
+        if fs::read_to_string(self.bindings()).is_ok_and(|text| has_block(&text, "--")) {
+            return MusicKey::Bind;
+        }
+        let key = style::bold("Super+Shift+M");
+        if let Some(path) = self.own_music_key() {
+            let question = format!("Your {} binds {key} already. Make it open cloofy instead?", path.display());
+            return if !yes && ask(&question) { MusicKey::Bind } else { MusicKey::Theirs(path) };
+        }
+        if bind || yes || ask(&format!("Omarchy opens Spotify with {key}. Make it open cloofy instead?")) {
+            MusicKey::Bind
+        } else {
+            MusicKey::Leave
+        }
+    }
+
+    /// The file of the user's Hyprland config that binds Super+Shift+M itself, if one does.
+    fn own_music_key(&self) -> Option<PathBuf> {
+        let mut files: Vec<PathBuf> = fs::read_dir(self.bindings().parent()?)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "lua"))
+            .collect();
+        files.sort();
+        files.into_iter().find(|path| fs::read_to_string(path).is_ok_and(|text| binds_music_key(&text)))
     }
 
     fn theme_name(&self) -> String {
@@ -395,12 +438,51 @@ fn is_stock_template(template: &str) -> bool {
     template == theme::TEMPLATE || OLDER_TEMPLATES.contains(&template)
 }
 
-/// Asks before taking Super+Shift+M from Spotify; no answer without a terminal.
-fn ask_music_key() -> bool {
+/// Whether Lua config `text` binds Super+Shift+M, outside comments and cloofy's block.
+fn binds_music_key(text: &str) -> bool {
+    let mut ours = false;
+    text.lines().map(str::trim_start).any(|line| {
+        if line.starts_with(&format!("-- {BEGIN}")) {
+            ours = true;
+        } else if line.starts_with(&format!("-- {END}")) {
+            ours = false;
+        }
+        let Some((_, call)) = line.split_once("bind(") else { return false };
+        !ours && !line.starts_with("--") && !line.contains("unbind(") && first_string(call).is_some_and(is_music_key)
+    })
+}
+
+/// The first string in a line of Lua.
+fn first_string(code: &str) -> Option<&str> {
+    let start = code.find(['"', '\''])?;
+    let (quote, rest) = code[start..].split_at(1);
+    Some(&rest[..rest.find(quote)?])
+}
+
+/// Whether keys such as "SUPER + SHIFT + M" are Super+Shift+M, in any order or case.
+fn is_music_key(keys: &str) -> bool {
+    let mut keys: Vec<String> = keys.split(['+', ' ']).filter(|key| !key.is_empty()).map(str::to_uppercase).collect();
+    keys.sort();
+    keys == ["M", "SHIFT", "SUPER"]
+}
+
+/// The errors Hyprland found in its config, a line each; `None` where it isn't running.
+fn config_errors() -> Option<Vec<String>> {
+    env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let output = Command::new("hyprctl").arg("configerrors").output().ok()?;
+    let errors = String::from_utf8_lossy(&output.stdout);
+    output
+        .status
+        .success()
+        .then(|| errors.lines().map(str::trim).filter(|line| !line.is_empty()).map(Into::into).collect())
+}
+
+/// Asks a question to answer with yes, no by default; no answer without a terminal.
+fn ask(question: &str) -> bool {
     if !io::stdin().is_terminal() {
         return false;
     }
-    print!("\n  Omarchy opens Spotify with {}. Make it open cloofy instead? [y/N] ", style::bold("Super+Shift+M"));
+    print!("\n  {question} [y/N] ");
     let _ = io::stdout().flush();
     let mut answer = String::new();
     io::stdin().lock().read_line(&mut answer).is_ok() && matches!(answer.trim(), "y" | "Y" | "yes" | "Yes")
@@ -776,6 +858,29 @@ mod tests {
             remove_block(&add_block(no_newline, "--", BINDING).unwrap(), "--").unwrap(),
             format!("{no_newline}\n")
         );
+    }
+
+    #[test]
+    fn finds_a_music_key_of_the_user_s_own() {
+        assert!(binds_music_key("o.bind(\"SUPER + SHIFT + M\", \"Music\", { tui = \"rmpc\" })\n"));
+        assert!(binds_music_key("  hl.bind('shift+super + m', hl.dsp.exec_cmd(\"x\"))\n"));
+        assert!(!binds_music_key("-- o.bind(\"SUPER + SHIFT + M\", \"Music\", \"x\")\n"), "a comment");
+        assert!(!binds_music_key("hl.unbind(\"SUPER + SHIFT + M\")\n"), "only taken away");
+        assert!(!binds_music_key("o.bind(\"SUPER + SHIFT + ALT + M\", \"Music TUI\", \"x\")\n"));
+        assert!(!binds_music_key(&add_block("", "--", BINDING).unwrap()), "cloofy's own");
+
+        let omarchy = scratch("music-key");
+        let hypr = omarchy.bindings().parent().unwrap().to_path_buf();
+        fs::create_dir_all(&hypr).unwrap();
+        fs::write(omarchy.bindings(), add_block("o.bind(\"SUPER + B\", \"Browser\", \"x\")\n", "--", BINDING).unwrap())
+            .unwrap();
+        assert_eq!(omarchy.own_music_key(), None);
+        fs::write(hypr.join("hyprland.lua"), "o.bind(\"SUPER + SHIFT + M\", \"Music\", \"x\")\n").unwrap();
+        assert_eq!(omarchy.own_music_key(), Some(hypr.join("hyprland.lua")));
+        assert!(matches!(omarchy.music_key(true, true), MusicKey::Bind), "cloofy's, bound before, stays");
+        fs::write(omarchy.bindings(), "").unwrap();
+        assert!(matches!(omarchy.music_key(true, true), MusicKey::Theirs(_)), "--yes leaves the user's");
+        fs::remove_dir_all(omarchy.home.parent().unwrap()).unwrap();
     }
 
     #[test]
