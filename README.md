@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <b>Spotify in your terminal.</b><br>
-  Plays on its own, with Home and the DJ, synced lyrics, real cover art and a mouse that works everywhere.
+  <b>Spotify and YouTube Music in your terminal.</b><br>
+  Plays on its own, with Home, Spotify's DJ, synced lyrics, real cover art and a mouse that works everywhere.
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> · <a href="#setup">Setup</a> · <a href="#keys">Keys</a> · <a href="#faq">FAQ</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="#install">Install</a> · <a href="#setup">Setup</a> · <a href="#keys">Keys</a> · <a href="#omarchy">Omarchy</a> · <a href="#faq">FAQ</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
@@ -24,21 +24,24 @@
   <sub>Recorded from <code>cloofy demo</code>, which needs no account. The covers are Spotify's; the library is made up.</sub>
 </p>
 
-cloofy is a Spotify client that runs entirely in the terminal. It plays the music itself, with no official app or daemon in the background, and it shows up as a Spotify Connect device you can pick from your phone. It looks and works like the desktop client you know: your Home feed, your library in a sidebar, cover art, synced lyrics, and the DJ talking between tracks.
+cloofy plays Spotify and YouTube Music in the terminal, one of them or both side by side. It plays the music itself, with no official app in the background: Spotify through librespot, as a Spotify Connect device you can pick from your phone, and YouTube Music through mpv, with or without an account. It looks and works like the desktop client you know: your Home feed, your library in a sidebar, cover art, synced lyrics, and on Spotify the DJ talking between tracks.
 
 ## Features
 
-- **Plays on its own.** Audio goes through librespot, and cloofy is a Spotify Connect device. It controls your other devices too, and follows them live.
-- **Home and the DJ.** Your shelves, Made For You mixes, and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify's apps, or let it pick something different. Crossfade if you like.
-- **Your library.** Playlists, albums, artists and podcasts, in a sidebar or as a full page with covers.
+- **Plays on its own.** Spotify plays through librespot, and cloofy is a Spotify Connect device. It controls your other devices too, and follows them live. YouTube Music plays through mpv, which cloofy starts and stops itself, with no gap between songs.
+- **Spotify, YouTube Music or both.** Install one, or both side by side: <kbd>S</kbd> or the switch in the top bar shows the other's Home, library and pages, as you left them.
+- **YouTube Music without an account.** Home, search, every page, lyrics and song radios work signed out. Sign in with your browser for your library and likes.
+- **Home and the DJ.** Your shelves and mixes, and on Spotify Made For You and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify's apps, or let it pick something different. Crossfade if you like.
+- **Your library.** Playlists, albums, artists, and on Spotify podcasts, in a sidebar or as a full page with covers.
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.
-- **The queue.** See what plays next, on cloofy or the device it controls: the songs you queued, then the rest of the playlist or album. Skip ahead to any of them, or take a queued song out again.
+- **The queue.** See what plays next, on cloofy or the device it controls: the songs you queued, then the rest of the playlist or album. Skip ahead to any of them, or take a queued song out again. On YouTube Music, the radio of the last song follows once the playlist or album ends.
 - **Synced lyrics.** The current line lights up next to a large cover in the now-playing view.
 - **Cover art.** Real images in terminals that show pictures through the Kitty, Sixel or iTerm2 protocol, and block art everywhere else.
 - **Mouse and keyboard.** Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and <kbd>Ctrl</kbd> <kbd>K</kbd> finds the rest.
 - **Settings in the app.** Crossfade, cover art, the accent color, icons, power saving and notifications, on a Settings page like Spotify's. Slow computer? Turn cover art off.
 - **Instant.** The last page, list and track are back the moment it starts, and the controls answer before Spotify does.
-- **At home on macOS and Linux.** Media keys and the system's media controls: Control Center on macOS, and on Linux GNOME, KDE, Waybar and playerctl. cloofy pauses before the computer sleeps, reconnects when it wakes, and moves less when the system asks for less motion or saves power. On macOS, AirPods and headphones pause playback when they disconnect.
+- **At home on macOS and Linux.** Media keys and the system's media controls: Control Center on macOS, and on Linux GNOME, KDE, Waybar and playerctl. cloofy pauses before the computer sleeps, reconnects when it wakes, and moves less when the system asks for less motion or saves power. On macOS, AirPods and headphones pause Spotify when they disconnect.
+- **At home on Omarchy.** cloofy follows the theme, shows what plays in the bar, and has its place in the menu and the launcher. See [Omarchy](#omarchy).
 
 ## A closer look
 
@@ -83,7 +86,7 @@ The demo opens the full interface with a sample library: real albums and artists
 curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
 ```
 
-The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's bar widget, theme, menu entries and launcher. Run it again to switch; cloofy offers new releases itself, see [updates](#updates).
+The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's [bar widget, theme, menu entries and launcher](#omarchy). Run it again to switch; cloofy offers new releases itself, see [updates](#updates).
 
 Package managers have the same three builds:
 
@@ -133,6 +136,10 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
 
 ## Setup
 
+Set up the services you installed; the installer does it with you. With both, `cloofy login` signs in to each in turn, and asks before YouTube Music, which plays without an account.
+
+### Spotify
+
 > [!NOTE]
 > Playing music needs **Spotify Premium**, and reading your library needs a **free Spotify developer app** of your own. The installer guides you through it in about two minutes.
 
@@ -144,8 +151,20 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
    client_id = "your client id"
    ```
 
-4. Run `cloofy login`. The browser opens twice: once for your app, once for playback.
+4. Run `cloofy login spotify`. The browser opens twice: once for your app, once for playback.
 5. Run `cloofy doctor` to check that everything works, then `cloofy`.
+
+### YouTube Music
+
+YouTube Music needs no account. cloofy plays it with [mpv](https://mpv.io) and finds the streams with [yt-dlp](https://github.com/yt-dlp/yt-dlp) 2025.11.12 or newer, which needs [deno](https://deno.com) for YouTube's challenges. The installer offers to install all three with your package manager, and the Homebrew and Arch packages bring them along.
+
+Signed out, Home, search, artist, album and playlist pages, lyrics and song radios work. Signing in adds your library: your playlists, albums, subscribed artists and liked songs, and liking, saving and adding to playlists.
+
+1. Sign in to [music.youtube.com](https://music.youtube.com) in your browser.
+2. Run `cloofy login ytmusic` and pick that browser from the list. cloofy borrows its sign-in: yt-dlp reads the browser's cookies, which may ask for your keyring, and cloofy keeps only YouTube's. If that doesn't work, pick **Another way** and paste the Cookie header of a request to music.youtube.com from the browser's developer tools.
+3. Run `cloofy doctor` to check mpv, yt-dlp, deno, music.youtube.com, the sign-in and a stream, then `cloofy`.
+
+`cloofy logout ytmusic` forgets the sign-in, and YouTube Music plays without an account again. A sign-in or sign-out shows the next time cloofy starts.
 
 ## Keys
 
@@ -160,6 +179,7 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
 | <kbd>+</kbd> <kbd>-</kbd> | Volume |
 | <kbd>s</kbd> <kbd>r</kbd> | Shuffle, repeat |
 | <kbd>1</kbd> <kbd>/</kbd> <kbd>3</kbd> | Home, search, your library |
+| <kbd>S</kbd> | Switch between Spotify and YouTube Music |
 | <kbd>enter</kbd> | Open or play the selection |
 | <kbd>esc</kbd> | Back |
 | <kbd>f</kbd> | Like the song, or save the album or playlist |
@@ -168,8 +188,8 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
 | <kbd>.</kbd> | Actions for the selection |
 | <kbd>z</kbd> | Now playing and lyrics |
 | <kbd>Q</kbd> | Queue |
-| <kbd>d</kbd> | Devices |
-| <kbd>D</kbd> | Start the DJ; while it plays, ask it for something |
+| <kbd>d</kbd> | Devices, on Spotify |
+| <kbd>D</kbd> | Start the DJ on Spotify; while it plays, ask it for something |
 | <kbd>,</kbd> | Settings |
 | <kbd>U</kbd> | Update cloofy |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Command palette |
@@ -181,15 +201,19 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
 Other commands:
 
 ```sh
-cloofy play <uri or link>   # play without the interface; --shuffle to shuffle
-cloofy connect              # wait as a Spotify Connect device until an app picks it
+cloofy play <uri or link>   # play a Spotify or YouTube link without the interface; --shuffle to shuffle
+cloofy connect              # Spotify: wait as a Spotify Connect device until an app picks it
+cloofy login ytmusic        # sign in to one service: spotify or ytmusic
 cloofy login --force        # sign in again
+cloofy logout ytmusic       # sign out of YouTube Music
+cloofy doctor               # check what each service can reach
+cloofy omarchy install      # set cloofy up in Omarchy
 cloofy update               # update to the latest release
 ```
 
 ## Updates
 
-When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
+When a new release is out, an update button shows in the top bar. Click it or press <kbd>U</kbd>: cloofy downloads the release, checks it against its published checksum and puts it in place of itself, then the same button restarts it. `cloofy update` does the same without the interface. An update keeps the build you have: Spotify, YouTube Music or both. Where cloofy can't write to its own folder, such as `/usr/local/bin`, update with the installer.
 
 Installed with Homebrew, mise, a system package or Nix, cloofy leaves its updates to that tool: the button shows the new version, and clicking it or `cloofy update` tells you how to update, such as `brew upgrade cloofy`.
 
@@ -199,9 +223,10 @@ Installed with Homebrew, mise, a system package or Nix, cloofy leaves its update
 
 ```toml
 client_id = "your client id"
+services = ["ytmusic"]     # "spotify", "ytmusic" or both, in the switch's order; every one built in when missing
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
 covers = false             # no cover art, for slower computers; on when missing
-accent = "violet"          # "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
+accent = "violet"          # "theme", "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
 images = "blocks"          # "kitty", "sixel", "iterm2" or "blocks"; detected from the terminal when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
 power_saving = "on"        # "on" or "off"; follows the system when missing
@@ -210,11 +235,25 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
+The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the Omarchy theme's, and cloofy's green elsewhere.
+
 Power saving stops animations and redraws less often. Unless set otherwise, it turns on by itself with Low Power Mode on macOS and the Power Saver profile on Linux.
 
 Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.
 
 cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
+
+## Omarchy
+
+On [Omarchy](https://omarchy.org), cloofy takes its colors from the theme and follows it when you switch, without a restart. Song notifications come from the desktop with the cover, in any terminal, and a click on one brings cloofy to the front. `cloofy omarchy install` adds the rest, and the installer offers to run it:
+
+- **Bar widget.** Next to the clock: the service, a small equalizer while a song plays, and the title and artist, which scroll by when they don't fit. A click opens a card with the cover, the position, the controls and the volume. Middle click plays or pauses, right click brings cloofy to the front, and scrolling skips. Its settings in Omarchy choose the width, whether long titles scroll or fade out, and whether it shows while cloofy isn't open.
+- **Theme.** A template Omarchy renders for every theme. Edit it in `~/.config/omarchy/themed/cloofy.toml.tpl` to change how every theme looks in cloofy, or give a theme its own `cloofy.toml`.
+- **Menu.** Music in the Omarchy menu: open cloofy, play or pause, next and previous.
+- **Launcher.** cloofy with its icon in the app launcher. It opens cloofy, or brings it to the front.
+- **Super+Shift+M.** Opens cloofy instead of Spotify, if you say yes or add `--bind-music-key`.
+
+`cloofy omarchy status` shows what is set up, and `cloofy omarchy remove` takes out exactly what `install` added. Running `install` again changes nothing, and running the installer again brings it up to date.
 
 ## Terminals
 
@@ -225,7 +264,7 @@ cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `
 | foot, Windows Terminal, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | No |
 | Others | Real images with Sixel, else blocks | With a Nerd Font | No |
 
-Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time.
+Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. On Omarchy, notifications come from the desktop in every terminal.
 
 ## FAQ
 
@@ -236,28 +275,56 @@ Spotify gives its Web API, which cloofy reads your library and searches through,
 </details>
 
 <details>
-<summary><b>Does it work with a free account?</b></summary>
+<summary><b>Does Spotify work with a free account?</b></summary>
 
 No. Outside its own apps, Spotify streams only to Premium accounts.
 </details>
 
 <details>
+<summary><b>Do I need YouTube Premium?</b></summary>
+
+No. YouTube Music plays without any account, and signing in only adds your library and likes: cloofy gets every song's stream the same way either way, without your sign-in.
+</details>
+
+<details>
+<summary><b>Why mpv and yt-dlp?</b></summary>
+
+YouTube protects its audio streams with challenges that only a JavaScript runtime can solve. yt-dlp solves them, with deno, and an older yt-dlp gets no streams at all, so keep it up to date. mpv plays what yt-dlp finds, and cloofy hands it the next song ahead of time, so there's no gap. cloofy starts mpv in the background without your `mpv.conf` or scripts, and mpv quits with cloofy, even when cloofy crashes.
+</details>
+
+<details>
+<summary><b>Is signing in to YouTube Music with my browser's cookies safe?</b></summary>
+
+`cloofy login ytmusic` has yt-dlp export the browser's cookies into a private folder, keeps only youtube.com's, and deletes the export right away. They stay in `~/.local/share/cloofy/ytmusic/cookies.txt`, which only you can read, or in the macOS Keychain with `credentials = "keychain"`. cloofy sends them only to music.youtube.com, with its own requests there; streams, covers and lyrics from LRCLIB load without them. They are a signed-in session like the browser's, so treat the file like a password. `cloofy logout ytmusic` deletes it.
+</details>
+
+<details>
+<summary><b>Do the media keys work on Linux, or do I need playerctl?</b></summary>
+
+On GNOME, KDE and other desktops with media controls they work right away, through MPRIS. On bare window managers like Sway, i3 or Hyprland, the keys need a binding, usually to playerctl. Omarchy binds them already.
+</details>
+
+<details>
 <summary><b>What does cloofy send where?</b></summary>
 
-Requests to Spotify, and to [LRCLIB](https://lrclib.net) for lyrics Spotify doesn't have. Nothing else: no telemetry, no server of its own.
+Requests to Spotify and YouTube Music, for the services you use, and to [LRCLIB](https://lrclib.net) for lyrics they don't have. For YouTube Music, yt-dlp and mpv fetch the streams from YouTube. cloofy also asks GitHub for new releases, unless `update_check = false`. Nothing else: no telemetry, no server of its own.
 </details>
 
 <details>
 <summary><b>How does it work?</b></summary>
 
-Playback runs through a [fork of librespot](https://github.com/parda21/librespot/tree/cloofy) that adds the DJ and crossfade from two open upstream pull requests. Your library and search come from the Web API through your own app. Home, artist pages and the DJ use Spotify's internal APIs, the same ones its own apps use. Those are not public and may change without notice.
+Spotify playback runs through a [fork of librespot](https://github.com/parda21/librespot/tree/cloofy) that adds the DJ and crossfade from two open upstream pull requests. Your library and search come from the Web API through your own app. Home, artist pages and the DJ use Spotify's internal APIs, the same ones its own apps use.
+
+YouTube Music's pages, search, lyrics and your library come from InnerTube, the API music.youtube.com itself uses. yt-dlp finds each song's stream, and mpv plays it.
+
+Spotify's internal APIs and InnerTube are not public and may change without notice.
 </details>
 
 ## Thanks
 
-To [librespot](https://github.com/librespot-org/librespot) for playing Spotify outside Spotify, including the open pull requests for the [DJ](https://github.com/librespot-org/librespot/pull/1797) and [crossfade](https://github.com/librespot-org/librespot/pull/1756); to [ratatui](https://ratatui.rs), [ratatui-image](https://github.com/ratatui/ratatui-image) and [tachyonfx](https://github.com/junkdog/tachyonfx) for the interface; and to [@yk-sgr](https://github.com/yk-sgr) for everything that makes cloofy feel at home on macOS.
+To [librespot](https://github.com/librespot-org/librespot) for playing Spotify outside Spotify, including the open pull requests for the [DJ](https://github.com/librespot-org/librespot/pull/1797) and [crossfade](https://github.com/librespot-org/librespot/pull/1756); to [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [mpv](https://mpv.io) for playing YouTube Music; to [ratatui](https://ratatui.rs), [ratatui-image](https://github.com/ratatui/ratatui-image) and [tachyonfx](https://github.com/junkdog/tachyonfx) for the interface; and to [@yk-sgr](https://github.com/yk-sgr) for everything that makes cloofy feel at home on macOS.
 
-cloofy is not affiliated with Spotify. It is [MIT](LICENSE) licensed.
+cloofy is not affiliated with Spotify or YouTube. It is [MIT](LICENSE) licensed.
 
 ---
 

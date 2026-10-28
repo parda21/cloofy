@@ -4,6 +4,35 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+YouTube Music joins Spotify, on its own or side by side, and cloofy becomes part of Omarchy.
+
+### Added
+
+- **YouTube Music.** Home, search, artist, album and playlist pages, lyrics and song radios, without an account. cloofy plays it through mpv, with the streams from yt-dlp, and songs follow each other without a gap. The queue, shuffle, repeat, seeking, the volume and the system's media controls work as with Spotify, the last song comes back after a restart, and when a playlist or album ends, the radio of its last song follows, as on YouTube Music. It needs mpv, yt-dlp 2025.11.12 or newer, and deno. The DJ, devices, crossfade and podcasts stay Spotify's; while YouTube Music plays, the hints, the help and the command palette leave out the DJ, devices and crossfade.
+- **Your YouTube Music library.** `cloofy login ytmusic` borrows the sign-in of a browser where you're signed in to music.youtube.com: pick the browser from a list, or paste a Cookie header from its developer tools. Signed in, cloofy shows your playlists, albums, subscribed artists and liked songs, and you can like songs, save albums and playlists, subscribe to artists and add songs to playlists. Cookies YouTube turns down aren't kept. `cloofy logout ytmusic` forgets the sign-in.
+- **Both side by side.** With both services in use, a switch in the top bar names each, the one shown lit. A click on it, `S` or "Switch to …" in the command palette shows the other service's Home, library, search and pages, as you left them. The player bar shows what plays on either, and its links and the queue open in the service the song comes from. Playing on one pauses the other, and cloofy starts on the service you left it on.
+- **What you listen to, and nothing else.** The installer first asks: Spotify, YouTube Music or both. Each is a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. `--service spotify`, `ytmusic` or `both` answers ahead, and running it again with another answer swaps the build, keeping settings and sign-ins. For YouTube Music it checks mpv, yt-dlp and deno, offers to install the missing ones with pacman, apt, dnf, zypper or Homebrew where they have them, and offers the sign-in.
+- **A package for each build.** Homebrew has `cloofy`, `cloofy-ytmusic` and `cloofy-full`, and each release comes with PKGBUILDs for `cloofy-bin`, `cloofy-ytmusic-bin` and `cloofy-full-bin` on Arch Linux. Each replaces the others, and the YouTube Music ones bring mpv, yt-dlp and deno along. With mise, `matching=spotify`, `matching=ytmusic` or `matching=full` picks the build.
+- **YouTube Music from the command line.** `cloofy play` takes music.youtube.com, youtube.com and youtu.be links; a song plays with its radio after it. `cloofy doctor` checks mpv, yt-dlp and deno, music.youtube.com, the sign-in and a stream.
+- **Omarchy's theme.** On Omarchy, cloofy takes its colors from the theme and follows it when it changes, without a restart. Light themes work as well as dark ones, and a theme can bring its own `cloofy.toml`. The accent has a new choice, Theme, which takes the theme's accent, and cloofy's green elsewhere.
+- **cloofy in Omarchy's bar.** `cloofy omarchy install` puts a widget next to the clock: the service, a small equalizer while a song plays, and the title and artist, which scroll by when they don't fit. A click opens a card with the cover, the album, the position to click or drag, the controls and the volume. Middle click plays or pauses, right click brings cloofy to the front, and scrolling skips.
+- **Omarchy's menu, launcher and Super+Shift+M.** The same command adds Music to the Omarchy menu, to open cloofy, play or pause and skip, and cloofy with its icon to the app launcher. Asked, or with `--bind-music-key`, Super+Shift+M opens cloofy instead of Spotify. `cloofy omarchy status` shows what is set up, and `cloofy omarchy remove` takes out exactly what it added. The installer offers it on Omarchy, and `--uninstall` takes it out again.
+- **Notifications with the cover.** On Omarchy, song notifications come from the desktop with the cover, also in terminals without notifications of their own, like Alacritty. Each replaces the one before, and a click brings cloofy's window to the front.
+- **More for desktop widgets.** On Linux, they can read and set cloofy's volume and get a link to the song on the web, which also tells them the service. On Hyprland they can bring cloofy's window to the front.
+
+### Changed
+
+- **`cloofy login`** signs in to every service in use, or to the one named, as in `cloofy login spotify`. With YouTube Music among others, it asks before signing in there, as YouTube Music plays without an account. With Spotify only, it works as before.
+- **One service doesn't stop the other.** A service that can't start, such as Spotify without a sign-in, no longer keeps cloofy from starting: its pages say why, and cloofy starts on one that works.
+- **Updates keep the build.** cloofy updates to the build it is: Spotify, YouTube Music or both. cloofy 0.4 updates to the Spotify build; run the installer to switch.
+- **mise** installs cloofy with its github backend, `github:parda21/cloofy`, where `matching` picks the build.
+- **`cloofy --version`** names the services built in, such as `(spotify, ytmusic)`.
+
+### Fixed
+
+- Songs LRCLIB has no lyrics for say "No lyrics for this song." instead of "Lyrics are unavailable right now.", as LRCLIB sometimes answers with an error when it has none.
+- With bash 5, the installer shows paths in your home folder with `~` too.
+
 ## [0.4.0] - 2026-10-27
 
 Settings move into the app, the queue shows what plays next, and cloofy feels at home on Linux.
