@@ -325,7 +325,11 @@ impl Omarchy {
         if entry.exists() && !is_ours(&entry) {
             return Ok(Step::Nothing(format!("{} is your own, so it stays", entry.display())));
         }
-        write_if_changed(&self.icon(), ICON)?;
+        // An icon of the user's own stays, and the entry shows that one.
+        let icon = self.icon();
+        if fs::symlink_metadata(&icon).is_err() {
+            write_if_changed(&icon, ICON)?;
+        }
         write_if_changed(&entry, DESKTOP_ENTRY)?;
         let _ = Command::new("gtk-update-icon-cache").arg(self.home.join(".local/share/icons/hicolor")).output();
         Ok(Step::Done("cloofy in the app launcher".into()))
@@ -336,7 +340,7 @@ impl Omarchy {
             return Ok(removed(false, "the launcher"));
         }
         remove_file(&self.desktop_entry())?;
-        if fs::read_to_string(self.icon()).is_ok_and(|icon| icon == ICON) {
+        if is_our_icon(&self.icon()) {
             remove_file(&self.icon())?;
             // The folders `install` may have made for it, where nothing else is in them.
             for dir in self.icon().ancestors().skip(1).take(2) {
@@ -581,6 +585,11 @@ fn is_ours(desktop_entry: &Path) -> bool {
     fs::read_to_string(desktop_entry).is_ok_and(|entry| entry.lines().any(|line| line.trim() == DESKTOP_MARK))
 }
 
+/// Whether the icon is the one `install` writes, rather than one of the user's.
+fn is_our_icon(icon: &Path) -> bool {
+    fs::read_to_string(icon).is_ok_and(|icon| icon == ICON)
+}
+
 /// Writes `content` unless the file has it already, through a temporary file so that a reader
 /// never sees half of it. A symlink, as stow or chezmoi put in place, stays one: the file it
 /// points to gets the content, and keeps its permissions.
@@ -781,6 +790,25 @@ mod tests {
         assert!(!is_ours(&theirs));
         assert!(!is_ours(&dir.join("missing.desktop")));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_an_icon_of_the_user_s_own() {
+        let omarchy = scratch("icon");
+        omarchy.install_launcher().unwrap();
+        assert!(is_ours(&omarchy.desktop_entry()) && is_our_icon(&omarchy.icon()));
+        omarchy.remove_launcher().unwrap();
+        assert!(!omarchy.desktop_entry().exists() && !omarchy.icon().exists(), "both were cloofy's");
+
+        let theirs = "<svg><!-- mine --></svg>\n";
+        write_if_changed(&omarchy.icon(), theirs).unwrap();
+        omarchy.install_launcher().unwrap();
+        assert!(is_ours(&omarchy.desktop_entry()));
+        assert_eq!(fs::read_to_string(omarchy.icon()).unwrap(), theirs, "install keeps the user's icon");
+        omarchy.remove_launcher().unwrap();
+        assert!(!omarchy.desktop_entry().exists());
+        assert_eq!(fs::read_to_string(omarchy.icon()).unwrap(), theirs, "and remove too");
+        fs::remove_dir_all(omarchy.home.parent().unwrap()).unwrap();
     }
 
     #[test]
