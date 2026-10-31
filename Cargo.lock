@@ -503,7 +503,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cloofy"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "cloofy-os",
@@ -546,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-os"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -567,7 +567,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-player"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "cloofy-core",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-spotify"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-tui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "cloofy-ytmusic"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "cloofy-core",
