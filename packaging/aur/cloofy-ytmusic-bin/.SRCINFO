@@ -10,6 +10,7 @@ pkgbase = cloofy-ytmusic-bin
 	depends = glibc
 	depends = libgcc
 	depends = mpv
+	depends = python-secretstorage
 	depends = yt-dlp
 	provides = cloofy=@VERSION@
 	conflicts = cloofy

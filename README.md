@@ -160,9 +160,10 @@ YouTube Music needs no account. cloofy plays it with [mpv](https://mpv.io) and f
 
 Signed out, Home, search, artist, album and playlist pages, lyrics and song radios work. Signing in adds your library: your playlists, albums, subscribed artists and liked songs, and liking, saving and adding to playlists.
 
-1. Sign in to [music.youtube.com](https://music.youtube.com) in your browser.
-2. Run `cloofy login ytmusic` and pick that browser from the list. cloofy borrows its sign-in: yt-dlp reads the browser's cookies, which may ask for your keyring, and cloofy keeps only YouTube's. If that doesn't work, pick **Another way** and paste the Cookie header of a request to music.youtube.com from the browser's developer tools.
-3. Run `cloofy doctor` to check mpv, yt-dlp, deno, music.youtube.com, the sign-in and a stream, then `cloofy`.
+1. Run `cloofy login ytmusic`. cloofy borrows the sign-in of your default browser: yt-dlp reads its cookies, which may ask for your keyring, and cloofy keeps only YouTube's. If the browser isn't signed in to YouTube yet, cloofy opens YouTube's sign-in there and goes on once you're signed in. With a browser cloofy doesn't know, or one it can't read, pick another from the list, or **Another way** to paste the Cookie header of a request to music.youtube.com from the browser's developer tools.
+2. Run `cloofy doctor` to check mpv, yt-dlp, deno, music.youtube.com, the sign-in and a stream, then `cloofy`.
+
+On Linux, yt-dlp reads the keyring of Chrome, Brave and other Chromium-based browsers with Python's secretstorage: the installer offers it, and the Arch packages bring it along.
 
 `cloofy logout ytmusic` forgets the sign-in, and YouTube Music plays without an account again. A sign-in or sign-out shows the next time cloofy starts.
 

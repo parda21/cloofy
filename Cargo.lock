@@ -644,6 +644,7 @@ dependencies = [
  "cloofy-core",
  "futures",
  "libc",
+ "open",
  "reqwest 0.13.5",
  "serde_json",
  "sha1",

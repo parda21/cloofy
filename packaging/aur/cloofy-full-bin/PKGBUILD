@@ -2,7 +2,8 @@
 # Maintainer: parda21 <36790116+parda21@users.noreply.github.com>
 
 # The build with Spotify and YouTube Music. For YouTube Music, mpv plays, yt-dlp finds the
-# streams, and deno solves YouTube's challenges for yt-dlp.
+# streams, deno solves YouTube's challenges for yt-dlp, and python-secretstorage lets it read
+# the keyring of Chromium-based browsers for the sign-in.
 pkgname=cloofy-full-bin
 pkgver=@VERSION@
 pkgrel=1
@@ -10,7 +11,7 @@ pkgdesc='Spotify and YouTube Music client for the terminal'
 arch=('x86_64' 'aarch64')
 url='https://github.com/parda21/cloofy'
 license=('MIT')
-depends=('alsa-lib' 'deno' 'glibc' 'libgcc' 'libpulse' 'mpv' 'yt-dlp')
+depends=('alsa-lib' 'deno' 'glibc' 'libgcc' 'libpulse' 'mpv' 'python-secretstorage' 'yt-dlp')
 provides=("cloofy=$pkgver")
 conflicts=('cloofy')
 # The release build comes stripped, so there is nothing for a debug package either.

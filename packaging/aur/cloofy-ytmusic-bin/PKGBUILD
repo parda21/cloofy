@@ -1,8 +1,9 @@
 # Made for each release from packaging/aur/cloofy-ytmusic-bin/PKGBUILD in https://github.com/parda21/cloofy.
 # Maintainer: parda21 <36790116+parda21@users.noreply.github.com>
 
-# The YouTube Music build, without Spotify. mpv plays, yt-dlp finds the streams, and deno
-# solves YouTube's challenges for yt-dlp.
+# The YouTube Music build, without Spotify. mpv plays, yt-dlp finds the streams, deno
+# solves YouTube's challenges for yt-dlp, and python-secretstorage lets it read the keyring
+# of Chromium-based browsers for the sign-in.
 pkgname=cloofy-ytmusic-bin
 pkgver=@VERSION@
 pkgrel=1
@@ -10,7 +11,7 @@ pkgdesc='YouTube Music client for the terminal'
 arch=('x86_64' 'aarch64')
 url='https://github.com/parda21/cloofy'
 license=('MIT')
-depends=('deno' 'glibc' 'libgcc' 'mpv' 'yt-dlp')
+depends=('deno' 'glibc' 'libgcc' 'mpv' 'python-secretstorage' 'yt-dlp')
 provides=("cloofy=$pkgver")
 conflicts=('cloofy')
 # The release build comes stripped, so there is nothing for a debug package either.

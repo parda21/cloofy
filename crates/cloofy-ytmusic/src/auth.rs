@@ -11,10 +11,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use cloofy_core::{
-    catalog::User,
-    paths::{Paths, write_private},
-};
+use cloofy_core::{catalog::User, paths::Paths};
 use tokio::process::Command;
 
 use crate::{YtMusic, cookies::Jar, innertube, library};
@@ -28,56 +25,146 @@ pub struct Browser {
     pub spec: String,
 }
 
-/// yt-dlp's name for each browser, its display name, and where it keeps profiles, relative to
-/// the home directory.
+/// A browser cloofy knows.
+struct Known {
+    /// How the system names it: desktop entries on Linux, bundle ids on macOS.
+    ids: &'static [&'static str],
+    name: &'static str,
+    /// yt-dlp's name for it, or for the browser it is a fork of.
+    reader: &'static str,
+    /// Where it keeps its profiles, relative to the home directory.
+    dir: &'static str,
+    /// Whether yt-dlp needs the folder: it doesn't know forks.
+    fork: bool,
+}
+
+const fn known(ids: &'static [&'static str], name: &'static str, reader: &'static str, dir: &'static str) -> Known {
+    Known { ids, name, reader, dir, fork: false }
+}
+
+const fn fork(ids: &'static [&'static str], name: &'static str, reader: &'static str, dir: &'static str) -> Known {
+    Known { ids, name, reader, dir, fork: true }
+}
+
 #[cfg(target_os = "macos")]
-const KNOWN: &[(&str, &str, &str)] = &[
-    ("chrome", "Google Chrome", "Library/Application Support/Google/Chrome"),
-    ("brave", "Brave", "Library/Application Support/BraveSoftware/Brave-Browser"),
-    ("chromium", "Chromium", "Library/Application Support/Chromium"),
-    ("edge", "Microsoft Edge", "Library/Application Support/Microsoft Edge"),
-    ("vivaldi", "Vivaldi", "Library/Application Support/Vivaldi"),
-    ("opera", "Opera", "Library/Application Support/com.operasoftware.Opera"),
-    ("firefox", "Firefox", "Library/Application Support/Firefox"),
-    ("safari", "Safari", "Library/Containers/com.apple.Safari"),
+const KNOWN: &[Known] = &[
+    known(&["com.google.chrome"], "Google Chrome", "chrome", "Library/Application Support/Google/Chrome"),
+    known(&["com.brave.browser"], "Brave", "brave", "Library/Application Support/BraveSoftware/Brave-Browser"),
+    known(&["org.chromium.chromium"], "Chromium", "chromium", "Library/Application Support/Chromium"),
+    known(&["com.microsoft.edgemac"], "Microsoft Edge", "edge", "Library/Application Support/Microsoft Edge"),
+    known(&["com.vivaldi.vivaldi"], "Vivaldi", "vivaldi", "Library/Application Support/Vivaldi"),
+    known(&["com.operasoftware.opera"], "Opera", "opera", "Library/Application Support/com.operasoftware.Opera"),
+    known(&["org.mozilla.firefox"], "Firefox", "firefox", "Library/Application Support/Firefox"),
+    known(&["com.apple.safari"], "Safari", "safari", "Library/Containers/com.apple.Safari"),
+    fork(&["app.zen-browser.zen"], "Zen", "firefox", "Library/Application Support/zen"),
+    fork(
+        &["org.mozilla.librewolf", "io.gitlab.librewolf-community"],
+        "LibreWolf",
+        "firefox",
+        "Library/Application Support/librewolf",
+    ),
 ];
 #[cfg(not(target_os = "macos"))]
-const KNOWN: &[(&str, &str, &str)] = &[
-    ("chromium", "Chromium", ".config/chromium"),
-    ("brave", "Brave", ".config/BraveSoftware/Brave-Browser"),
-    ("chrome", "Google Chrome", ".config/google-chrome"),
-    ("edge", "Microsoft Edge", ".config/microsoft-edge"),
-    ("vivaldi", "Vivaldi", ".config/vivaldi"),
-    ("opera", "Opera", ".config/opera"),
-    ("firefox", "Firefox", ".mozilla/firefox"),
-    ("firefox", "Firefox", ".config/mozilla/firefox"),
+const KNOWN: &[Known] = &[
+    known(&["chromium.desktop", "chromium-browser.desktop"], "Chromium", "chromium", ".config/chromium"),
+    known(&["brave-browser.desktop", "brave.desktop"], "Brave", "brave", ".config/BraveSoftware/Brave-Browser"),
+    // Omarchy's Brave, which keeps its profiles apart from Brave's.
+    fork(&["brave-origin.desktop"], "Brave Origin", "brave", ".config/BraveSoftware/Brave-Origin"),
+    known(&["google-chrome.desktop"], "Google Chrome", "chrome", ".config/google-chrome"),
+    known(&["microsoft-edge.desktop"], "Microsoft Edge", "edge", ".config/microsoft-edge"),
+    known(&["vivaldi-stable.desktop", "vivaldi.desktop"], "Vivaldi", "vivaldi", ".config/vivaldi"),
+    known(&["opera.desktop"], "Opera", "opera", ".config/opera"),
+    known(&["firefox.desktop"], "Firefox", "firefox", ".mozilla/firefox"),
+    known(&["firefox.desktop"], "Firefox", "firefox", ".config/mozilla/firefox"),
+    fork(&["zen.desktop", "zen-browser.desktop"], "Zen", "firefox", ".zen"),
+    fork(&["librewolf.desktop"], "LibreWolf", "firefox", ".librewolf"),
+    fork(&["floorp.desktop"], "Floorp", "firefox", ".floorp"),
 ];
-/// Firefox's forks, which yt-dlp reads as Firefox given their profiles folder.
-#[cfg(not(target_os = "macos"))]
-const FIREFOX_FORKS: &[(&str, &str)] = &[("Zen", ".zen"), ("LibreWolf", ".librewolf"), ("Floorp", ".floorp")];
-#[cfg(target_os = "macos")]
-const FIREFOX_FORKS: &[(&str, &str)] =
-    &[("Zen", "Library/Application Support/zen"), ("LibreWolf", "Library/Application Support/librewolf")];
+
+impl Known {
+    /// The browser, when it has a profile in its folder: a folder alone may be left over, or
+    /// made by another program.
+    fn found(&self, home: &Path) -> Option<Browser> {
+        let dir = home.join(self.dir);
+        let profile = match self.reader {
+            "firefox" => dir.join("profiles.ini").is_file(),
+            "safari" => dir.is_dir(),
+            _ => dir.join("Local State").is_file(),
+        };
+        let spec = if self.fork { format!("{}:{}", self.reader, dir.display()) } else { self.reader.into() };
+        profile.then(|| Browser { name: self.name.into(), spec })
+    }
+}
+
+/// YouTube's sign-in, which leads to YouTube Music afterwards.
+const SIGN_IN_URL: &str =
+    "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F";
 
 /// yt-dlp exports the cookies of every site; this many seconds is plenty for that.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(120);
 
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 /// The browsers on this computer that have a profile yt-dlp could read cookies from.
 pub fn browsers() -> Vec<Browser> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+    let Some(home) = home() else { return Vec::new() };
     let mut found: Vec<Browser> = Vec::new();
-    for (spec, name, dir) in KNOWN {
-        if home.join(dir).is_dir() && !found.iter().any(|b| b.spec == *spec) {
-            found.push(Browser { name: (*name).into(), spec: (*spec).into() });
-        }
-    }
-    for (name, dir) in FIREFOX_FORKS {
-        let profiles = home.join(dir);
-        if profiles.is_dir() {
-            found.push(Browser { name: (*name).into(), spec: format!("firefox:{}", profiles.display()) });
+    for browser in KNOWN.iter().filter_map(|known| known.found(&home)) {
+        if !found.iter().any(|b| b.name == browser.name) {
+            found.push(browser);
         }
     }
     found
+}
+
+/// The browser that opens links, when cloofy knows it and it has a profile.
+pub fn default_browser() -> Option<Browser> {
+    let id = default_browser_id()?;
+    let home = home()?;
+    KNOWN.iter().filter(|known| known.ids.contains(&id.as_str())).find_map(|known| known.found(&home))
+}
+
+/// The desktop entry of the browser that opens links.
+#[cfg(not(target_os = "macos"))]
+fn default_browser_id() -> Option<String> {
+    // Omarchy's own entry only hands links on to the browser it names.
+    let asks: [(&str, &[&str]); 3] = [
+        ("omarchy-cmd-default-browser", &[]),
+        ("xdg-settings", &["get", "default-web-browser"]),
+        ("xdg-mime", &["query", "default", "x-scheme-handler/https"]),
+    ];
+    asks.into_iter().find_map(|(program, args)| {
+        let output = std::process::Command::new(program).args(args).stderr(Stdio::null()).output().ok()?;
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        (output.status.success() && !id.is_empty() && id != "omarchy-browser.desktop").then_some(id)
+    })
+}
+
+/// The bundle id of the app that opens https links; Safari unless another was picked.
+#[cfg(target_os = "macos")]
+fn default_browser_id() -> Option<String> {
+    let plist = home()?.join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
+    let handlers = std::process::Command::new("plutil")
+        .args(["-extract", "LSHandlers", "json", "-o", "-"])
+        .arg(plist)
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
+    let id = handlers
+        .as_ref()
+        .and_then(|handlers| handlers.as_array())
+        .and_then(|handlers| handlers.iter().find(|handler| handler["LSHandlerURLScheme"] == "https"))
+        .and_then(|handler| handler["LSHandlerRoleAll"].as_str())
+        .unwrap_or("com.apple.safari");
+    Some(id.to_lowercase())
+}
+
+/// Opens YouTube's sign-in in the browser that opens links; whether it could.
+pub fn open_sign_in() -> bool {
+    open::that_detached(SIGN_IN_URL).is_ok()
 }
 
 /// A sign-in read from a browser or pasted, not kept yet: it replaces the one before only once
@@ -104,36 +191,75 @@ impl SignIn {
     }
 }
 
-/// Reads the cookies of `browser`, which must be signed in to YouTube. The browser's cookie
-/// store may be locked while it runs (Chromium-based browsers on Windows); yt-dlp says so.
-pub async fn from_browser(paths: &Paths, browser: &Browser) -> Result<SignIn> {
-    let dir = private_dir(paths)?;
-    // yt-dlp writes every site's cookies; they stay in this private folder only until cloofy
-    // picked out YouTube's.
-    let export = dir.join("browser-export.txt");
-    write_private(&export, b"")?;
-    let result = export_cookies(&browser.spec, &export).await;
-    let text = fs::read_to_string(&export).unwrap_or_default();
-    let _ = fs::remove_file(&export);
-    let stderr = result?;
-    let jar = Jar::parse(&text).youtube_only();
+/// Reads the sign-in of `browser`; `None` while it isn't signed in to YouTube. The browser's
+/// cookie store may be locked while it runs (Chromium-based browsers on Windows); yt-dlp says
+/// so. Where yt-dlp guesses the keyring wrong, on desktops it doesn't know such as Hyprland,
+/// `browser` keeps the keyring that worked, for the next time.
+pub async fn from_browser(paths: &Paths, browser: &mut Browser) -> Result<Option<SignIn>> {
+    let (mut jar, mut stderr) = export(paths, &browser.spec).await?;
+    let signed_in = |jar: &Jar| innertube::check_jar(jar).is_ok();
+    if cfg!(target_os = "linux") && !signed_in(&jar) && undecrypted(&stderr) && !browser.spec.contains('+') {
+        let spec = with_keyring(&browser.spec, "gnomekeyring");
+        (jar, stderr) = export(paths, &spec).await?;
+        if stderr.contains("secretstorage not available") {
+            bail!(
+                "yt-dlp needs Python's secretstorage to read {}'s cookies from the keyring: install \
+                 python-secretstorage (Arch) or python3-secretstorage (Debian, Ubuntu, Fedora)",
+                browser.name
+            );
+        }
+        browser.spec = spec;
+    }
+    if signed_in(&jar) {
+        return SignIn::new(jar).map(Some);
+    }
+    // Cookies it couldn't decrypt may be the sign-in.
+    if undecrypted(&stderr) {
+        bail!("yt-dlp can't decrypt {}'s cookies{}", browser.name, reason(&stderr));
+    }
     if jar.is_empty() {
         bail!("No YouTube cookies found in {}{}", browser.name, reason(&stderr));
     }
-    innertube::check_jar(&jar)
-        .with_context(|| format!("{} isn't signed in to YouTube – sign in at music.youtube.com first", browser.name))?;
-    SignIn::new(jar)
+    Ok(None)
 }
 
-/// Runs yt-dlp; returns what it printed to stderr.
+/// The cookies of youtube.com in the browser of `spec`, and what yt-dlp printed to stderr.
+async fn export(paths: &Paths, spec: &str) -> Result<(Jar, String)> {
+    let dir = private_dir(paths)?;
+    // yt-dlp writes every site's cookies; they stay in this private folder only until cloofy
+    // picked out YouTube's. yt-dlp makes the file: it turns down one that has no cookies yet.
+    let file = dir.join("browser-export.txt");
+    let _ = fs::remove_file(&file);
+    let result = export_cookies(spec, &file).await;
+    let text = fs::read_to_string(&file).unwrap_or_default();
+    let _ = fs::remove_file(&file);
+    Ok((Jar::parse(&text).youtube_only(), result?))
+}
+
+/// Whether yt-dlp found cookies it couldn't decrypt, for want of the keyring's key.
+fn undecrypted(stderr: &str) -> bool {
+    stderr.contains("cannot decrypt") || stderr.contains("failed to decrypt")
+}
+
+/// `spec` reading the key from `keyring`: `brave:<profiles>` becomes `brave+gnomekeyring:<profiles>`.
+fn with_keyring(spec: &str, keyring: &str) -> String {
+    match spec.split_once(':') {
+        Some((browser, profile)) => format!("{browser}+{keyring}:{profile}"),
+        None => format!("{spec}+{keyring}"),
+    }
+}
+
+/// Runs yt-dlp; returns what it printed to stderr. Its warnings stay on: they tell when it
+/// couldn't decrypt cookies.
 async fn export_cookies(spec: &str, file: &Path) -> Result<String> {
     let mut command = Command::new("yt-dlp");
     command
-        .args(["--no-config", "--skip-download", "--no-warnings", "--cookies-from-browser", spec, "--cookies"])
+        .args(["--no-config", "--skip-download", "--cookies-from-browser", spec, "--cookies"])
         .arg(file)
         // Any youtube.com page will do; yt-dlp saves the cookies even though it can't use it.
         .arg("https://music.youtube.com/")
         .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .kill_on_drop(true);
     let output = match tokio::time::timeout(EXPORT_TIMEOUT, command.output()).await {
         Ok(Ok(output)) => output,
@@ -234,6 +360,45 @@ mod tests {
         assert!(jar.to_text().contains("SAPISID"));
         assert!(!jar.to_text().contains("bank.example"));
         assert!(!jar.to_text().contains("LSID"));
+    }
+
+    #[test]
+    fn a_browser_counts_once_it_has_a_profile() {
+        let home = std::env::temp_dir().join(format!("cloofy-ytm-browsers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let chromium = known(&[], "Chromium", "chromium", "chromium");
+        let origin = fork(&[], "Brave Origin", "brave", "Brave-Origin");
+        let firefox = known(&[], "Firefox", "firefox", "firefox");
+        // Folders another program left, without a profile.
+        fs::create_dir_all(home.join("chromium/NativeMessagingHosts")).unwrap();
+        fs::create_dir_all(home.join("firefox")).unwrap();
+        assert_eq!(chromium.found(&home), None);
+        assert_eq!(firefox.found(&home), None);
+        fs::write(home.join("chromium/Local State"), "{}").unwrap();
+        fs::write(home.join("firefox/profiles.ini"), "").unwrap();
+        assert_eq!(chromium.found(&home).unwrap().spec, "chromium");
+        assert_eq!(firefox.found(&home).unwrap().spec, "firefox");
+        // yt-dlp doesn't know forks, so it gets their folder.
+        fs::create_dir_all(home.join("Brave-Origin")).unwrap();
+        fs::write(home.join("Brave-Origin/Local State"), "{}").unwrap();
+        assert_eq!(origin.found(&home).unwrap().spec, format!("brave:{}", home.join("Brave-Origin").display()));
+        fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn names_the_keyring_before_the_profiles() {
+        assert_eq!(with_keyring("chromium", "gnomekeyring"), "chromium+gnomekeyring");
+        assert_eq!(
+            with_keyring("brave:/home/x/Brave-Origin", "gnomekeyring"),
+            "brave+gnomekeyring:/home/x/Brave-Origin"
+        );
+    }
+
+    #[test]
+    fn notices_cookies_it_could_not_decrypt() {
+        assert!(undecrypted("WARNING: cannot decrypt v11 cookies: no key found\n"));
+        assert!(undecrypted("WARNING: failed to decrypt cookie (AES-CBC) because UTF-8 decoding failed.\n"));
+        assert!(!undecrypted("WARNING: [generic] Falling back on generic information extractor\n"));
     }
 
     #[test]

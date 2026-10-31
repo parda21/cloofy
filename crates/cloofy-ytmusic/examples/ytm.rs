@@ -157,7 +157,15 @@ async fn main() -> Result<()> {
         }
         "saved" => println!("{:?}", client.check_saved(rest).await?),
         "me" => println!("{:?}", client.me().await?),
-        "browsers" => println!("{:#?}", auth::browsers()),
+        "browsers" => println!("{:#?}\ndefault: {:?}", auth::browsers(), auth::default_browser()),
+        // Reads the default browser's sign-in without keeping it.
+        "browser-sign-in" => {
+            let mut browser = auth::default_browser().ok_or_else(|| anyhow::anyhow!("no default browser known"))?;
+            match auth::from_browser(&paths, &mut browser).await? {
+                Some(sign_in) => println!("{} signed in as {:?}", browser.spec, sign_in.check().await?.name),
+                None => println!("{} isn't signed in to YouTube", browser.spec),
+            }
+        }
         "doctor" => {
             for section in doctor::all(&client).await {
                 println!("\n{}", section.title);

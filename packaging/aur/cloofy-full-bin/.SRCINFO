@@ -12,6 +12,7 @@ pkgbase = cloofy-full-bin
 	depends = libgcc
 	depends = libpulse
 	depends = mpv
+	depends = python-secretstorage
 	depends = yt-dlp
 	provides = cloofy=@VERSION@
 	conflicts = cloofy

@@ -415,6 +415,47 @@ pm_command() {
 	esac
 }
 
+# Installs `packages` with package manager `pm`, unattended, as asking was the confirmation.
+install_packages() {
+	local pm=$1 pm_install
+	shift
+	case "$pm" in
+	brew) pm_install=(brew install) ;;
+	apt) pm_install=(env DEBIAN_FRONTEND=noninteractive apt-get install -y) ;;
+	dnf) pm_install=(dnf install -y) ;;
+	zypper) pm_install=(zypper --non-interactive install) ;;
+	pacman) pm_install=(pacman -S --needed --noconfirm) ;;
+	esac
+	# All but Homebrew install as root. The password comes first, in the open, so the
+	# install can run behind the spinner; there -n makes sudo fail rather than ask unseen.
+	if [ "$pm" != brew ] && [ "$(id -u)" -ne 0 ]; then
+		pm_install=(sudo -n "${pm_install[@]}")
+	fi
+	if [ "${pm_install[0]}" != sudo ] || sudo -v -p "    ${bold}Password for sudo$reset $green›$reset " <&3; then
+		run "Installing $(listing "$@")" "${pm_install[@]}" "$@" || true
+	fi
+}
+
+# Whether yt-dlp can read the keyring: a Python script's Python has secretstorage, or it's one
+# of yt-dlp's own builds, which bring it along.
+yt_dlp_reads_keyring() {
+	local script interpreter
+	script=$(command -v yt-dlp) || return 1
+	[ "$(head -c 2 "$script" 2>/dev/null)" = "#!" ] || return 0
+	# `#!/usr/bin/env python3` names the program after env.
+	read -ra interpreter <<<"$(head -n 1 "$script" | sed 's/^#! *//')"
+	"${interpreter[@]}" -c 'import secretstorage' 2>/dev/null
+}
+
+# The package of Python's secretstorage for package manager `pm`; nothing where it has none.
+secretstorage_package() {
+	case "$1" in
+	apt | dnf) echo python3-secretstorage ;;
+	zypper) echo python3-SecretStorage ;;
+	pacman) echo python-secretstorage ;;
+	esac
+}
+
 # Shows `tool` as installed, or as too old: since 2025.11.12, yt-dlp solves YouTube's
 # challenges with deno, and older ones get no streams.
 show_tool() {
@@ -918,22 +959,7 @@ if $ytmusic; then
 			"Yes|$(pm_command "$pm") ${wanted[*]}" \
 			"Later|YouTube Music plays once they're installed"
 		if [ "$choice" -eq 0 ]; then
-			# Unattended, as the question was the confirmation.
-			case "$pm" in
-			brew) pm_install=(brew install) ;;
-			apt) pm_install=(env DEBIAN_FRONTEND=noninteractive apt-get install -y) ;;
-			dnf) pm_install=(dnf install -y) ;;
-			zypper) pm_install=(zypper --non-interactive install) ;;
-			pacman) pm_install=(pacman -S --needed --noconfirm) ;;
-			esac
-			# All but Homebrew install as root. The password comes first, in the open, so the
-			# install can run behind the spinner; there -n makes sudo fail rather than ask unseen.
-			if [ "$pm" != brew ] && [ "$(id -u)" -ne 0 ]; then
-				pm_install=(sudo -n "${pm_install[@]}")
-			fi
-			if [ "${pm_install[0]}" != sudo ] || sudo -v -p "    ${bold}Password for sudo$reset $green›$reset " <&3; then
-				run "Installing $(listing "${wanted[@]}")" "${pm_install[@]}" "${wanted[@]}" || true
-			fi
+			install_packages "$pm" "${wanted[@]}"
 			left=()
 			for tool in "${missing[@]}"; do
 				if has "$tool"; then
@@ -943,6 +969,26 @@ if $ytmusic; then
 				fi
 			done
 			missing=(${left[@]+"${left[@]}"})
+		fi
+	fi
+
+	# Signing in reads the cookies of Chromium-based browsers with the key from the keyring,
+	# which yt-dlp gets through Python's secretstorage. Its own builds bring it along; the
+	# distributions' yt-dlp leaves it optional.
+	if [ "$os" = linux ] && has yt-dlp && ! yt_dlp_reads_keyring; then
+		package=$(secretstorage_package "$pm")
+		if [ -n "$package" ] && $interactive; then
+			printf '\n'
+			note "To sign in with Chrome, Brave or Chromium, yt-dlp needs Python's secretstorage."
+			choose "Install $package now?" \
+				"Yes|$(pm_command "$pm") $package" \
+				"Later|signing in tells you again"
+			if [ "$choice" -eq 0 ]; then
+				install_packages "$pm" "$package"
+				if yt_dlp_reads_keyring; then ok "$package lets yt-dlp read your browser's keyring"; fi
+			fi
+		elif [ -n "$package" ]; then
+			note "To sign in with Chrome, Brave or Chromium: $(pm_command "$pm") $package"
 		fi
 	fi
 
@@ -1039,7 +1085,7 @@ if $ytmusic; then
 		note "cloofy reads your browser's YouTube cookies, and they stay on this computer."
 		printf '\n'
 		choose "Sign in to YouTube Music?" \
-			"Yes|pick the browser you use YouTube in" \
+			"Yes|takes the sign-in of your browser" \
 			"No|listen without an account"
 		if [ "$choice" -eq 0 ]; then
 			printf '\n'
