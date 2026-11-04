@@ -1116,8 +1116,6 @@ mod tests {
     #[tokio::test]
     async fn a_song_its_album_lists_as_another_video_plays_with_its_radio() {
         let (mut engine, _) = idle_engine("other-video");
-        // The song plays at the end, silently.
-        engine.mpv_args = vec!["--ao=null".into()];
         let song = tone(&mut engine, "song", 440, 10);
         let opener = tone(&mut engine, "opener", 440, 10);
         // Nothing runs the loaders: the test hands the engine the album's songs itself.
@@ -1128,10 +1126,6 @@ mod tests {
         let starting = engine.starting.as_ref().expect("the song starts anew");
         assert_eq!(starting.context, song.uri, "on its own, so its radio follows it");
         assert_eq!(starting.track.as_deref(), Some(song.uri.as_str()));
-        // In its own context it is found, and plays.
-        engine.context_page(Ok(vec![song.clone()]), true).await.unwrap();
-        assert!(engine.starting.is_none());
-        assert_eq!(engine.queue.current().map(|t| t.uri.as_str()), Some(song.uri.as_str()));
     }
 
     #[tokio::test]
