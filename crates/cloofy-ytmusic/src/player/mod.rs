@@ -931,6 +931,14 @@ impl Engine {
             return Ok(());
         }
         let starting = self.starting.take().expect("checked above");
+        // YouTube has many songs under more than one video, and a song from search or an
+        // artist's page may be in its album's list as another one. It plays on its own then,
+        // with its radio after it, as on YouTube Music, rather than the album from the start.
+        if let Some(track) = starting.track.clone().filter(|t| !found && t.starts_with(TRACK) && *t != starting.context)
+        {
+            tracing::info!("{track} isn't in {}; playing it with its radio", starting.context);
+            return self.play(track.clone(), Some(track), starting.position_ms, Some(starting.shuffle)).await;
+        }
         if !found {
             tracing::warn!(
                 "{} isn't in {}; playing it from the start",
@@ -1103,6 +1111,27 @@ mod tests {
             }
         }
         true
+    }
+
+    #[tokio::test]
+    async fn a_song_its_album_lists_as_another_video_plays_with_its_radio() {
+        let (mut engine, _) = idle_engine("other-video");
+        // The song plays at the end, silently.
+        engine.mpv_args = vec!["--ao=null".into()];
+        let song = tone(&mut engine, "song", 440, 10);
+        let opener = tone(&mut engine, "opener", 440, 10);
+        // Nothing runs the loaders: the test hands the engine the album's songs itself.
+        engine.play("ytmusic:album:MPREb_a".into(), Some(song.uri.clone()), 0, None).await.unwrap();
+        engine.loader.take().unwrap().abort();
+        engine.context_page(Ok(vec![opener]), true).await.unwrap();
+        engine.loader.take().unwrap().abort();
+        let starting = engine.starting.as_ref().expect("the song starts anew");
+        assert_eq!(starting.context, song.uri, "on its own, so its radio follows it");
+        assert_eq!(starting.track.as_deref(), Some(song.uri.as_str()));
+        // In its own context it is found, and plays.
+        engine.context_page(Ok(vec![song.clone()]), true).await.unwrap();
+        assert!(engine.starting.is_none());
+        assert_eq!(engine.queue.current().map(|t| t.uri.as_str()), Some(song.uri.as_str()));
     }
 
     #[tokio::test]
