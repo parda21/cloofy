@@ -76,8 +76,8 @@ const initial = commands(builds.ytmusic);
 				<a href="/docs/">Docs</a>
 				<a href="/changelog/">Changelog</a>
 				<a class="stars" href={repo} aria-label="cloofy on GitHub">
-					<Icon name="github" size="1.05rem" />
-					<span class="star-count" data-stars={stars ?? ''}>{stars !== null ? `★ ${stars}` : ''}</span>
+					<span class="stars-repo"><Icon name="github" size="1rem" />Star</span>
+					<span class="stars-count"><Icon name="star" size="0.8rem" /><span class="star-count">{stars ?? ''}</span></span>
 				</a>
 				<a class="button small" href="#install">Install</a>
 			</nav>
@@ -313,7 +313,7 @@ const initial = commands(builds.ytmusic);
 			fetch('/stars.json')
 				.then((response) => (response.ok ? response.json() : null))
 				.then((data) => {
-					if (count && typeof data?.stars === 'number') count.textContent = `★ ${data.stars}`;
+					if (count && typeof data?.stars === 'number') count.textContent = String(data.stars);
 				})
 				.catch(() => {});
 
@@ -436,15 +436,42 @@ const initial = commands(builds.ytmusic);
 			.nav nav a:hover {
 				color: var(--text);
 			}
-			.stars {
+			/* As GitHub draws its star button: the repository, then the count in a box of its own. */
+			.nav .stars {
 				display: inline-flex;
-				align-items: center;
-				gap: 0.45rem;
-				padding: 0.3rem 0.65rem;
+				align-items: stretch;
+				height: 2rem;
 				border: 1px solid var(--border-strong);
 				border-radius: 0.4rem;
+				overflow: hidden;
+				font-size: 0.8rem;
+				line-height: 1;
+				color: var(--text);
 			}
-			.star-count:empty {
+			.stars-repo,
+			.stars-count {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.4rem;
+				padding: 0 0.65rem;
+			}
+			.stars-count {
+				gap: 0.3rem;
+				border-left: 1px solid var(--border-strong);
+				background: var(--surface);
+				font-variant-numeric: tabular-nums;
+			}
+			.stars-count svg {
+				color: var(--muted);
+				transition: color 0.15s;
+			}
+			.stars:hover .stars-count svg {
+				color: #f5c451;
+			}
+			.stars:hover {
+				border-color: rgba(255, 255, 255, 0.28);
+			}
+			.stars-count:has(.star-count:empty) {
 				display: none;
 			}
 
@@ -467,7 +494,8 @@ const initial = commands(builds.ytmusic);
 				background: #7c4ae8;
 			}
 			.button.small {
-				padding: 0.4rem 0.8rem;
+				height: 2rem;
+				padding: 0 0.85rem;
 				font-size: 0.8rem;
 			}
 			.button.ghost {
