@@ -92,6 +92,9 @@ impl Mpv {
                 "--no-input-terminal",
                 "--audio-display=no",
                 "--audio-client-name=cloofy",
+                // Mixers name the stream by the window title: the song, as `load` sets it,
+                // instead of the stream's URL with " - mpv".
+                "--title=${media-title}",
                 "--prefetch-playlist=yes",
                 "--gapless-audio=weak",
                 "--keep-open=no",
@@ -178,14 +181,14 @@ impl Mpv {
     }
 
     /// Loads a URL, replacing what plays or appended to the playlist, maybe starting at
-    /// `start` seconds. Returns the playlist entry's ID.
-    pub async fn load(&mut self, url: &str, append: bool, start: Option<f64>) -> Result<u64> {
+    /// `start` seconds, with `title` for the song. Returns the playlist entry's ID.
+    pub async fn load(&mut self, url: &str, append: bool, start: Option<f64>, title: &str) -> Result<u64> {
         let mode = if append { "append" } else { "replace" };
-        let options = start.filter(|s| *s > 0.0).map(|s| format!("start={s:.3}")).unwrap_or_default();
-        let command = match (self.legacy_loadfile, options.is_empty()) {
-            (_, true) => json!(["loadfile", url, mode]),
-            (true, false) => json!(["loadfile", url, mode, options]),
-            (false, false) => json!(["loadfile", url, mode, -1, options]),
+        let options = load_options(start, title);
+        let command = if self.legacy_loadfile {
+            json!(["loadfile", url, mode, options])
+        } else {
+            json!(["loadfile", url, mode, -1, options])
         };
         let reply = self.command(command).await?;
         reply["playlist_entry_id"].as_u64().context("mpv didn't say which entry it loaded")
@@ -198,6 +201,16 @@ impl Mpv {
             let _ = self.child.kill().await;
         }
     }
+}
+
+/// The options of a `loadfile`: where to start, and the title mixers and the window show. mpv
+/// takes `%<bytes>%` before a value as its quoting, so a title may have commas and `=`.
+fn load_options(start: Option<f64>, title: &str) -> String {
+    let mut options = format!("force-media-title=%{}%{title}", title.len());
+    if let Some(start) = start.filter(|s| *s > 0.0) {
+        options.push_str(&format!(",start={start:.3}"));
+    }
+    options
 }
 
 /// Runs in the child before mpv starts: keeps mpv's end of the socket open across exec.
@@ -270,6 +283,17 @@ mod tests {
         assert!(!older_than_0_38("mpv v0.41.0"));
         assert!(!older_than_0_38("mpv v0.38.0-123-gabcdef"));
         assert!(!older_than_0_38("mpv git-2026"), "builds from git are new");
+    }
+
+    #[test]
+    fn quotes_the_title_for_mpv() {
+        assert_eq!(load_options(None, "Song – Artist"), "force-media-title=%15%Song – Artist");
+        assert_eq!(
+            load_options(Some(12.5), "A, B=C – D"),
+            "force-media-title=%12%A, B=C – D,start=12.500",
+            "commas and = stay in the title"
+        );
+        assert_eq!(load_options(Some(0.0), "x"), "force-media-title=%1%x");
     }
 
     #[test]

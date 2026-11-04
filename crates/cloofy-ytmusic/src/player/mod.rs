@@ -516,7 +516,7 @@ impl Engine {
         };
         self.waiting = None;
         let start = (start_ms > 0).then(|| f64::from(start_ms) / 1000.0);
-        let entry = self.mpv().await?.load(&url, false, start).await?;
+        let entry = self.mpv().await?.load(&url, false, start, &media_title(&track)).await?;
         self.current = Some(Loaded { entry, uri: track.uri });
         // Loading in place of what played empties mpv's playlist, the song loaded ahead too.
         self.next = None;
@@ -546,8 +546,8 @@ impl Engine {
         if !self.started || self.current.is_none() {
             return Ok(());
         }
-        let wanted = self.queue.peek().map(|t| t.uri.clone());
-        if self.next.as_ref().map(|n| &n.uri) == wanted.as_ref() {
+        let wanted = self.queue.peek().map(|t| (t.uri.clone(), media_title(t)));
+        if self.next.as_ref().map(|n| &n.uri) == wanted.as_ref().map(|(uri, _)| uri) {
             return Ok(());
         }
         if let Some(next) = self.next.take() {
@@ -556,7 +556,7 @@ impl Engine {
             self.dropped = Some(next.entry);
             self.mpv().await?.command(json!(["playlist-clear"])).await?;
         }
-        let Some(uri) = wanted else { return Ok(()) };
+        let Some((uri, title)) = wanted else { return Ok(()) };
         let video = video_id(&uri).to_owned();
         let Some(stream) = self.streams.get(&video).filter(|s| s.fresh()) else {
             if !self.unresolvable.contains(&video) {
@@ -571,7 +571,7 @@ impl Engine {
             return Ok(());
         }
         let url = stream.url.clone();
-        let entry = self.mpv().await?.load(&url, true, None).await?;
+        let entry = self.mpv().await?.load(&url, true, None, &title).await?;
         self.next = Some(Loaded { entry, uri });
         Ok(())
     }
@@ -948,6 +948,15 @@ impl Engine {
 }
 
 /// Fetches a context's songs page by page for the player.
+/// How a song shows in mixers and media lists: "Song – Artist, Artist".
+fn media_title(track: &Track) -> String {
+    if track.artists.is_empty() {
+        track.name.clone()
+    } else {
+        format!("{} – {}", track.name, track.artists.join(", "))
+    }
+}
+
 fn load_context(client: YtMusic, jobs: UnboundedSender<Job>, generation: u64, context: String) -> JoinHandle<()> {
     tokio::spawn(async move {
         let send = |page: Result<Vec<Track>>, last: bool| {
