@@ -10,7 +10,7 @@
 		"binding": "ASSETS",
 		"not_found_handling": "404-page",
 		// Everything else is static, served without running the Worker.
-		"run_worker_first": ["/install.sh", "/install"]
+		"run_worker_first": ["/install.sh", "/install", "/stars.json"]
 	},
 	// cloofy.app and www, with their DNS records and certificates made by Cloudflare. A redirect
 	// rule on the zone sends www to cloofy.app.

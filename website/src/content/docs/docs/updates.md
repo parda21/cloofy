@@ -17,4 +17,4 @@ Installed with Homebrew, mise, a system package or Nix, cloofy leaves its update
 
 ## What changed
 
-Every release is in the [changelog](https://github.com/parda21/cloofy/blob/main/CHANGELOG.md) and on [GitHub's release page](https://github.com/parda21/cloofy/releases).
+Every release is in the [changelog](/changelog/) and on [GitHub's release page](https://github.com/parda21/cloofy/releases).

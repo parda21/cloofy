@@ -8,6 +8,8 @@ const repo = 'https://github.com/parda21/cloofy';
 export default defineConfig({
 	site: 'https://cloofy.app',
 	trailingSlash: 'ignore',
+	// The changelog page reads CHANGELOG.md from the repository, above the site's folder.
+	vite: { server: { fs: { allow: ['..'] } } },
 	integrations: [
 		starlight({
 			title: 'cloofy',
@@ -58,7 +60,7 @@ export default defineConfig({
 					items: [
 						{ label: 'FAQ', slug: 'docs/faq' },
 						{ label: 'Troubleshooting', slug: 'docs/troubleshooting' },
-						{ label: 'Changelog', link: `${repo}/blob/main/CHANGELOG.md`, attrs: { target: '_blank' } },
+						{ label: 'Changelog', link: '/changelog/' },
 					],
 				},
 			],

@@ -1,22 +1,34 @@
 ---
 import '@fontsource-variable/jetbrains-mono';
 import { Icon } from '@astrojs/starlight/components';
+import { siSpotify, siYoutubemusic } from 'simple-icons';
 
 const repo = 'https://github.com/parda21/cloofy';
 const install = 'curl -fsSL https://cloofy.app/install.sh | bash';
-const title = 'cloofy · Spotify and YouTube Music in your terminal';
+const title = 'cloofy: Spotify and YouTube Music in your terminal';
 const description =
-	'cloofy plays Spotify and YouTube Music in the terminal: Home, your library, synced lyrics, real cover art and a mouse that works everywhere. One of them, or both side by side.';
+	'cloofy plays Spotify and YouTube Music in the terminal, one of them or both side by side, with Home, synced lyrics, real cover art and a mouse that works everywhere.';
 
+// The stars at build time; the page asks cloofy.app for the current count once it loads.
+let stars: number | null = null;
+try {
+	const response = await fetch('https://api.github.com/repos/parda21/cloofy', { headers: { 'user-agent': 'cloofy.app' } });
+	if (response.ok) stars = (await response.json()).stargazers_count;
+} catch {
+	// Shown once the page has asked.
+}
+
+// The README's features, in its words.
 const features = [
-	{ glyph: '▶', title: 'Plays on its own', text: 'No official app in the background. Spotify plays through librespot, as a Spotify Connect device; YouTube Music through mpv, gapless.' },
-	{ glyph: '⇄', title: 'Both, side by side', text: 'Install one service or both. S or the switch in the top bar shows the other one, just as you left it.' },
-	{ glyph: '♪', title: 'YouTube Music, no account', text: 'Home, search, every page, lyrics and song radios work signed out. Sign in with your browser for your library.' },
-	{ glyph: '✦', title: 'Home and the DJ', text: 'Your shelves and mixes, and on Spotify Made For You and the DJ, with its voice between tracks. Ask it for something.' },
-	{ glyph: '¶', title: 'Synced lyrics', text: 'The current line lights up next to a large cover, line by line, in the now-playing view.' },
-	{ glyph: '▣', title: 'Real cover art', text: 'Images through the Kitty, Sixel or iTerm2 protocol, and block art in every other terminal.' },
-	{ glyph: '⌘', title: 'Mouse and keyboard', text: 'Click, hover, scroll, drag the seek bar. Every action has a key, and Ctrl K finds the rest.' },
-	{ glyph: '⌂', title: 'At home on your system', text: 'Media keys and media controls on macOS and Linux, sleep and wake, less motion when the system asks for it.' },
+	{ title: 'Plays on its own', text: 'Spotify plays through librespot, and cloofy is a Spotify Connect device. It controls your other devices too, and follows them live. YouTube Music plays through mpv, with no gap between songs.' },
+	{ title: 'Spotify, YouTube Music or both', text: 'Install one, or both side by side: S or the switch in the top bar shows the other\'s Home, library and pages, as you left them.' },
+	{ title: 'YouTube Music without an account', text: 'Home, search, every page, lyrics and song radios work signed out. Sign in with your browser for your library and likes.' },
+	{ title: 'Home and the DJ', text: 'Your shelves and mixes, and on Spotify Made For You and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify\'s apps.' },
+	{ title: 'The queue', text: 'See what plays next: the songs you queued, then the rest of the playlist or album. Skip ahead to any of them, or take a queued song out again.' },
+	{ title: 'Cover art', text: 'Real images in terminals that show pictures through the Kitty, Sixel or iTerm2 protocol, and block art everywhere else.' },
+	{ title: 'Mouse and keyboard', text: 'Click, hover, scroll, drag the seek and volume bars, right-click for actions. Every action also has a key, and Ctrl K finds the rest.' },
+	{ title: 'Instant', text: 'The last page, list and track are back the moment it starts, and the controls answer before Spotify does.' },
+	{ title: 'At home on macOS and Linux', text: 'Media keys and the system\'s media controls. cloofy pauses before the computer sleeps, reconnects when it wakes, and moves less when the system asks for less motion.' },
 ];
 
 const builds = {
@@ -62,9 +74,11 @@ const initial = commands(builds.ytmusic);
 			<a class="nav-logo" href="/" aria-label="cloofy home"><img src="/logo.svg" alt="cloofy" width="84" height="20" /></a>
 			<nav>
 				<a href="/docs/">Docs</a>
-				<a href="#install">Install</a>
-				<a href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
-				<a class="nav-icon" href={repo} aria-label="cloofy on GitHub"><Icon name="github" size="1.15rem" /></a>
+				<a href="/changelog/">Changelog</a>
+				<a class="stars" href={repo} aria-label="cloofy on GitHub">
+					<Icon name="github" size="1.05rem" />
+					<span class="star-count" data-stars={stars ?? ''}>{stars !== null ? `★ ${stars}` : ''}</span>
+				</a>
 				<a class="button small" href="#install">Install</a>
 			</nav>
 		</header>
@@ -73,12 +87,10 @@ const initial = commands(builds.ytmusic);
 			<section class="hero">
 				<canvas id="field" aria-hidden="true"></canvas>
 				<div class="hero-inner">
-					<a class="pill" href="/docs/youtube-music/">New in 0.5 · YouTube Music, side by side with Spotify <span aria-hidden="true">→</span></a>
+					<a class="pill" href="/changelog/">What's new in 0.5: YouTube Music <span aria-hidden="true">→</span></a>
 					<h1 class="wordmark"><img src="/logo.svg" alt="cloofy" width="504" height="120" /></h1>
-					<p class="tagline">Spotify and YouTube Music<br />in your terminal.</p>
-					<p class="sub">
-						It plays the music itself. Home, your library, synced lyrics, real cover art,<br class="wide" /> and a mouse that works everywhere.
-					</p>
+					<p class="tagline">Spotify and YouTube Music in your terminal.</p>
+					<p class="sub">Plays on its own, with Home, Spotify's DJ, synced lyrics, real cover art and a mouse that works everywhere.</p>
 					<div class="command" data-copy={install}>
 						<span class="prompt" aria-hidden="true">$</span>
 						<code>{install}</code>
@@ -86,30 +98,31 @@ const initial = commands(builds.ytmusic);
 					</div>
 					<div class="actions">
 						<a class="button" href="/docs/">Read the docs</a>
-						<a class="button ghost" href="#look"><span aria-hidden="true">▶</span> See it in action</a>
+						<a class="button ghost" href={repo}><Icon name="github" size="1rem" /> GitHub</a>
 					</div>
-					<p class="platforms">macOS and Linux · Homebrew, mise and Arch Linux too · MIT</p>
+					<p class="platforms">For macOS and Linux, also with Homebrew, mise and on Arch Linux. MIT licensed.</p>
 				</div>
 			</section>
 
-			<section class="screen" id="look">
+			<section class="screen">
 				<img
 					src="/screenshots/hero.webp"
 					width="1400"
 					height="932"
 					alt="cloofy in a terminal: the Home page with cover art, a playlist with the playing song, and the now-playing view with synced lyrics"
 				/>
-				<p class="caption">Recorded from <code>cloofy demo</code>, which needs no account and plays nothing. Try it in your own terminal.</p>
+				<p class="caption">Recorded from <code>cloofy demo</code>, which needs no account and plays nothing, so you can try it in your own terminal first.</p>
 			</section>
 
 			<section class="section">
-				<h2>Everything you'd miss from the app.</h2>
-				<p class="section-sub">It looks and works like the desktop client you know. Just in your terminal.</p>
+				<h2>Features</h2>
+				<p class="section-sub">
+					It looks and works like the desktop client you know: your Home feed, your library in a sidebar, cover art, synced lyrics, and on Spotify the DJ talking between tracks.
+				</p>
 				<div class="features">
 					{
 						features.map((f) => (
 							<article class="feature">
-								<span class="glyph" aria-hidden="true">{f.glyph}</span>
 								<h3>{f.title}</h3>
 								<p>{f.text}</p>
 							</article>
@@ -120,18 +133,15 @@ const initial = commands(builds.ytmusic);
 
 			<section class="section split">
 				<div class="split-text">
-					<h2>Now playing, with lyrics in time.</h2>
-					<p>
-						<kbd>z</kbd> opens the track in full: a large cover, and lyrics that follow the song line by line. From Spotify, from YouTube Music, or from
-						LRCLIB where they have none.
-					</p>
+					<h2>Now playing, with lyrics in time</h2>
+					<p><kbd>z</kbd> opens the track in full: a large cover, and lyrics that follow the song line by line.</p>
 				</div>
 				<img class="shot" src="/screenshots/nowplaying.webp" width="1400" height="932" loading="lazy" alt="The now-playing view: a large album cover, and synced lyrics with the current line lit" />
 			</section>
 
 			<section class="section">
-				<h2>Every page you know.</h2>
-				<p class="section-sub">Playlists and albums with the playing song marked, artist pages, search with covers, and your whole library as a grid.</p>
+				<h2>Every page you know</h2>
+				<p class="section-sub">Playlists and albums with the playing song marked, artist pages with popular tracks and play counts, search with covers, and your whole library as a grid.</p>
 				<div class="gallery">
 					<img class="shot" src="/screenshots/playlist.webp" width="1400" height="932" loading="lazy" alt="A playlist page with its mosaic cover, Play and Shuffle buttons, and the track list" />
 					<img class="shot" src="/screenshots/artist.webp" width="1400" height="932" loading="lazy" alt="An artist page with a round portrait, monthly listeners, and the popular tracks" />
@@ -142,9 +152,9 @@ const initial = commands(builds.ytmusic);
 
 			<section class="section split reverse">
 				<div class="split-text">
-					<h2>A key for everything. Or a click.</h2>
+					<h2>A key for everything, or a click</h2>
 					<p>
-						<kbd>Ctrl</kbd> <kbd>K</kbd> opens a command palette for every action and playlist, <kbd>?</kbd> lists all keys, and the hint bar shows what works
+						<kbd>Ctrl</kbd> <kbd>K</kbd> opens a command palette for every action and playlist, <kbd>?</kbd> lists all keys, and the hint bar at the bottom shows what works
 						on the current page. All of it works with the mouse too.
 					</p>
 					<a class="more" href="/docs/keys/">All shortcuts →</a>
@@ -153,28 +163,34 @@ const initial = commands(builds.ytmusic);
 			</section>
 
 			<section class="section">
-				<h2>Two services. One player.</h2>
-				<p class="section-sub">Install one, or both. Each build carries only the service it's for.</p>
+				<h2>Spotify and YouTube Music</h2>
+				<p class="section-sub">Install one, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around.</p>
 				<div class="services">
 					<article class="service">
-						<h3><span class="dot spotify"></span>Spotify</h3>
+						<h3>
+							<svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill={`#${siSpotify.hex}`}><path d={siSpotify.path} /></svg>
+							Spotify
+						</h3>
 						<ul>
-							<li>Plays through librespot, as a Spotify Connect device you pick from your phone</li>
-							<li>Controls your other devices, and follows them live</li>
-							<li>The DJ, with its voice between tracks; ask it for something</li>
+							<li>Plays through librespot, as a Spotify Connect device you can pick from your phone</li>
+							<li>Controls your other devices too, and follows them live</li>
+							<li>The DJ with its voice between tracks, and you can ask it for something</li>
 							<li>Made For You, podcasts and crossfade</li>
-							<li>Needs Premium and a free developer app, which the installer sets up with you</li>
+							<li>Needs Spotify Premium, and a free developer app of your own that the installer sets up with you</li>
 						</ul>
 						<a class="more" href="/docs/spotify/">Set up Spotify →</a>
 					</article>
 					<article class="service">
-						<h3><span class="dot ytmusic"></span>YouTube Music</h3>
+						<h3>
+							<svg class="logo" viewBox="0 0 24 24" aria-hidden="true" fill={`#${siYoutubemusic.hex}`}><path d={siYoutubemusic.path} /></svg>
+							YouTube Music
+						</h3>
 						<ul>
-							<li>Plays through mpv, with streams from yt-dlp, without a gap between songs</li>
-							<li>Home, search, pages, lyrics and radios without an account</li>
-							<li>Sign in with your browser for your playlists, albums, artists and likes</li>
-							<li>Pick the Google account by its address, brand accounts too</li>
-							<li>The radio of the last song follows a playlist, as on YouTube Music</li>
+							<li>Plays through mpv, with the streams from yt-dlp, and no gap between songs</li>
+							<li>Home, search, every page, lyrics and song radios work without an account</li>
+							<li>Signed in with your browser, your playlists, albums, artists and liked songs</li>
+							<li>With several Google accounts in the browser, you pick one by its address</li>
+							<li>When a playlist or album ends, the radio of its last song follows</li>
 						</ul>
 						<a class="more" href="/docs/youtube-music/">Set up YouTube Music →</a>
 					</article>
@@ -183,19 +199,19 @@ const initial = commands(builds.ytmusic);
 
 			<section class="section split">
 				<div class="split-text">
-					<h2>At home on Omarchy.</h2>
-					<p>On <a href="https://omarchy.org">Omarchy</a>, cloofy takes its colors from the theme and follows it when you switch. One command adds the rest:</p>
+					<h2>At home on Omarchy</h2>
+					<p>On <a href="https://omarchy.org">Omarchy</a>, cloofy takes its colors from the theme and follows it when you switch, without a restart. <code>cloofy omarchy install</code> adds the rest:</p>
 					<ul class="checks">
-						<li>A bar widget next to the clock, with the song, a small equalizer and a card with the controls</li>
-						<li>Music in the Omarchy menu, and cloofy in the launcher</li>
-						<li>Super+Shift+M opens cloofy instead of Spotify, if you like</li>
+						<li>A widget in the bar next to the clock, with the song, a small equalizer and a card with the controls</li>
+						<li>Music in the Omarchy menu, and cloofy with its icon in the launcher</li>
+						<li>Super+Shift+M opens cloofy instead of Spotify, if you say yes</li>
 						<li>Song notifications from the desktop, with the cover</li>
 					</ul>
 					<a class="more" href="/docs/omarchy/">cloofy on Omarchy →</a>
 				</div>
-				<div class="terminal" aria-label="Setting up cloofy in Omarchy">
+				<div class="terminal" aria-label="The output of cloofy omarchy status">
 					<div class="terminal-bar"><span></span><span></span><span></span></div>
-					<pre><code><span class="dim">$</span> cloofy omarchy install
+					<pre><code><span class="dim">$</span> cloofy omarchy status
 
   cloofy for Omarchy
 
@@ -208,9 +224,9 @@ const initial = commands(builds.ytmusic);
 			</section>
 
 			<section class="section install" id="install">
-				<h2>Install in a minute.</h2>
+				<h2>Install</h2>
 				<p class="section-sub">
-					The installer asks what you listen to, puts the build in <code>~/.local/bin</code> and walks you through the setup, on Omarchy too.
+					The installer first asks what you listen to: Spotify, YouTube Music, or both. Then it checks your system, puts the latest release in <code>~/.local/bin</code>, and walks you through the setup.
 				</p>
 				<div class="command large" data-copy={install}>
 					<span class="prompt" aria-hidden="true">$</span>
@@ -219,7 +235,7 @@ const initial = commands(builds.ytmusic);
 				</div>
 
 				<div class="managers" data-commands={JSON.stringify(Object.fromEntries(Object.entries(builds).map(([k, b]) => [k, commands(b)])))}>
-					<p class="or">Or with a package manager, for</p>
+					<p class="or">Package managers have the same three builds:</p>
 					<div class="toggle" role="radiogroup" aria-label="Services">
 						<button type="button" role="radio" aria-checked="false" data-build="spotify">Spotify</button>
 						<button type="button" role="radio" aria-checked="true" data-build="ytmusic">YouTube Music</button>
@@ -239,29 +255,33 @@ const initial = commands(builds.ytmusic);
 						<code>{initial.brew}</code>
 						<button class="copy" type="button" aria-label="Copy the command">Copy</button>
 					</div>
-					<p class="note">More in the <a href="/docs/install/">install guide</a>: installer options, building from source, uninstalling.</p>
+					<p class="note">The <a href="/docs/install/">install guide</a> has the installer's options, building from source and uninstalling.</p>
 				</div>
 			</section>
 
 			<section class="section faq">
-				<h2>Questions.</h2>
+				<h2>FAQ</h2>
 				<details>
-					<summary>Do I need Premium?</summary>
-					<p>For Spotify, yes: outside its own apps, Spotify streams only to Premium accounts. For YouTube Music, no: it plays without any account, and signing in only adds your library.</p>
+					<summary>Does Spotify work with a free account?</summary>
+					<p>No. Outside its own apps, Spotify streams only to Premium accounts.</p>
+				</details>
+				<details>
+					<summary>Do I need YouTube Premium?</summary>
+					<p>No. YouTube Music plays without any account, and signing in only adds your library and likes.</p>
 				</details>
 				<details>
 					<summary>Why do I need my own Spotify app?</summary>
-					<p>Spotify gives its Web API only to registered apps, and apps in development mode are limited to a handful of users. Yours is free and only yours, and the installer sets it up with you in about two minutes.</p>
+					<p>Spotify gives its Web API, which cloofy reads your library and searches through, only to registered apps. Apps in development mode are limited to a handful of users, so one shared app couldn't serve everyone. Yours is free and only yours, and the installer sets it up with you.</p>
 				</details>
 				<details>
-					<summary>Is signing in with my browser's cookies safe?</summary>
-					<p>cloofy keeps only youtube.com's cookies, in a file only you can read, or in the macOS Keychain, and sends them only to music.youtube.com. Streams, covers and lyrics load without them. <code>cloofy logout ytmusic</code> deletes them.</p>
+					<summary>Is signing in to YouTube Music with my browser's cookies safe?</summary>
+					<p>cloofy keeps only youtube.com's cookies, in a file only you can read or in the macOS Keychain, and sends them only to music.youtube.com. Streams, covers and lyrics load without them. <code>cloofy logout ytmusic</code> deletes them.</p>
 				</details>
 				<details>
 					<summary>What does cloofy send where?</summary>
-					<p>Requests to the services you use, to LRCLIB for lyrics they don't have, and to GitHub for new releases. No telemetry, no server of its own.</p>
+					<p>Requests to Spotify and YouTube Music, for the services you use, and to LRCLIB for lyrics they don't have. cloofy also asks GitHub for new releases. Nothing else: no telemetry, no server of its own.</p>
 				</details>
-				<a class="more" href="/docs/faq/">More questions →</a>
+				<a class="more" href="/docs/faq/">All questions →</a>
 			</section>
 		</main>
 
@@ -271,12 +291,12 @@ const initial = commands(builds.ytmusic);
 				<a href="/docs/">Docs</a>
 				<a href="/docs/install/">Install</a>
 				<a href="/docs/troubleshooting/">Troubleshooting</a>
-				<a href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
+				<a href="/changelog/">Changelog</a>
 				<a href={repo}>GitHub</a>
 			</nav>
 			<p>
-				cloofy is not affiliated with Spotify or YouTube. <a href={`${repo}/blob/main/LICENSE`}>MIT</a> licensed. Built with
-				<a href="https://ratatui.rs">ratatui</a>, <a href="https://github.com/librespot-org/librespot">librespot</a>, <a href="https://mpv.io">mpv</a> and
+				cloofy is not affiliated with Spotify or YouTube. It is <a href={`${repo}/blob/main/LICENSE`}>MIT</a> licensed, and built with{' '}
+				<a href="https://ratatui.rs">ratatui</a>, <a href="https://github.com/librespot-org/librespot">librespot</a>, <a href="https://mpv.io">mpv</a> and{' '}
 				<a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a>.
 			</p>
 			<p class="quip">Was this made with the help of AI? Yes. Do I care, as long as it works? No.</p>
@@ -287,6 +307,15 @@ const initial = commands(builds.ytmusic);
 
 			const field = document.getElementById('field');
 			if (field instanceof HTMLCanvasElement) startField(field);
+
+			// The current star count, from cloofy.app, which asks GitHub at most once an hour.
+			const count = document.querySelector<HTMLElement>('.star-count');
+			fetch('/stars.json')
+				.then((response) => (response.ok ? response.json() : null))
+				.then((data) => {
+					if (count && typeof data?.stars === 'number') count.textContent = `★ ${data.stars}`;
+				})
+				.catch(() => {});
 
 			for (const box of document.querySelectorAll<HTMLElement>('.command')) {
 				const button = box.querySelector('button');
@@ -326,6 +355,7 @@ const initial = commands(builds.ytmusic);
 				--surface: #12101c;
 				--raised: #1b1828;
 				--border: rgba(255, 255, 255, 0.08);
+				--border-strong: rgba(255, 255, 255, 0.16);
 				--text: #ececf1;
 				--muted: #9a98a8;
 				--faint: #5e5c6c;
@@ -406,8 +436,16 @@ const initial = commands(builds.ytmusic);
 			.nav nav a:hover {
 				color: var(--text);
 			}
-			.nav-icon {
-				display: flex;
+			.stars {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.45rem;
+				padding: 0.3rem 0.65rem;
+				border: 1px solid var(--border-strong);
+				border-radius: 0.4rem;
+			}
+			.star-count:empty {
+				display: none;
 			}
 
 			.button {
@@ -421,23 +459,23 @@ const initial = commands(builds.ytmusic);
 				font-weight: 600;
 				text-decoration: none;
 				color: #fff !important;
-				background: linear-gradient(90deg, #e86a9a, var(--violet));
-				border: 1px solid transparent;
-				transition:
-					transform 0.15s,
-					box-shadow 0.15s;
+				background: var(--violet);
+				border: 1px solid var(--violet);
+				transition: background 0.15s;
 			}
 			.button:hover {
-				transform: translateY(-1px);
-				box-shadow: 0 8px 30px rgba(139, 92, 246, 0.35);
+				background: #7c4ae8;
 			}
 			.button.small {
 				padding: 0.4rem 0.8rem;
 				font-size: 0.8rem;
 			}
 			.button.ghost {
-				background: rgba(18, 16, 28, 0.7);
-				border-color: rgba(139, 92, 246, 0.5);
+				background: rgba(18, 16, 28, 0.8);
+				border-color: var(--border-strong);
+			}
+			.button.ghost:hover {
+				background: var(--raised);
 			}
 
 			.hero {
@@ -595,38 +633,21 @@ const initial = commands(builds.ytmusic);
 			}
 			.features {
 				display: grid;
-				grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
-				gap: 1rem;
+				grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));
+				gap: 0 2.5rem;
 			}
 			.feature {
-				padding: 1.4rem;
-				border: 1px solid var(--border);
-				border-radius: 0.8rem;
-				background: linear-gradient(180deg, var(--surface), rgba(18, 16, 28, 0.4));
-				transition: border-color 0.2s;
-			}
-			.feature:hover {
-				border-color: rgba(139, 92, 246, 0.45);
+				padding: 1.4rem 0;
+				border-top: 1px solid var(--border);
 			}
 			.feature h3 {
 				font-size: 1rem;
-				margin: 0.9rem 0 0.4rem;
+				margin: 0 0 0.45rem;
 			}
 			.feature p {
 				color: var(--muted);
 				font-size: 0.92rem;
 				margin: 0;
-			}
-			.glyph {
-				display: grid;
-				place-items: center;
-				width: 2.2rem;
-				height: 2.2rem;
-				border-radius: 0.5rem;
-				font-family: var(--mono);
-				color: #fff;
-				background: linear-gradient(135deg, rgba(255, 143, 177, 0.3), rgba(139, 92, 246, 0.3));
-				border: 1px solid rgba(139, 92, 246, 0.4);
 			}
 
 			.split {
@@ -683,7 +704,7 @@ const initial = commands(builds.ytmusic);
 			.service h3 {
 				display: flex;
 				align-items: center;
-				gap: 0.6rem;
+				gap: 0.75rem;
 				margin: 0 0 1rem;
 				font-size: 1.15rem;
 			}
@@ -708,16 +729,10 @@ const initial = commands(builds.ytmusic);
 				left: 0;
 				color: var(--violet);
 			}
-			.dot {
-				width: 0.7rem;
-				height: 0.7rem;
-				border-radius: 0.15rem;
-			}
-			.dot.spotify {
-				background: var(--green);
-			}
-			.dot.ytmusic {
-				background: #ff3b3b;
+			.service .logo {
+				width: 1.6rem;
+				height: 1.6rem;
+				flex: none;
 			}
 
 			.terminal {
@@ -872,7 +887,7 @@ const initial = commands(builds.ytmusic);
 				.wide {
 					display: none;
 				}
-				.nav nav a:not(.button):not(.nav-icon):not([href='/docs/']) {
+				.nav nav a[href='/changelog/'] {
 					display: none;
 				}
 			}
@@ -880,8 +895,7 @@ const initial = commands(builds.ytmusic);
 				html {
 					scroll-behavior: auto;
 				}
-				.button,
-				.feature {
+				.button {
 					transition: none;
 				}
 			}

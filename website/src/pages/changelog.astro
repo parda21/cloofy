@@ -1,0 +1,64 @@
+---
+// The changelog page, made from the repository's CHANGELOG.md at build time, so it says what
+// the file says.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Marked, type Tokens } from 'marked';
+import changelog from '../../../CHANGELOG.md?raw';
+
+interface Heading {
+	depth: number;
+	slug: string;
+	text: string;
+}
+
+const headings: Heading[] = [];
+let release = '';
+
+/** `[0.4.0] - 2026-10-27` → `0.4.0`, `[Unreleased]` → `Unreleased`. */
+const version = (raw: string) => raw.replace(/^\[([^\]]+)\].*$/, '$1').trim();
+const slugify = (text: string) => text.toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '');
+
+const marked = new Marked({
+	renderer: {
+		heading(this: { parser: { parseInline(tokens: Tokens.Generic[]): string } }, { tokens, depth, text }: Tokens.Heading) {
+			const html = this.parser.parseInline(tokens);
+			if (depth === 2) {
+				release = version(text);
+				const slug = slugify(release === 'Unreleased' ? 'unreleased' : `v${release}`);
+				headings.push({ depth, slug, text: release });
+				// The version and its date, without the link to GitHub's comparison it has in the file.
+				const date = text.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+				const when = date ? ` <span class="release-date">${date}</span>` : '';
+				return `<h2 id="${slug}">${release}${when}</h2>\n`;
+			}
+			const slug = slugify(`${release}-${text}`);
+			return `<h${depth} id="${slug}">${html}</h${depth}>\n`;
+		},
+	},
+});
+
+// The page has its own title, so the file's goes.
+const html = await marked.parse(changelog.replace(/^# Changelog[^\n]*\n/, ''));
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Changelog',
+		description: 'Every cloofy release, and what changed in it.',
+		tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 2 },
+		editUrl: 'https://github.com/parda21/cloofy/edit/main/CHANGELOG.md',
+	}}
+	headings={headings}
+>
+	<Fragment set:html={html} />
+</StarlightPage>
+
+<style is:global>
+	.release-date {
+		font-size: 0.55em;
+		font-weight: 400;
+		color: var(--sl-color-gray-3);
+		margin-left: 0.5rem;
+		letter-spacing: 0;
+	}
+</style>
