@@ -4,6 +4,8 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-04
+
 YouTube Music joins Spotify, on its own or side by side, and cloofy becomes part of Omarchy.
 
 ### Added
@@ -116,7 +118,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/parda21/cloofy/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/parda21/cloofy/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/parda21/cloofy/compare/v0.1.0...v0.2.0

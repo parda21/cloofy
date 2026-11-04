@@ -37,8 +37,9 @@ const marked = new Marked({
 	},
 });
 
-// The page has its own title, so the file's goes.
-const html = await marked.parse(changelog.replace(/^# Changelog[^\n]*\n/, ''));
+// The page has its own title, so the file's goes, as does an Unreleased section with nothing in it yet.
+const body = changelog.replace(/^# Changelog[^\n]*\n/, '').replace(/^## \[Unreleased\]\s*\n(?=## )/m, '');
+const html = await marked.parse(body);
 ---
 
 <StarlightPage
