@@ -31,8 +31,10 @@ YouTube Music joins Spotify, on its own or side by side, and cloofy becomes part
 
 ### Fixed
 
+- **Spotify refusing the keys to songs.** Spotify turns down librespot's requests for the key to a song's audio at times ([librespot#1649](https://github.com/librespot-org/librespot/issues/1649)), and songs then skipped one after another without a word. cloofy now asks for one key at a time, and after a refusal waits 3, then 5, then 10 seconds before it asks again, as many refusals stop that way. A song that still can't play says so instead of skipping silently. The change comes from an open librespot pull request ([#1844](https://github.com/librespot-org/librespot/pull/1844)).
 - Songs LRCLIB has no lyrics for say "No lyrics for this song." instead of "Lyrics are unavailable right now.", as LRCLIB sometimes answers with an error when it has none.
 - With bash 5, the installer shows paths in your home folder with `~` too.
+- While YouTube Music plays, the system's sound mixer shows the song instead of the address of its stream.
 
 ## [0.4.0] - 2026-10-27
 

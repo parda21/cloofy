@@ -1124,6 +1124,16 @@ impl App {
                 // Usually another device took over; find out which before the next command.
                 self.next_poll = Instant::now();
             }
+            // Spotify refuses librespot the keys to songs at times; skipping them silently
+            // would look like cloofy's fault.
+            PlayerEvent::Unavailable { refused: true, .. } => {
+                self.error(
+                    "Spotify refused the key to a song, so it was skipped. See cloofy.app/docs/troubleshooting".into(),
+                );
+            }
+            PlayerEvent::Unavailable { refused: false, .. } => {
+                self.notice("A song couldn't load, so it was skipped".into())
+            }
             _ => {}
         }
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {

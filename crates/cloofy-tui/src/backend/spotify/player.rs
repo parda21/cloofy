@@ -212,7 +212,7 @@ pub fn spawn(
         let started = async {
             let pending = session::prepare(&paths)?;
             let (engine, lost_outputs) = Engine::new(&pending.session, crossfade)?;
-            forward_events(&engine, lost_outputs, &tx);
+            forward_events(&engine, lost_outputs, &tx, &state);
             anyhow::Ok((pending, Arc::new(engine)))
         };
         let (mut pending, engine) = match started.await {
@@ -300,12 +300,23 @@ pub fn spawn(
 }
 
 /// Passes the player's events, as cloofy's own, and lost outputs on to the app.
-fn forward_events(engine: &Engine, mut lost_outputs: UnboundedReceiver<String>, tx: &UnboundedSender<AppEvent>) {
+fn forward_events(
+    engine: &Engine,
+    mut lost_outputs: UnboundedReceiver<String>,
+    tx: &UnboundedSender<AppEvent>,
+    state: &Arc<watch::Sender<SessionState>>,
+) {
     let mut librespot_events = engine.player.get_player_event_channel();
     let player_tx = tx.clone();
+    let state = state.clone();
     tokio::spawn(async move {
         while let Some(event) = librespot_events.recv().await {
             let Some(event) = events::neutral(event) else { continue };
+            let session = match &*state.borrow() {
+                SessionState::Ready(session) => Some(session.clone()),
+                _ => None,
+            };
+            let event = events::refusals(event, session.as_ref());
             if player_tx.send(AppEvent::Player(Service::Spotify, event)).is_err() {
                 break;
             }

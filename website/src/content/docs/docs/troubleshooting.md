@@ -13,6 +13,7 @@ It checks what each service can reach, one line per check: for Spotify your app,
 
 ## Spotify
 
+- **"Spotify refused the key to a song."** Spotify turns down librespot's requests for the keys to songs at times, for every program built on librespot ([librespot#1649](https://github.com/librespot-org/librespot/issues/1649)). For many accounts it acts like a limit: cloofy asks for one key at a time, and after a refusal waits 3, then 5, then 10 seconds before it asks again, which usually ends it. Skipping through many songs quickly brings it on. Some accounts get every key refused, which only Spotify can change; YouTube Music isn't affected.
 - **"Playback didn't start" or no devices.** Spotify streams only to Premium accounts. In `cloofy doctor`, **Profile** and **Session** should show the same account; if not, sign in again with `cloofy login spotify --force`.
 - **Your library is empty or the Web API fails.** Check the client ID in `~/.config/cloofy/config.toml`, the redirect URI `http://127.0.0.1:8974/callback` in your app, and that your account is under **User Management** if it isn't the dashboard's.
 

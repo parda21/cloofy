@@ -60,6 +60,12 @@ pub enum PlayerEvent {
     Activated,
     /// cloofy's own player stopped being the one that plays, usually for another device.
     Deactivated,
+    /// A track couldn't load, and the player went on without it. `refused` when Spotify turned
+    /// down the key to its audio, as it does for librespot at times.
+    Unavailable {
+        uri: String,
+        refused: bool,
+    },
 }
 
 /// A track that plays later, as the player listed it.

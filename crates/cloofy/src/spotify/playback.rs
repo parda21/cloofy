@@ -64,8 +64,10 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
             }
             Some(event) = player_events.recv() => {
                 let Some(event) = events::neutral(event) else { continue };
+                let event = events::refusals(event, Some(&session));
                 media.on_player(&event);
                 match event {
+                    PlayerEvent::Unavailable { refused, .. } => println!("\r\x1b[2K  {}", unavailable(refused)),
                     PlayerEvent::TrackChanged { track } => {
                         duration = Duration::from_millis(track.duration_ms.into());
                         clock = Clock::default();
@@ -117,8 +119,10 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
             }
             Some(event) = player_events.recv() => {
                 let Some(event) = events::neutral(event) else { continue };
+                let event = events::refusals(event, Some(&session));
                 media.on_player(&event);
                 match event {
+                    PlayerEvent::Unavailable { refused, .. } => println!("  {}", unavailable(refused)),
                     PlayerEvent::TrackChanged { track } => println!("  ▶  {}", describe(&track)),
                     PlayerEvent::Paused { .. } if !paused => {
                         paused = true;
@@ -168,4 +172,13 @@ fn parse_uri(input: &str) -> Result<SpotifyUri> {
         None => input.to_owned(),
     };
     SpotifyUri::from_uri(&uri).with_context(|| format!("“{input}” is not a valid Spotify URI"))
+}
+
+/// What `cloofy play` and `connect` print for a track that couldn't load.
+fn unavailable(refused: bool) -> String {
+    if refused {
+        style::red("✗  Spotify refused the key to this song, so it was skipped: cloofy.app/docs/troubleshooting")
+    } else {
+        style::dim("✗  this song couldn't load, so it was skipped")
+    }
 }
