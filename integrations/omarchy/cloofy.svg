@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>cloofy</title>
+  <defs>
+    <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="72" y1="48" x2="200" y2="208">
+      <stop offset="0" stop-color="#ff8fb1"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#0d0d10"/>
+  <g fill="url(#g)" shape-rendering="crispEdges">
+    <rect x="112" y="48" width="64" height="32"/>
+    <rect x="80" y="80" width="32" height="96"/>
+    <rect x="112" y="176" width="64" height="32"/>
+  </g>
+</svg>

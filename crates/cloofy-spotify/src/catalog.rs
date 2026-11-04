@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
+use cloofy_core::catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User};
 use futures::{StreamExt, TryStreamExt, stream};
 use librespot::{
     core::{SpotifyUri, session::Session},
@@ -16,7 +17,7 @@ use librespot::{
 };
 use protobuf::{EnumOrUnknown, Message};
 use reqwest::Method;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 
 use crate::webapi::WebApi;
@@ -33,79 +34,6 @@ const IMAGE_WIDTH: u32 = 300;
 pub const METADATA_BATCH: usize = 100;
 /// Concurrent requests when that batch request fails and tracks are asked for one by one.
 const METADATA_CONCURRENCY: usize = 8;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track {
-    pub uri: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    /// Same order as `artists`; empty where Spotify doesn't say.
-    pub artist_uris: Vec<String>,
-    pub album: String,
-    pub album_uri: String,
-    pub duration_ms: u32,
-    /// The album cover, where Spotify sends one along.
-    pub image_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistInfo {
-    pub id: String,
-    pub uri: String,
-    pub name: String,
-    pub owner_id: String,
-    pub owner_name: String,
-    pub collaborative: bool,
-    pub total: u32,
-    pub image_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlbumInfo {
-    pub id: String,
-    pub uri: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    pub year: String,
-    pub total: u32,
-    pub image_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArtistInfo {
-    pub uri: String,
-    pub name: String,
-    pub image_url: Option<String>,
-}
-
-/// A podcast in the user's library.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShowInfo {
-    pub uri: String,
-    pub name: String,
-    pub image_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SearchResults {
-    pub tracks: Vec<Track>,
-    pub albums: Vec<AlbumInfo>,
-    pub artists: Vec<ArtistInfo>,
-    pub playlists: Vec<PlaylistInfo>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Page<T> {
-    pub items: Vec<T>,
-    pub total: u32,
-    pub next_offset: Option<u32>,
-}
 
 pub async fn me(api: &WebApi) -> Result<User> {
     let raw: RawUser = api.get_json("/me").await?;
@@ -287,7 +215,7 @@ pub async fn tracks_metadata(session: &Session, uris: &[SpotifyUri]) -> Vec<Trac
             stream::iter(uris.to_vec())
                 .map(|uri| async move { meta::Track::get(session, &uri).await })
                 .buffered(METADATA_CONCURRENCY)
-                .filter_map(|track| async move { track.ok().map(Track::from) })
+                .filter_map(|track| async move { track.ok().map(metadata_track) })
                 .collect()
                 .await
         }
@@ -314,7 +242,7 @@ async fn batched_metadata(session: &Session, uris: &[SpotifyUri]) -> Result<Vec<
             let message = TrackMessage::parse_from_bytes(&data.extension_data.as_ref()?.value).ok()?;
             let uri = SpotifyUri::from_uri(&data.entity_uri).ok()?;
             let track = <meta::Track as Metadata>::parse(&message, &uri).ok()?;
-            Some((data.entity_uri.clone(), Track::from(track)))
+            Some((data.entity_uri.clone(), metadata_track(track)))
         })
         .collect();
     Ok(uris.iter().filter_map(|uri| found.remove(&uri.to_uri())).collect())
@@ -358,23 +286,22 @@ impl From<RawTrack> for Track {
     }
 }
 
-impl From<meta::Track> for Track {
-    fn from(track: meta::Track) -> Self {
-        Self {
-            uri: track.id.to_uri(),
-            name: track.name,
-            artists: track.artists.iter().map(|a| a.name.clone()).collect(),
-            artist_uris: track.artists.iter().map(|a| a.id.to_uri()).collect(),
-            album: track.album.name.clone(),
-            album_uri: track.album.id.to_uri(),
-            duration_ms: track.duration.max(0) as u32,
-            image_url: track
-                .album
-                .covers
-                .iter()
-                .min_by_key(|cover| cover.width.unsigned_abs().abs_diff(IMAGE_WIDTH))
-                .map(|cover| format!("https://i.scdn.co/image/{}", cover.id)),
-        }
+/// A track from librespot's metadata. Neither type is this crate's, so this can't be a `From`.
+fn metadata_track(track: meta::Track) -> Track {
+    Track {
+        uri: track.id.to_uri(),
+        name: track.name,
+        artists: track.artists.iter().map(|a| a.name.clone()).collect(),
+        artist_uris: track.artists.iter().map(|a| a.id.to_uri()).collect(),
+        album: track.album.name.clone(),
+        album_uri: track.album.id.to_uri(),
+        duration_ms: track.duration.max(0) as u32,
+        image_url: track
+            .album
+            .covers
+            .iter()
+            .min_by_key(|cover| cover.width.unsigned_abs().abs_diff(IMAGE_WIDTH))
+            .map(|cover| format!("https://i.scdn.co/image/{}", cover.id)),
     }
 }
 

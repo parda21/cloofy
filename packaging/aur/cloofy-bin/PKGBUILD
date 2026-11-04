@@ -1,6 +1,7 @@
 # Made for each release from packaging/aur/cloofy-bin/PKGBUILD in https://github.com/parda21/cloofy.
 # Maintainer: parda21 <36790116+parda21@users.noreply.github.com>
 
+# The Spotify build. cloofy-ytmusic-bin has YouTube Music instead, cloofy-full-bin both.
 pkgname=cloofy-bin
 pkgver=@VERSION@
 pkgrel=1
@@ -13,10 +14,10 @@ provides=("cloofy=$pkgver")
 conflicts=('cloofy')
 # The release build comes stripped, so there is nothing for a debug package either.
 options=('!strip' '!debug')
-source_x86_64=("cloofy-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/cloofy-x86_64-unknown-linux-gnu.tar.gz")
-source_aarch64=("cloofy-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/cloofy-aarch64-unknown-linux-gnu.tar.gz")
-sha256sums_x86_64=('@SHA256_X86_64_UNKNOWN_LINUX_GNU@')
-sha256sums_aarch64=('@SHA256_AARCH64_UNKNOWN_LINUX_GNU@')
+source_x86_64=("cloofy-spotify-$pkgver-x86_64.tar.gz::$url/releases/download/v$pkgver/cloofy-spotify-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("cloofy-spotify-$pkgver-aarch64.tar.gz::$url/releases/download/v$pkgver/cloofy-spotify-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('@SHA256_SPOTIFY_X86_64_UNKNOWN_LINUX_GNU@')
+sha256sums_aarch64=('@SHA256_SPOTIFY_AARCH64_UNKNOWN_LINUX_GNU@')
 
 package() {
   install -Dm755 cloofy "$pkgdir/usr/bin/cloofy"

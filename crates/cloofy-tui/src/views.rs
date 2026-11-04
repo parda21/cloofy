@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Range, time::Instant};
 
-use cloofy_spotify::{
+use cloofy_core::{
     artist::{ArtistPage, TopTrack},
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, SearchResults, Track},
     home::{Home, HomeItem},
@@ -577,7 +577,9 @@ pub struct LibraryView {
 /// The Settings page.
 pub struct SettingsView {
     pub id: u64,
-    /// Index into [`Setting::all`].
+    /// The settings shown, in page order: those that mean something with the service that plays.
+    pub settings: Vec<Setting>,
+    /// Index into `settings`.
     pub selected: usize,
     /// Screen rows scrolled past at the top, when the page is taller than the window.
     pub top: usize,
@@ -586,16 +588,16 @@ pub struct SettingsView {
 }
 
 impl SettingsView {
-    pub fn new(id: u64) -> Self {
-        Self { id, selected: 0, top: 0, detached: false }
+    pub fn new(id: u64, settings: Vec<Setting>) -> Self {
+        Self { id, settings, selected: 0, top: 0, detached: false }
     }
 
     pub fn setting(&self) -> Setting {
-        Setting::all().nth(self.selected).unwrap_or(Setting::Crossfade)
+        self.settings.get(self.selected).or(self.settings.last()).copied().unwrap_or(Setting::Covers)
     }
 
     pub fn move_by(&mut self, delta: isize) {
-        let last = Setting::all().count() as isize - 1;
+        let last = self.settings.len() as isize - 1;
         self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
         self.detached = false;
     }
@@ -669,10 +671,10 @@ mod tests {
         assert_eq!(view.list.offset, 4);
     }
 
-    fn shelf(uri: &str, items: &[&str]) -> cloofy_spotify::home::Shelf {
+    fn shelf(uri: &str, items: &[&str]) -> cloofy_core::home::Shelf {
         let item = |uri: &&str| HomeItem {
             uri: uri.to_string(),
-            kind: cloofy_spotify::home::ItemKind::Playlist,
+            kind: cloofy_core::home::ItemKind::Playlist,
             title: uri.to_string(),
             subtitle: String::new(),
             image_url: None,
@@ -680,7 +682,7 @@ mod tests {
             owner_name: String::new(),
             context_uri: uri.to_string(),
         };
-        cloofy_spotify::home::Shelf {
+        cloofy_core::home::Shelf {
             uri: uri.into(),
             title: uri.into(),
             shortcuts: false,

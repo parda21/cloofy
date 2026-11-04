@@ -3,7 +3,7 @@
 
 use std::{collections::HashSet, time::Instant};
 
-use cloofy_spotify::catalog::Track;
+use cloofy_core::catalog::Track;
 
 use super::{App, Focus, QUEUE_GRACE};
 use crate::{
@@ -13,10 +13,14 @@ use crate::{
 };
 
 impl App {
-    /// Opens the queue page, or goes back from it, like Spotify's queue button.
+    /// Opens the queue page, or goes back from it, like Spotify's queue button. It opens among
+    /// the pages of the service that plays.
     pub(super) fn toggle_queue(&mut self) {
         if !self.zen && matches!(self.view, View::Queue(_)) {
             return self.back();
+        }
+        if let Some(active) = self.active {
+            self.show_service(active);
         }
         self.zen = false;
         if !matches!(self.view, View::Queue(_)) {
@@ -234,7 +238,7 @@ impl App {
     /// Skips ahead to a track that plays later, as a click in Spotify's queue does: what lies
     /// between is passed over, the rest of the queue stays.
     pub(super) fn skip_to(&mut self, track: Track, entry: Upcoming) {
-        if self.controller.is_none() {
+        if !self.is_connected() {
             return self.not_connected();
         }
         if self.local_active && !self.remote_active {
@@ -258,7 +262,14 @@ impl App {
     /// Skips ahead on cloofy's own player, with its own commands rather than a command sent
     /// through Spotify to the device it comes from.
     fn skip_here(&mut self, track: Track, entry: Upcoming) {
-        if entry.provider == Provider::Queue {
+        let mut skipped = false;
+        if !self.control(|p| p.skip_to(&entry.uri).map(|done| skipped = done)) {
+            return;
+        }
+        if skipped {
+            // A player that keeps the list itself jumps there directly.
+            self.now.start(Some(track.uri.clone()));
+        } else if entry.provider == Provider::Queue {
             // The queued songs before it are passed over; the ones after it stay queued.
             let playing = self.now.track.as_ref().map(|t| t.uri.as_str());
             let queued: Vec<String> = self
@@ -271,10 +282,10 @@ impl App {
             let Some(index) = queued.iter().position(|uri| *uri == entry.uri) else {
                 return self.error("This song isn't in the queue any more.".into());
             };
-            let sent = self.control(|c| {
-                c.clear_queue()?;
-                queued[index..].iter().try_for_each(|uri| c.add_to_queue(uri))?;
-                c.next()
+            let sent = self.control(|p| {
+                p.clear_queue()?;
+                queued[index..].iter().try_for_each(|uri| p.add_to_queue(uri))?;
+                p.next()
             });
             if !sent {
                 return;
@@ -284,7 +295,7 @@ impl App {
             // A song of the playlist or album starts there, as a click on its page does. The
             // queued songs stay queued.
             let Some(context) = self.queue_context() else {
-                return self.error("Spotify hasn't said yet what plays next.".into());
+                return self.error(format!("{} hasn't said yet what plays next.", self.service_name()));
             };
             self.play(context, Some(track.uri.clone()));
         }
@@ -327,8 +338,8 @@ impl App {
         }
         if self.remote_active {
             match (self.queue.without(&entry), self.active_device.clone()) {
-                (Some(listed), Some(device)) => self.loader.set_queue(device, listed),
-                _ => return self.error("Spotify hasn't said yet what plays next there.".into()),
+                (Some(listed), Some(device)) => self.loader.set_queue(self.active, device, listed),
+                _ => return self.error(format!("{} hasn't said yet what plays next there.", self.service_name())),
             }
         } else {
             // cloofy's player takes no new list from here: it empties its queue and gets the
@@ -339,9 +350,9 @@ impl App {
             let Some(index) = queued.iter().position(|t| **t == entry) else { return };
             let keep: Vec<String> =
                 queued.iter().enumerate().filter(|(i, _)| *i != index).map(|(_, t)| t.uri.clone()).collect();
-            let sent = self.control(|c| {
-                c.clear_queue()?;
-                keep.iter().try_for_each(|uri| c.add_to_queue(uri))
+            let sent = self.control(|p| {
+                p.clear_queue()?;
+                keep.iter().try_for_each(|uri| p.add_to_queue(uri))
             });
             if !sent {
                 return;

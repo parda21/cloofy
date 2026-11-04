@@ -14,9 +14,9 @@ pkgbase = cloofy-bin
 	conflicts = cloofy
 	options = !strip
 	options = !debug
-	source_x86_64 = cloofy-@VERSION@-x86_64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = @SHA256_X86_64_UNKNOWN_LINUX_GNU@
-	source_aarch64 = cloofy-@VERSION@-aarch64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-aarch64-unknown-linux-gnu.tar.gz
-	sha256sums_aarch64 = @SHA256_AARCH64_UNKNOWN_LINUX_GNU@
+	source_x86_64 = cloofy-spotify-@VERSION@-x86_64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = @SHA256_SPOTIFY_X86_64_UNKNOWN_LINUX_GNU@
+	source_aarch64 = cloofy-spotify-@VERSION@-aarch64.tar.gz::https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = @SHA256_SPOTIFY_AARCH64_UNKNOWN_LINUX_GNU@
 
 pkgname = cloofy-bin

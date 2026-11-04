@@ -1,36 +1,16 @@
 //! Artist pages: popular tracks, discography and related artists in one query.
 
 use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
-use crate::{
+use cloofy_core::{
+    artist::{ArtistPage, TopTrack},
     catalog::Track,
     home::{HomeItem, ItemKind, Shelf},
-    pathfinder::Pathfinder,
 };
+use serde_json::{Value, json};
+
+use crate::pathfinder::Pathfinder;
 
 const IMAGE_WIDTH: u64 = 300;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArtistPage {
-    pub uri: String,
-    pub name: String,
-    pub image_url: Option<String>,
-    pub monthly_listeners: Option<u64>,
-    pub followers: Option<u64>,
-    /// Whether the user follows the artist.
-    pub saved: bool,
-    pub top_tracks: Vec<TopTrack>,
-    /// Discography, related artists and appearances, shown like Home shelves.
-    pub shelves: Vec<Shelf>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TopTrack {
-    pub track: Track,
-    pub playcount: Option<u64>,
-}
 
 pub async fn artist(pathfinder: &Pathfinder, uri: &str) -> Result<ArtistPage> {
     let variables = json!({ "uri": uri, "locale": "", "includePrerelease": true });

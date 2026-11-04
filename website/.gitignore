@@ -1,0 +1,13 @@
+# build output
+dist/
+# generated types
+.astro/
+.wrangler/
+# dependencies
+node_modules/
+npm-debug.log*
+.env
+.dev.vars
+# pictures from the assets branch, fetched by scripts/fetch-assets.mjs
+public/screenshots/
+public/og.png

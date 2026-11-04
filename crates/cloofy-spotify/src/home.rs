@@ -1,7 +1,7 @@
 //! The personalized Home feed, as the official clients show it.
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use cloofy_core::home::{Home, HomeItem, ItemKind, Shelf};
 use serde_json::{Value, json};
 
 use crate::pathfinder::{self, Pathfinder};
@@ -9,45 +9,6 @@ use crate::pathfinder::{self, Pathfinder};
 const SECTION_ITEMS: u32 = 20;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
 const IMAGE_WIDTH: u64 = 300;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Home {
-    pub greeting: String,
-    pub shelves: Vec<Shelf>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Shelf {
-    pub uri: String,
-    pub title: String,
-    /// The compact grid of shortcuts at the top of Home.
-    pub shortcuts: bool,
-    pub items: Vec<HomeItem>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ItemKind {
-    Playlist,
-    Album,
-    Artist,
-    Audiobook,
-    Podcast,
-    Episode,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HomeItem {
-    pub uri: String,
-    pub kind: ItemKind,
-    pub title: String,
-    pub subtitle: String,
-    pub image_url: Option<String>,
-    /// Playlist owner, to tell own playlists from Spotify's.
-    pub owner_id: String,
-    pub owner_name: String,
-    /// What to play: the show for an episode, the item itself otherwise.
-    pub context_uri: String,
-}
 
 pub async fn home(pathfinder: &Pathfinder) -> Result<Home> {
     let variables = json!({

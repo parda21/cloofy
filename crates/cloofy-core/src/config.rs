@@ -5,7 +5,7 @@ use serde::Deserialize;
 /// A value to [`store`] in the config file.
 pub use toml_edit::Value;
 
-use crate::paths::Paths;
+use crate::{paths::Paths, service::Service};
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -31,6 +31,9 @@ pub struct Config {
     /// How covers reach the terminal: `"kitty"`, `"sixel"`, `"iterm2"` or `"blocks"`; detected
     /// from the terminal when missing.
     pub images: Option<String>,
+    /// The music services to use, by key: `["spotify", "ytmusic"]`. The installer writes it;
+    /// every service built in when missing.
+    pub services: Option<Vec<String>>,
 }
 
 impl Config {
@@ -56,6 +59,25 @@ impl Config {
             Some("keychain") => bail!("credentials = \"keychain\" works on macOS only for now"),
             Some(other) => bail!("credentials = \"{other}\" is unknown: use \"keychain\" or \"files\""),
         }
+    }
+
+    /// The services to use, of those `compiled` in: the ones `services` lists, in its order, or
+    /// all of them when it is missing. The config file is shared by every build, so it may name
+    /// a service this one lacks; that one is left out.
+    pub fn enabled_services(&self, compiled: &[Service]) -> Vec<Service> {
+        let Some(keys) = &self.services else { return compiled.to_vec() };
+        let mut enabled = Vec::new();
+        for key in keys {
+            match Service::from_key(key) {
+                Some(service) if !compiled.contains(&service) => {
+                    tracing::warn!("{} is enabled but not built into this cloofy", service.name());
+                }
+                Some(service) if !enabled.contains(&service) => enabled.push(service),
+                Some(_) => {}
+                None => tracing::warn!("services: \"{key}\" is not a music service cloofy knows"),
+            }
+        }
+        enabled
     }
 
     pub fn client_id(&self, paths: &Paths) -> Result<&str> {
@@ -113,6 +135,31 @@ mod tests {
         assert!(!credentials(Some("files")).keychain().unwrap());
         assert_eq!(credentials(Some("keychain")).keychain().is_ok(), cfg!(target_os = "macos"));
         assert!(credentials(Some("vault")).keychain().is_err());
+    }
+
+    fn services(keys: Option<&[&str]>) -> Config {
+        Config { services: keys.map(|keys| keys.iter().map(|key| key.to_string()).collect()), ..Config::default() }
+    }
+
+    #[test]
+    fn enables_every_service_built_in_unless_told_otherwise() {
+        let both = [Service::Spotify, Service::YouTubeMusic];
+        assert_eq!(services(None).enabled_services(&both), both);
+        assert_eq!(services(None).enabled_services(&[]), []);
+        assert_eq!(services(Some(&["ytmusic"])).enabled_services(&both), [Service::YouTubeMusic]);
+        assert_eq!(services(Some(&[])).enabled_services(&both), []);
+    }
+
+    #[test]
+    fn leaves_out_services_this_build_lacks() {
+        let listed = services(Some(&["ytmusic", "deezer", "spotify", "spotify"]));
+        assert_eq!(listed.enabled_services(&[Service::Spotify]), [Service::Spotify]);
+        assert_eq!(
+            listed.enabled_services(&[Service::Spotify, Service::YouTubeMusic]),
+            [Service::YouTubeMusic, Service::Spotify]
+        );
+        let parsed: Config = toml::from_str("services = [\"spotify\"]").unwrap();
+        assert_eq!(parsed.enabled_services(&[Service::Spotify, Service::YouTubeMusic]), [Service::Spotify]);
     }
 
     #[test]

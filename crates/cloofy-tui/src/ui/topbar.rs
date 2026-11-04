@@ -1,10 +1,11 @@
-//! The top bar: wordmark, home button and the search field, like the official client, and an
-//! update button while there is a newer cloofy.
+//! The top bar: wordmark, home button and the search field, like the official client, the
+//! switch between music services when there are several, and an update button while there is
+//! a newer cloofy.
 
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
 };
 use unicode_width::UnicodeWidthStr;
@@ -12,22 +13,23 @@ use unicode_width::UnicodeWidthStr;
 use super::{text, wordmark};
 use crate::{
     app::{App, Focus, HintAction, Hit, NavItem, Update},
+    backend::Service,
     commands::Command,
-    icons::icons,
-    theme::{BG, FAINT, MUTED, RAISED, TEXT},
+    icons::{self, icons},
+    theme,
     views::View,
 };
 
 pub const HEIGHT: u16 = 5;
 /// A square-ish button with its icon in the middle cell.
 const BUTTON_WIDTH: u16 = 5;
-const DISABLED: Color = Color::Rgb(58, 58, 68);
 /// The search field in a small window keeps this much room for its prompt before the update
 /// button takes any.
 const COMPACT_SEARCH_MIN: u16 = 30;
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
-    buf.set_style(area, Style::new().bg(BG));
+    let p = theme::palette();
+    buf.set_style(area, Style::new().bg(p.bg));
     if area.height < HEIGHT {
         return compact(buf, app, area);
     }
@@ -49,10 +51,13 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
     let search = Rect::new(home.right() + 1, row, width, 1);
     search_field(buf, app, search, 2);
 
-    // Right of the search field: the update button, then the user's name.
+    // Right of the search field: the update button, the service switch, then the user's name.
     let mut right = area.right().saturating_sub(3);
     if let Some(button) = update_button(buf, app, right, row, 2, right.saturating_sub(search.right() + 2)) {
         right = button.x.saturating_sub(2);
+    }
+    if let Some(switch) = service_switch(buf, app, right, row, 2, right.saturating_sub(search.right() + 2)) {
+        right = switch.x.saturating_sub(2);
     }
     if let Some(me) = &app.me
         && wide
@@ -60,7 +65,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         let name = format!("{}  {}", icons().artist, me.name);
         let width = name.width() as u16;
         if right.saturating_sub(width) > search.right() + 2 {
-            buf.set_string(right - width, row, name, Style::new().fg(MUTED));
+            buf.set_string(right - width, row, name, Style::new().fg(p.muted));
             // Like the profile menu in Spotify's apps, the name leads to the settings.
             app.hits.push((Rect::new(right - width, row, width, 1), Hit::Command(Command::Settings)));
         }
@@ -73,8 +78,12 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
         button(buf, app, area.x + 1, area.y, 1, icons().chevron_left, Hit::Hint(HintAction::Back), app.can_go_back());
     let home = button(buf, app, back.right() + 1, area.y, 1, icons().home, Hit::Command(Command::Home), true);
     let end = area.right().saturating_sub(1);
-    let room = end.saturating_sub(home.right() + 1 + COMPACT_SEARCH_MIN);
-    let search_end = update_button(buf, app, end, area.y, 1, room).map_or(end, |button| button.x);
+    let room = |end: u16| end.saturating_sub(home.right() + 1 + COMPACT_SEARCH_MIN);
+    let mut search_end = update_button(buf, app, end, area.y, 1, room(end)).map_or(end, |button| button.x);
+    let switch_end = search_end.saturating_sub(1);
+    if let Some(switch) = service_switch(buf, app, switch_end, area.y, 1, room(switch_end)) {
+        search_end = switch.x.saturating_sub(1);
+    }
     let search = Rect::new(home.right() + 1, area.y, search_end.saturating_sub(home.right() + 1), 1);
     search_field(buf, app, search, 1);
 }
@@ -82,6 +91,7 @@ fn compact(buf: &mut Buffer, app: &mut App, area: Rect) {
 /// The update button, its right edge at `right`, with as much of its label as fits into `room`
 /// columns and at least its icon. Draws nothing without an update.
 fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
+    let p = theme::palette();
     let (icon, labels) = match app.update.as_ref()? {
         Update::Available(release) => (icons().update, [format!("Update to v{}", release.version()), "Update".into()]),
         // Nothing to install here: the button says what's out, and a click how to update.
@@ -104,22 +114,75 @@ fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u
         .find(|content| content.width() as u16 + 2 * padding <= room)?;
     let width = content.width() as u16 + 2 * padding;
     let area = Rect::new(right.saturating_sub(width), y, width, 1).intersection(buf.area);
-    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_style(area, Style::new().bg(p.raised));
     buf.set_string(area.x + padding, y, content, Style::new().fg(app.accent.color()).bold());
     app.hits.push((area, Hit::Command(Command::Update)));
     Some(area)
+}
+
+/// The music services in use side by side, the one shown lit, each a button that shows its
+/// pages; its right edge at `right`, as wide as fits into `room` columns: names with their
+/// icons, else short names, else icons alone. Draws nothing with a single service.
+fn service_switch(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u16, room: u16) -> Option<Rect> {
+    let p = theme::palette();
+    let services = app.services();
+    if services.len() < 2 {
+        return None;
+    }
+    let shown = app.shown_service();
+    let labels = |service: Service| {
+        let icon = icons::service(service);
+        let short = match service {
+            Service::Spotify => "Spotify",
+            Service::YouTubeMusic => "YouTube",
+        };
+        let initials = match service {
+            Service::Spotify => "S",
+            Service::YouTubeMusic => "YT",
+        };
+        let with_icon = |label: &str| if icon.is_empty() { label.to_owned() } else { format!("{icon}  {label}") };
+        let bare = if icon.is_empty() { initials } else { icon };
+        [with_icon(service.name()), with_icon(short), bare.to_owned()]
+    };
+    let level = (0..3).find(|&level| {
+        let widths = services.iter().map(|&service| labels(service)[level].width() as u16 + 2 * padding + 1);
+        widths.sum::<u16>().saturating_sub(1) <= room
+    })?;
+    let mut x = right;
+    let mut first = right;
+    for &service in services.iter().rev() {
+        let label = labels(service)[level].clone();
+        let width = label.width() as u16 + 2 * padding;
+        let area = Rect::new(x.saturating_sub(width), y, width, 1).intersection(buf.area);
+        let style = if Some(service) == shown {
+            Style::new().fg(app.accent.color()).bold()
+        } else if app.failed_to_start(service) {
+            Style::new().fg(p.faint)
+        } else {
+            Style::new().fg(p.muted)
+        };
+        buf.set_style(area, Style::new().bg(p.raised));
+        buf.set_string(area.x + padding, y, label, style);
+        if Some(service) != shown {
+            app.hits.push((area, Hit::Service(service)));
+        }
+        first = area.x;
+        x = area.x.saturating_sub(1);
+    }
+    Some(Rect::new(first, y, right.saturating_sub(first), 1))
 }
 
 /// A filled button with `icon` centered, `padding` cells either side; dimmed and inert unless
 /// `enabled`. The home icon lights up while Home is open.
 #[allow(clippy::too_many_arguments)]
 fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &str, hit: Hit, enabled: bool) -> Rect {
+    let p = theme::palette();
     let area = Rect::new(x, y, 2 * padding + 1, 1).intersection(buf.area);
-    buf.set_style(area, Style::new().bg(RAISED));
+    buf.set_style(area, Style::new().bg(p.raised));
     let color = match hit {
-        _ if !enabled => DISABLED,
+        _ if !enabled => p.disabled,
         Hit::Command(Command::Home) if app.is_open(NavItem::Home) => app.accent.color(),
-        _ => TEXT,
+        _ => p.text,
     };
     buf.set_string(x + padding, y, icon, Style::new().fg(color));
     if enabled {
@@ -130,20 +193,21 @@ fn button(buf: &mut Buffer, app: &mut App, x: u16, y: u16, padding: u16, icon: &
 
 /// The search field: icon, then the query or a prompt, and a spinner while results load.
 fn search_field(buf: &mut Buffer, app: &mut App, area: Rect, padding: u16) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let typing = app.focus == Focus::SearchInput && !app.zen;
-    buf.set_style(area, Style::new().bg(if typing { app.accent.selection() } else { RAISED }));
+    buf.set_style(area, Style::new().bg(if typing { app.accent.selection() } else { p.raised }));
     let (query, loading) = match &app.view {
         View::Search(v) => (v.query.clone(), v.loading),
         _ => (String::new(), false),
     };
-    let icon_style = Style::new().fg(if typing { accent } else { MUTED });
+    let icon_style = Style::new().fg(if typing { accent } else { p.muted });
     let mut spans = vec![Span::styled(format!("{}  ", icons().search), icon_style)];
     let room = area.width.saturating_sub(2 * padding + 6) as usize;
     if query.is_empty() && !typing {
-        spans.push(Span::styled(text::truncate("What do you want to play?", room), FAINT));
+        spans.push(Span::styled(text::truncate("What do you want to play?", room), p.faint));
     } else {
-        spans.push(Span::styled(tail(&query, room), Style::new().fg(TEXT).bold()));
+        spans.push(Span::styled(tail(&query, room), Style::new().fg(p.text).bold()));
         if typing {
             spans.push(Span::styled("▏", accent));
         }
@@ -154,7 +218,7 @@ fn search_field(buf: &mut Buffer, app: &mut App, area: Rect, padding: u16) {
             area.right().saturating_sub(padding + 1),
             area.y,
             text::spinner(app.frame()),
-            Style::new().fg(FAINT),
+            Style::new().fg(p.faint),
         );
     }
     app.hits.push((area, Hit::SearchInput));

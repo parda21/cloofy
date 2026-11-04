@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use cloofy_spotify::{
+use cloofy_core::{
     artist::ArtistPage,
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, SearchResults, ShowInfo, Track, User},
     home::Home,

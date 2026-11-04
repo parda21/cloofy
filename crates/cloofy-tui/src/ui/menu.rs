@@ -12,12 +12,13 @@ use super::text;
 use crate::{
     app::{App, Hit},
     overlay::Overlay,
-    theme::{FAINT, MUTED, RAISED, TEXT},
+    theme,
 };
 
 const MAX_WIDTH: u16 = 44;
 
 pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
+    let p = theme::palette();
     let accent = app.accent.color();
     let selection = app.accent.selection();
     let Some(Overlay::Menu(menu)) = &app.overlay else { return };
@@ -33,8 +34,8 @@ pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
     Clear.render(popup, buf);
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(FAINT))
-        .style(Style::new().bg(RAISED))
+        .border_style(Style::new().fg(p.faint))
+        .style(Style::new().bg(p.raised))
         .render(popup, buf);
     let mut hits = vec![(popup, Hit::OverlayArea)];
     if popup.height < 4 {
@@ -47,13 +48,13 @@ pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
         popup.x + 2,
         popup.y + 1,
         text::truncate(&menu.target.name, inner_width),
-        Style::new().fg(MUTED).bold(),
+        Style::new().fg(p.muted).bold(),
     );
     buf.set_string(
         popup.x + 1,
         popup.y + 2,
         "─".repeat(popup.width.saturating_sub(2) as usize),
-        Style::new().fg(FAINT),
+        Style::new().fg(p.faint),
     );
 
     for (index, (_, label)) in menu.items.iter().enumerate() {
@@ -67,7 +68,7 @@ pub fn draw(buf: &mut Buffer, app: &mut App, screen: Rect) {
             buf.set_style(row, Style::new().bg(selection));
             buf.set_string(row.x, row_y, "▌", Style::new().fg(accent));
         }
-        let style = if selected { Style::new().fg(TEXT).bold() } else { Style::new().fg(TEXT) };
+        let style = if selected { Style::new().fg(p.text).bold() } else { Style::new().fg(p.text) };
         buf.set_string(popup.x + 2, row_y, text::truncate(label, inner_width), style);
         hits.push((row, Hit::OverlayItem(index)));
     }

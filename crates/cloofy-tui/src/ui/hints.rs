@@ -8,42 +8,51 @@ use crate::{
     app::{App, Focus, HintAction, Hit},
     commands::Command,
     icons::icons,
-    theme::{DANGER, FAINT, MUTED},
+    theme,
     views::View,
 };
 
 type Hint = (&'static str, &'static str, Option<HintAction>);
 
 pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
+    let p = theme::palette();
+    // Where the service has no other devices, there is nothing to switch to.
     let device = match (app.transferring_to(), &app.now.device, app.is_connected()) {
+        _ if !app.supports_devices() => Span::raw(""),
         (Some(name), ..) => {
             Span::styled(format!("{}  → {name} …", crate::ui::text::spinner(app.frame())), app.accent.color())
         }
         (None, Some(name), _) => Span::styled(format!("{}  Playing on {name}", icons().speaker), app.accent.color()),
         (None, None, true) => Span::styled(format!("{}  cloofy", icons().computer), app.accent.color()),
-        (None, None, false) => Span::styled(format!("{}  cloofy", icons().computer), FAINT),
+        (None, None, false) => Span::styled(format!("{}  cloofy", icons().computer), p.faint),
     };
     let device_width = device.width() as u16;
     let device_x = area.right().saturating_sub(device_width + 2);
-    buf.set_span(device_x, area.y, &device, device_width);
-    app.hits.push((Rect::new(device_x, area.y, device_width, 1), Hit::Command(Command::Devices)));
+    if device_width > 0 {
+        buf.set_span(device_x, area.y, &device, device_width);
+        app.hits.push((Rect::new(device_x, area.y, device_width, 1), Hit::Command(Command::Devices)));
+    }
     let width = area.width.saturating_sub(device_width + 6);
 
     if let Some(status) = &app.status {
-        let color = if status.error { DANGER } else { app.accent.color() };
+        let color = if status.error { p.danger } else { app.accent.color() };
         let text = crate::ui::text::truncate(&status.text, width as usize);
         buf.set_string(area.x + 2, area.y, text, Style::new().fg(color));
         return;
     }
 
     let mut x = area.x + 2;
-    for (key, label, action) in hints(app) {
+    // Without the commands for what the service lacks, like DJ.
+    let offered =
+        |action: &Option<HintAction>| !matches!(action, Some(HintAction::Run(command)) if !app.offers(*command));
+    let hints: Vec<&Hint> = hints(app).iter().filter(|(_, _, action)| offered(action)).collect();
+    for (key, label, action) in hints {
         let len = (key.width() + 1 + label.width()) as u16;
         if x + len > area.x + width {
             break;
         }
-        buf.set_string(x, area.y, *key, Style::new().fg(MUTED).bold());
-        buf.set_string(x + key.width() as u16 + 1, area.y, *label, Style::new().fg(FAINT));
+        buf.set_string(x, area.y, *key, Style::new().fg(p.muted).bold());
+        buf.set_string(x + key.width() as u16 + 1, area.y, *label, Style::new().fg(p.faint));
         if let Some(action) = action {
             app.hits.push((Rect::new(x, area.y, len, 1), Hit::Hint(*action)));
         }
@@ -73,6 +82,7 @@ fn hints(app: &App) -> &'static [Hint] {
             ("← →", "filter", Some(Key(KeyCode::Right))),
             ("tab", "to content", Some(ToggleFocus)),
             (".", "actions", Some(Run(Menu))),
+            ("S", "switch service", Some(Run(SwitchService))),
             ("/", "search", Some(Run(Search))),
             ("^K", "commands", Some(Run(Palette))),
             ("?", "help", Some(Run(Help))),
@@ -89,6 +99,7 @@ fn hints(app: &App) -> &'static [Hint] {
             ("enter", "open", Some(Activate)),
             ("< >", "filter", Some(Key(KeyCode::Char('>')))),
             (".", "actions", Some(Run(Menu))),
+            ("S", "switch service", Some(Run(SwitchService))),
             ("esc", "back", Some(Back)),
             ("^K", "commands", Some(Run(Palette))),
             ("?", "help", Some(Run(Help))),
@@ -98,6 +109,7 @@ fn hints(app: &App) -> &'static [Hint] {
             ("p", "play", Some(Key(KeyCode::Char('p')))),
             (".", "actions", Some(Run(Menu))),
             ("D", "DJ", Some(Run(Dj))),
+            ("S", "switch service", Some(Run(SwitchService))),
             ("/", "search", Some(Run(Search))),
             ("^K", "commands", Some(Run(Palette))),
             ("?", "help", Some(Run(Help))),

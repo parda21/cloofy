@@ -1,31 +1,15 @@
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
+//! What plays, as the interface shows it: cloofy's own player as its events report it, or
+//! another of the account's devices as polls and pushes report it.
+
+use std::time::{Duration, Instant};
+
+use cloofy_core::{
+    connect::Playback,
+    player::{CurrentTrack, PlayerEvent},
 };
 
-use anyhow::Result;
-use cloofy_player::Engine;
-use cloofy_spotify::{catalog::Track, connect::Playback};
-use cloofy_spotify::{paths::Paths, session};
-use futures::StreamExt;
-use librespot::{
-    connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
-    core::{SpotifyUri, dealer::protocol::Message, session::Session},
-    metadata::audio::{AudioItem, UniqueFields},
-    playback::player::PlayerEvent,
-    protocol::connect::ClusterUpdate,
-};
-use tokio::sync::{
-    Notify,
-    mpsc::{UnboundedReceiver, UnboundedSender},
-};
+use crate::queue::Queue;
 
-use crate::{app::AppEvent, queue::Queue};
-
-const DEVICE_NAME: &str = "cloofy";
 /// How long a change made in cloofy wins over reports the player sent before it got there.
 const ECHO_WINDOW: Duration = Duration::from_millis(1500);
 /// A reported position this close to a seek target confirms the seek.
@@ -40,12 +24,6 @@ const REMOTE_SEEK_TOLERANCE_MS: u32 = 2000;
 const REMOTE_VOLUME_TOLERANCE: u32 = 3;
 /// A track start that hasn't begun loading after this long has failed.
 pub const START_TIMEOUT: Duration = Duration::from_secs(8);
-/// A connection that lasted this long was fine: the next one is tried right away.
-const STABLE: Duration = Duration::from_secs(30);
-/// Waits between attempts while Spotify can't be reached or keeps dropping the connection,
-/// doubling up to the longest.
-const RETRY_FIRST: Duration = Duration::from_secs(1);
-const RETRY_LONGEST: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Repeat {
@@ -62,44 +40,6 @@ impl Repeat {
             "track" => Repeat::Track,
             "context" => Repeat::Context,
             _ => Repeat::Off,
-        }
-    }
-
-    pub fn remote_name(self) -> &'static str {
-        match self {
-            Repeat::Off => "off",
-            Repeat::Context => "context",
-            Repeat::Track => "track",
-        }
-    }
-}
-
-pub struct CurrentTrack {
-    pub uri: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    /// Parallel to `artists`; may be shorter when unknown.
-    pub artist_uris: Vec<String>,
-    pub album: String,
-    pub album_uri: Option<String>,
-    pub duration_ms: u32,
-    pub cover_url: Option<String>,
-    /// The largest available cover, for the Now Playing screen.
-    pub cover_url_large: Option<String>,
-}
-
-impl CurrentTrack {
-    /// The track as a row of a track list.
-    pub fn to_track(&self) -> Track {
-        Track {
-            uri: self.uri.clone(),
-            name: self.name.clone(),
-            artists: self.artists.clone(),
-            artist_uris: self.artist_uris.clone(),
-            album: self.album.clone(),
-            album_uri: self.album_uri.clone().unwrap_or_default(),
-            duration_ms: self.duration_ms,
-            image_url: self.cover_url.clone(),
         }
     }
 }
@@ -132,7 +72,7 @@ struct Shown {
     position_at: Instant,
 }
 
-/// What the local player is doing, as reported by librespot's player events.
+/// What the local player is doing, as reported by its events.
 pub struct NowPlaying {
     pub track: Option<CurrentTrack>,
     pub playing: bool,
@@ -349,8 +289,7 @@ impl NowPlaying {
     /// Applies a player event. Returns a cover URL when the new track needs its art loaded.
     pub fn apply(&mut self, event: PlayerEvent) -> Option<String> {
         match event {
-            PlayerEvent::Loading { track_id, position_ms, .. } => {
-                let uri = track_id.to_uri();
+            PlayerEvent::Loading { uri, position_ms } => {
                 // Also covers skips from the phone and next tracks that weren't preloaded.
                 if self.pending.is_none() {
                     self.start(None);
@@ -365,8 +304,7 @@ impl NowPlaying {
                     self.report_position(position_ms);
                 }
             }
-            PlayerEvent::TrackChanged { audio_item } => {
-                let track = current_track(&audio_item);
+            PlayerEvent::TrackChanged { track } => {
                 let cover_url = track.cover_url.clone();
                 self.track = Some(track);
                 self.pending = None;
@@ -376,30 +314,30 @@ impl NowPlaying {
                     return cover_url;
                 }
             }
-            PlayerEvent::Playing { position_ms, .. } => {
+            PlayerEvent::Playing { position_ms } => {
                 self.pending = None;
                 // Freeze first, so a report from before a seek leaves the shown position put.
                 self.set_playing(false);
                 self.report_position(position_ms);
                 self.playing = true;
             }
-            PlayerEvent::Paused { position_ms, .. } => {
+            PlayerEvent::Paused { position_ms } => {
                 self.pending = None;
                 self.set_playing(false);
                 self.report_position(position_ms);
             }
-            PlayerEvent::Stopped { .. } => {
+            PlayerEvent::Stopped => {
                 self.pending = None;
                 self.playing = false;
             }
-            PlayerEvent::Seeked { position_ms, .. } => {
+            PlayerEvent::Seeked { position_ms } => {
                 // "Previous" restarts the track instead when it has played for a while.
                 if self.pending.as_ref().is_some_and(|p| p.skip && !p.loading) {
                     self.pending = None;
                 }
                 self.report_position(position_ms);
             }
-            PlayerEvent::PositionCorrection { position_ms, .. } | PlayerEvent::PositionChanged { position_ms, .. } => {
+            PlayerEvent::PositionCorrection { position_ms } | PlayerEvent::PositionChanged { position_ms } => {
                 self.report_position(position_ms)
             }
             PlayerEvent::ShuffleChanged { shuffle } => self.shuffle = shuffle,
@@ -580,285 +518,6 @@ impl RemoteIntent {
     }
 }
 
-fn current_track(item: &AudioItem) -> CurrentTrack {
-    let (artists, artist_uris, album) = match &item.unique_fields {
-        UniqueFields::Track { artists, album, .. } => (
-            artists.iter().map(|a| a.name.clone()).collect(),
-            artists.iter().map(|a| a.id.to_uri()).collect(),
-            album.clone(),
-        ),
-        UniqueFields::Episode { show_name, .. } => (vec![show_name.clone()], Vec::new(), String::new()),
-        UniqueFields::Local { artists, album, .. } => {
-            (artists.clone().into_iter().collect(), Vec::new(), album.clone().unwrap_or_default())
-        }
-    };
-    // The smallest cover that is still sharp at a few cells, else the largest one.
-    let cover_url = item
-        .covers
-        .iter()
-        .filter(|c| c.width >= 200)
-        .min_by_key(|c| c.width)
-        .or_else(|| item.covers.iter().max_by_key(|c| c.width))
-        .map(|c| c.url.clone());
-    let cover_url_large = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone());
-    CurrentTrack {
-        uri: item.uri.clone(),
-        name: item.name.clone(),
-        artists,
-        artist_uris,
-        album,
-        // Not in the player's metadata; filled in from the track list when it is open.
-        album_uri: None,
-        duration_ms: item.duration_ms,
-        cover_url,
-        cover_url_large,
-    }
-}
-
-/// cloofy's own Spotify Connect device. Commands only take effect while it is the active device.
-pub struct Controller {
-    spirc: Spirc,
-    pub session: Session,
-    engine: Arc<Engine>,
-    /// Set when the connection ends on purpose, so it isn't restored.
-    stopping: Arc<AtomicBool>,
-    /// Set when cloofy drops the connection to make a new one, as after sleep, so connecting
-    /// again doesn't wait.
-    forced: Arc<AtomicBool>,
-}
-
-impl Controller {
-    pub fn play(&self, context_uri: String, track_uri: Option<String>) -> Result<()> {
-        let options = LoadRequestOptions {
-            start_playing: true,
-            playing_track: track_uri.map(PlayingTrack::Uri),
-            ..LoadRequestOptions::default()
-        };
-        self.spirc.activate()?;
-        self.spirc.load(LoadRequest::from_context_uri(context_uri, options))?;
-        Ok(())
-    }
-
-    /// Continues a track from the last session at `position_ms`, in its context if known.
-    pub fn resume(&self, context: Option<String>, track: String, position_ms: u32) -> Result<()> {
-        let options = LoadRequestOptions { start_playing: true, seek_to: position_ms, ..LoadRequestOptions::default() };
-        let request = match context {
-            Some(context) => LoadRequest::from_context_uri(
-                context,
-                LoadRequestOptions { playing_track: Some(PlayingTrack::Uri(track)), ..options },
-            ),
-            None => LoadRequest::from_tracks(vec![track], options),
-        };
-        self.spirc.activate()?;
-        self.spirc.load(request)?;
-        Ok(())
-    }
-
-    pub fn play_shuffled(&self, context_uri: String) -> Result<()> {
-        let options = LoadRequestOptions {
-            start_playing: true,
-            context_options: Some(LoadContextOptions::Options(Options { shuffle: true, ..Options::default() })),
-            ..LoadRequestOptions::default()
-        };
-        self.spirc.activate()?;
-        self.spirc.load(LoadRequest::from_context_uri(context_uri, options))?;
-        Ok(())
-    }
-
-    /// Plays or pauses; with nothing loaded, takes over playback from the active device.
-    pub fn toggle(&self, has_track: bool) -> Result<()> {
-        if has_track {
-            self.spirc.play_pause()?;
-        } else {
-            self.spirc.transfer(None)?;
-        }
-        Ok(())
-    }
-
-    pub fn pause(&self) -> Result<()> {
-        Ok(self.spirc.pause()?)
-    }
-
-    pub fn next(&self) -> Result<()> {
-        Ok(self.spirc.next()?)
-    }
-
-    pub fn previous(&self) -> Result<()> {
-        Ok(self.spirc.prev()?)
-    }
-
-    pub fn seek(&self, position_ms: u32) -> Result<()> {
-        Ok(self.spirc.set_position_ms(position_ms)?)
-    }
-
-    pub fn set_volume(&self, volume: u16) -> Result<()> {
-        Ok(self.spirc.set_volume(volume)?)
-    }
-
-    pub fn shuffle(&self, on: bool) -> Result<()> {
-        Ok(self.spirc.shuffle(on)?)
-    }
-
-    pub fn repeat(&self, mode: Repeat) -> Result<()> {
-        self.spirc.repeat(mode != Repeat::Off)?;
-        self.spirc.repeat_track(mode == Repeat::Track)?;
-        Ok(())
-    }
-
-    /// Empties the queue; the rest of the context stays.
-    pub fn clear_queue(&self) -> Result<()> {
-        Ok(self.spirc.clear_queue()?)
-    }
-
-    /// Adds a track after the ones queued before.
-    pub fn add_to_queue(&self, uri: &str) -> Result<()> {
-        Ok(self.spirc.add_to_queue(SpotifyUri::from_uri(uri)?)?)
-    }
-
-    /// Jumps DJ to its next segment of picks, as the DJ button does in Spotify's apps.
-    pub fn next_segment(&self) -> Result<()> {
-        Ok(self.spirc.next_segment()?)
-    }
-
-    /// Asks DJ for something. The future resolves once DJ took the request; its answer
-    /// plays seconds later.
-    pub fn ask_dj(&self, prompt: String, suggested: bool) -> Result<impl Future<Output = Result<()>> + use<>> {
-        let answer = self.spirc.ask_dj(prompt, suggested)?;
-        Ok(async move { Ok(answer.await?) })
-    }
-
-    pub fn set_crossfade(&self, crossfade: Duration) {
-        self.engine.player.set_crossfade(crossfade);
-    }
-
-    /// Drops the connection; the background task connects again.
-    pub fn reconnect(&self) {
-        self.forced.store(true, Ordering::Relaxed);
-        self.session.shutdown();
-        let _ = self.spirc.shutdown();
-    }
-
-    pub fn shutdown(&self) {
-        self.stopping.store(true, Ordering::Relaxed);
-        let _ = self.spirc.shutdown();
-    }
-}
-
-/// Connects the player in the background so the UI shows up instantly, and connects again
-/// whenever the connection drops: after the computer slept, or while the network was gone.
-/// Playback starts at the saved `volume`, and keeps its volume when connecting again.
-/// `retry_now` cuts a wait between attempts short, for when the computer wakes up.
-pub fn spawn(paths: Paths, crossfade: Duration, volume: u16, retry_now: Arc<Notify>, tx: UnboundedSender<AppEvent>) {
-    tokio::spawn(async move {
-        let started = async {
-            let pending = session::prepare(&paths)?;
-            let (engine, lost_outputs) = Engine::new(&pending.session, crossfade)?;
-            forward_events(&engine, lost_outputs, &tx);
-            anyhow::Ok((pending, Arc::new(engine)))
-        };
-        let (mut pending, engine) = match started.await {
-            Ok(started) => started,
-            Err(err) => {
-                let _ = tx.send(AppEvent::PlayerFailed(format!("{err:#}")));
-                return;
-            }
-        };
-        let mut retry = RETRY_FIRST;
-        let mut volume = volume;
-        loop {
-            let session = pending.session.clone();
-            let wait = match engine.connect_device(pending, DEVICE_NAME.into(), volume).await {
-                Ok((spirc, task)) => {
-                    if let Err(err) = session::remember(&paths, &session) {
-                        tracing::warn!("saving streaming credentials: {err:#}");
-                    }
-                    // Before the task starts the dealer: while it starts, it takes no subscriptions.
-                    forward_pushes(&session, tx.clone());
-                    let stopping = Arc::new(AtomicBool::new(false));
-                    let forced = Arc::new(AtomicBool::new(false));
-                    let controller = Controller {
-                        spirc,
-                        session: session.clone(),
-                        engine: engine.clone(),
-                        stopping: stopping.clone(),
-                        forced: forced.clone(),
-                    };
-                    if tx.send(AppEvent::PlayerReady(Box::new(controller))).is_err() {
-                        return;
-                    }
-                    let connected = Instant::now();
-                    task.await;
-                    if stopping.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    // Nothing controls the old track any more, and the app offers to resume it.
-                    // A track that was already downloaded would otherwise play on.
-                    engine.player.stop();
-                    if !session.is_invalid() {
-                        session.shutdown();
-                    }
-                    tracing::warn!("connection to Spotify lost, connecting again");
-                    if tx.send(AppEvent::PlayerLost).is_err() {
-                        return;
-                    }
-                    // One cloofy dropped itself, after sleep, goes ahead at once; one that dropped
-                    // soon after it started waits like a failed attempt.
-                    if forced.load(Ordering::Relaxed) || connected.elapsed() >= STABLE {
-                        retry = RETRY_FIRST;
-                        false
-                    } else {
-                        true
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!("connecting to Spotify: {err:#}");
-                    if tx.send(AppEvent::PlayerFailed(format!("{err:#}"))).is_err() {
-                        return;
-                    }
-                    true
-                }
-            };
-            if wait {
-                tokio::select! {
-                    () = tokio::time::sleep(retry) => {}
-                    () = retry_now.notified() => {}
-                }
-                retry = (retry * 2).min(RETRY_LONGEST);
-            }
-            pending = match session::prepare(&paths) {
-                Ok(pending) => pending,
-                Err(err) => {
-                    let _ = tx.send(AppEvent::PlayerFailed(format!("{err:#}")));
-                    return;
-                }
-            };
-            engine.player.set_session(pending.session.clone());
-            volume = engine.volume();
-        }
-    });
-}
-
-/// Passes the player's events and lost outputs on to the app.
-fn forward_events(engine: &Engine, mut lost_outputs: UnboundedReceiver<String>, tx: &UnboundedSender<AppEvent>) {
-    let mut events = engine.player.get_player_event_channel();
-    let player_tx = tx.clone();
-    tokio::spawn(async move {
-        while let Some(event) = events.recv().await {
-            if player_tx.send(AppEvent::Player(event)).is_err() {
-                break;
-            }
-        }
-    });
-    let output_tx = tx.clone();
-    tokio::spawn(async move {
-        while let Some(name) = lost_outputs.recv().await {
-            if output_tx.send(AppEvent::OutputLost(name)).is_err() {
-                break;
-            }
-        }
-    });
-}
-
 /// What Spotify pushed about the device that plays.
 #[derive(Debug, Clone)]
 pub struct ConnectPush {
@@ -890,44 +549,8 @@ impl ConnectPush {
     }
 }
 
-/// Spotify pushes every change of what plays where to all of the user's devices, cloofy
-/// included. The details still come from a poll; the push says when one is worth it. What
-/// plays next comes straight from the push.
-fn forward_pushes(session: &Session, tx: UnboundedSender<AppEvent>) {
-    let pushes = session.dealer().listen_for("hm://connect-state/v1/cluster", Message::from_raw::<ClusterUpdate>);
-    let mut pushes = match pushes {
-        Ok(pushes) => pushes,
-        Err(err) => return tracing::warn!("connect state pushes: {err}"),
-    };
-    tokio::spawn(async move {
-        while let Some(update) = pushes.next().await {
-            let update = match update {
-                Ok(update) if update.cluster.is_some() => update,
-                Ok(_) => continue,
-                Err(err) => {
-                    tracing::warn!("connect state push: {err}");
-                    continue;
-                }
-            };
-            let state = &update.cluster.player_state;
-            let push = ConnectPush {
-                active_device: update.cluster.active_device_id.clone(),
-                track: state.track.uri.clone(),
-                context: state.context_uri.clone(),
-                playing: state.is_playing && !state.is_paused,
-                queue: Queue::from_player_state(state),
-            };
-            if tx.send(AppEvent::Pushed(push)).is_err() {
-                break;
-            }
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
-    use librespot::core::SpotifyUri;
-
     use super::*;
 
     const URI: &str = "spotify:track:4uLU6hMCjMI75M1A2tKUQC";
@@ -953,21 +576,17 @@ mod tests {
         now
     }
 
-    fn id() -> SpotifyUri {
-        SpotifyUri::from_uri(URI).unwrap()
-    }
-
     fn seeked(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::Seeked { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::Seeked { position_ms }
     }
 
     fn position_changed(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::PositionChanged { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::PositionChanged { position_ms }
     }
 
     /// A poll of another device playing `uri`.
     fn poll(uri: &str, playing: bool, progress_ms: u32) -> Playback {
-        use cloofy_spotify::connect::{Device, PlayingTrack};
+        use cloofy_core::connect::{Device, PlayingTrack};
         Playback {
             device: Device {
                 id: "phone".into(),
@@ -1041,7 +660,7 @@ mod tests {
         let mut now = paused_track();
         now.playing = true;
         now.seek(90_000);
-        now.apply(PlayerEvent::Paused { play_request_id: 1, track_id: id(), position_ms: 30_000 });
+        now.apply(PlayerEvent::Paused { position_ms: 30_000 });
         assert!(!now.playing);
         assert!((90_000..90_500).contains(&now.position_ms()));
     }
@@ -1169,11 +788,11 @@ mod tests {
     const OTHER: &str = "spotify:track:0000000000000000000000";
 
     fn playing(position_ms: u32) -> PlayerEvent {
-        PlayerEvent::Playing { play_request_id: 1, track_id: id(), position_ms }
+        PlayerEvent::Playing { position_ms }
     }
 
     fn loading(uri: &str) -> PlayerEvent {
-        PlayerEvent::Loading { play_request_id: 1, track_id: SpotifyUri::from_uri(uri).unwrap(), position_ms: 0 }
+        PlayerEvent::Loading { uri: uri.into(), position_ms: 0 }
     }
 
     #[test]

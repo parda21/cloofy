@@ -9,17 +9,15 @@
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
-use cloofy_spotify::{
-    artist::{self, ArtistPage},
-    catalog::{self, AlbumInfo, ArtistInfo, PlaylistInfo, Track, User},
+use cloofy_core::{
+    artist::ArtistPage,
+    catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, Track, User},
     config::Config,
     home::{Home, HomeItem, ItemKind, Shelf},
-    lyrics::{self, Lyrics, LyricsQuery},
-    pathfinder::Pathfinder,
+    lyrics::{Lyrics, LyricsQuery},
     paths::Paths,
-    session,
-    webapi::WebApi,
 };
+use cloofy_spotify::{artist, catalog, lyrics, pathfinder::Pathfinder, session, webapi::WebApi};
 use cloofy_tui::demo::{Demo, Playing};
 use serde::Deserialize;
 

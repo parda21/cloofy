@@ -3,12 +3,11 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
-use cloofy_os::media::{Command, Controls, State, Track};
-use librespot::{
-    connect::Spirc,
-    metadata::audio::{AudioItem, UniqueFields},
-    playback::player::PlayerEvent,
+use cloofy_core::{
+    player::{CurrentTrack, PlayerEvent},
+    service,
 };
+use cloofy_os::media::{Command, Controls, State, Track};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub enum Event {
@@ -44,23 +43,24 @@ impl Media {
             return;
         }
         match event {
-            PlayerEvent::TrackChanged { audio_item } => {
-                self.state.track = Some(track(audio_item));
+            PlayerEvent::TrackChanged { track: current } => {
+                self.state.track = Some(track(current));
                 self.state.position = Duration::ZERO;
-                self.load_artwork(audio_item);
+                self.load_artwork(current);
             }
-            PlayerEvent::Playing { position_ms, .. } => {
+            PlayerEvent::Playing { position_ms } => {
                 self.state.playing = true;
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Paused { position_ms, .. } => {
+            PlayerEvent::Paused { position_ms } => {
                 self.state.playing = false;
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Seeked { position_ms, .. } | PlayerEvent::PositionCorrection { position_ms, .. } => {
+            PlayerEvent::Seeked { position_ms } | PlayerEvent::PositionCorrection { position_ms } => {
                 self.state.position = Duration::from_millis((*position_ms).into());
             }
-            PlayerEvent::Stopped { .. } => self.state = State::default(),
+            PlayerEvent::VolumeChanged { volume } => self.state.volume = *volume,
+            PlayerEvent::Stopped => self.state = State { volume: self.state.volume, ..State::default() },
             _ => return,
         }
         if let Some(controls) = &self.controls {
@@ -68,11 +68,11 @@ impl Media {
         }
     }
 
-    /// Shows a loaded cover; requests from the system go to the player.
-    pub fn on_event(&mut self, event: Event, spirc: &Spirc) {
+    /// Shows a loaded cover; requests from the system go to the player through `control`.
+    pub fn on_event(&mut self, event: Event, control: impl FnOnce(Command) -> Result<()>) {
         match event {
             Event::Command(command) => {
-                if let Err(err) = control(spirc, command) {
+                if let Err(err) = control(command) {
                     tracing::warn!("media control {command:?}: {err:#}");
                 }
             }
@@ -87,9 +87,9 @@ impl Media {
         }
     }
 
-    fn load_artwork(&mut self, item: &AudioItem) {
+    fn load_artwork(&mut self, current: &CurrentTrack) {
         // A cover still loading for the previous track must not land on this one.
-        self.artwork_url = item.covers.iter().max_by_key(|c| c.width).map(|c| c.url.clone());
+        self.artwork_url = current.cover_url_large.clone();
         let Some(url) = self.artwork_url.clone() else { return };
         let (http, tx) = (self.http.clone(), self.tx.clone());
         tokio::spawn(async move {
@@ -104,33 +104,13 @@ impl Media {
     }
 }
 
-fn control(spirc: &Spirc, command: Command) -> Result<()> {
-    match command {
-        Command::Play => spirc.play()?,
-        Command::Pause => spirc.pause()?,
-        Command::Toggle => spirc.play_pause()?,
-        Command::Next => spirc.next()?,
-        Command::Previous => spirc.prev()?,
-        Command::Seek(position) => spirc.set_position_ms(position.as_millis().try_into().unwrap_or(u32::MAX))?,
-    }
-    Ok(())
-}
-
-fn track(item: &AudioItem) -> Track {
-    let (artist, album) = match &item.unique_fields {
-        UniqueFields::Track { artists, album, .. } => {
-            (artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", "), album.clone())
-        }
-        UniqueFields::Episode { show_name, .. } => (show_name.clone(), String::new()),
-        UniqueFields::Local { artists, album, .. } => {
-            (artists.clone().unwrap_or_default(), album.clone().unwrap_or_default())
-        }
-    };
+fn track(current: &CurrentTrack) -> Track {
     Track {
-        title: item.name.clone(),
-        artist,
-        album,
-        duration: Duration::from_millis(item.duration_ms.into()),
+        title: current.name.clone(),
+        artist: current.artists.join(", "),
+        album: current.album.clone(),
+        duration: Duration::from_millis(current.duration_ms.into()),
         artwork: None,
+        link: service::web_link(&current.uri),
     }
 }

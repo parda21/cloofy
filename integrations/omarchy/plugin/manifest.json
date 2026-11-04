@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "cloofy.nowplaying",
+  "name": "cloofy",
+  "version": "1.0.0",
+  "author": "cloofy",
+  "description": "What cloofy plays, with its cover, the controls and the volume",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "cloofy",
+    "description": "What cloofy plays; click for the cover, the controls and the volume",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "maxWidth": 220,
+      "overflow": "Scroll",
+      "showArtist": true,
+      "equalizer": true,
+      "whenClosed": "Hide"
+    },
+    "schema": [
+      {
+        "key": "maxWidth",
+        "type": "integer",
+        "label": "Title width (pixels)",
+        "min": 80,
+        "max": 600,
+        "step": 10,
+        "defaultValue": 220
+      },
+      {
+        "key": "overflow",
+        "type": "enum",
+        "label": "Long titles",
+        "options": [
+          "Scroll",
+          "Scroll on hover",
+          "Fade out"
+        ],
+        "defaultValue": "Scroll",
+        "description": "Titles that don't fit scroll by while a song plays, only while the pointer is on them, or fade out at the end."
+      },
+      {
+        "key": "showArtist",
+        "type": "boolean",
+        "label": "Show the artist",
+        "defaultValue": true
+      },
+      {
+        "key": "equalizer",
+        "type": "boolean",
+        "label": "Equalizer",
+        "description": "Little bars that dance while a song plays.",
+        "defaultValue": true
+      },
+      {
+        "key": "whenClosed",
+        "type": "enum",
+        "label": "While cloofy isn't open",
+        "options": [
+          "Hide",
+          "Show a launcher"
+        ],
+        "defaultValue": "Hide",
+        "description": "A launcher is a dimmed note that opens cloofy."
+      }
+    ]
+  }
+}

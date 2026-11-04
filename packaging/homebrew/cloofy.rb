@@ -1,4 +1,5 @@
 # Made for each release from packaging/homebrew/cloofy.rb in https://github.com/parda21/cloofy.
+# The Spotify build. cloofy-ytmusic has YouTube Music instead, cloofy-full both.
 class Cloofy < Formula
   desc "Spotify client for the terminal"
   homepage "https://github.com/parda21/cloofy"
@@ -7,25 +8,27 @@ class Cloofy < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-aarch64-apple-darwin.tar.gz"
-      sha256 "@SHA256_AARCH64_APPLE_DARWIN@"
+      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-aarch64-apple-darwin.tar.gz"
+      sha256 "@SHA256_SPOTIFY_AARCH64_APPLE_DARWIN@"
     end
     on_intel do
-      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-x86_64-apple-darwin.tar.gz"
-      sha256 "@SHA256_X86_64_APPLE_DARWIN@"
+      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-x86_64-apple-darwin.tar.gz"
+      sha256 "@SHA256_SPOTIFY_X86_64_APPLE_DARWIN@"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "@SHA256_AARCH64_UNKNOWN_LINUX_GNU@"
+      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "@SHA256_SPOTIFY_AARCH64_UNKNOWN_LINUX_GNU@"
     end
     on_intel do
-      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "@SHA256_X86_64_UNKNOWN_LINUX_GNU@"
+      url "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "@SHA256_SPOTIFY_X86_64_UNKNOWN_LINUX_GNU@"
     end
   end
+
+  conflicts_with "cloofy-full", "cloofy-ytmusic", because: "each installs a cloofy binary"
 
   def install
     bin.install "cloofy"

@@ -1,12 +1,11 @@
 use std::{fs, path::Path, time::Duration};
 
 use anyhow::{Context, Result};
+use cloofy_core::paths::{Paths, write_private};
 use librespot::{
     core::{authentication::Credentials, cache::Cache, config::SessionConfig, session::Session},
     oauth::OAuthClientBuilder,
 };
-
-use crate::paths::{Paths, write_private};
 
 /// librespot only streams with Spotify's own client ID, so this login is separate from the
 /// Web API one. The port is free to change: Spotify accepts any port on loopback redirects.

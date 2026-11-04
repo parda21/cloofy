@@ -1,13 +1,13 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use cloofy_core::paths::Secret;
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use super::auth::{self, Token};
-use crate::paths::Secret;
 
 const API_BASE: &str = "https://api.spotify.com/v1";
 /// Tries per read request, including the first.
@@ -42,7 +42,7 @@ impl ApiResponse {
 
 impl WebApi {
     pub fn new(client_id: impl Into<String>, store: Secret) -> Result<Self> {
-        let http = crate::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
+        let http = cloofy_core::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
         let token = match store.read()? {
             Some(bytes) => Some(serde_json::from_slice(&bytes).context("Stored token corrupted – run `cloofy login`")?),
             None => None,

@@ -34,17 +34,72 @@ jobs:
       - name: Install audio headers
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpulse-dev
-      - run: cargo build --release --locked --package cloofy --target ${{ matrix.target }}
-      - name: Package
+      # One build per service set, one after another in the same target folder: the three
+      # share their dependencies, so the second and third compile little but cloofy itself.
+      - name: Build spotify, ytmusic and full
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          archive=cloofy-${{ matrix.target }}.tar.gz
-          cp target/${{ matrix.target }}/release/cloofy .
-          tar -czf "$archive" cloofy LICENSE README.md
-          shasum -a 256 "$archive" > "$archive.sha256"
+          for variant in spotify ytmusic full; do
+            case "$variant" in
+              spotify) features=spotify ;;
+              ytmusic) features=ytmusic ;;
+              full) features=spotify,ytmusic ;;
+            esac
+            cargo build --release --locked --package cloofy --target "$TARGET" \
+              --no-default-features --features "$features"
+            mkdir -p "dist/$variant"
+            cp "target/$TARGET/release/cloofy" "dist/$variant/"
+          done
+      # A build that runs here says which services it has; the Linux ones also show what they
+      # link. The YouTube Music build must not need ALSA or PulseAudio, which only Spotify uses.
+      - name: Check each build has its services, and only those
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          for variant in spotify ytmusic full; do
+            binary="dist/$variant/cloofy"
+            if [ "$host" = "$TARGET" ]; then
+              version=$("$binary" --version)
+              echo "$variant: $version"
+              case "$variant:$version" in
+                spotify:*spotify*ytmusic* | spotify:*ytmusic*spotify* | ytmusic:*spotify*) ok=false ;;
+                spotify:*spotify* | ytmusic:*ytmusic* | full:*spotify*ytmusic* | full:*ytmusic*spotify*) ok=true ;;
+                *) ok=false ;;
+              esac
+              if ! $ok; then
+                echo "::error::The $variant build says: $version"
+                exit 1
+              fi
+            fi
+            if [ "$RUNNER_OS" = Linux ]; then
+              libraries=$(readelf -d "$binary" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')
+              echo "$variant links: $libraries"
+              if [ "$variant" = ytmusic ] && grep -Eq 'libasound|libpulse' <<<"$libraries"; then
+                echo "::error::The ytmusic build links ALSA or PulseAudio: $libraries"
+                exit 1
+              fi
+            fi
+          done
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          for variant in spotify ytmusic full; do
+            archive="cloofy-$variant-$TARGET.tar.gz"
+            cp LICENSE README.md "dist/$variant/"
+            tar -czf "$archive" -C "dist/$variant" cloofy LICENSE README.md
+            shasum -a 256 "$archive" > "$archive.sha256"
+          done
+          # cloofy 0.4 and older update themselves from this name, and play Spotify.
+          cp "cloofy-spotify-$TARGET.tar.gz" "cloofy-$TARGET.tar.gz"
+          shasum -a 256 "cloofy-$TARGET.tar.gz" > "cloofy-$TARGET.tar.gz.sha256"
+          ls -l cloofy-*.tar.gz*
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: cloofy-${{ matrix.target }}.tar.gz*
+          path: cloofy-*.tar.gz*
           if-no-files-found: error
 
   publish:
@@ -82,19 +137,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Fill in the formula and PKGBUILDs
+      - name: Fill in the formulas and PKGBUILDs
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           gh release download "$TAG" --pattern '*.sha256' --dir checksums
           packaging/render.sh "${TAG#v}" checksums packages
-      # Until cloofy is in the AUR: `curl -LO …/releases/latest/download/PKGBUILD && makepkg -si`.
-      - name: Attach the PKGBUILD to the release
+      # Until cloofy is in the AUR: `curl -L -o PKGBUILD …/releases/latest/download/cloofy-bin.PKGBUILD
+      # && makepkg -si`. Plain `PKGBUILD` stays Spotify's, the name 0.4's instructions download.
+      - name: Attach the PKGBUILDs to the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release upload "$TAG" packages/aur/cloofy-bin/PKGBUILD --clobber
+        run: |
+          for package in cloofy-bin cloofy-ytmusic-bin cloofy-full-bin; do
+            cp "packages/aur/$package/PKGBUILD" "$package.PKGBUILD"
+          done
+          cp packages/aur/cloofy-bin/PKGBUILD PKGBUILD
+          gh release upload "$TAG" PKGBUILD cloofy-bin.PKGBUILD cloofy-ytmusic-bin.PKGBUILD cloofy-full-bin.PKGBUILD --clobber
       # Each skips with a notice until its secret is set, see packaging/README.md.
       - name: Push them to the tap and the AUR
         env:

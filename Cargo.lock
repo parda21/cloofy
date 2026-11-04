@@ -503,14 +503,17 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cloofy"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cloofy-core",
  "cloofy-os",
  "cloofy-player",
  "cloofy-spotify",
  "cloofy-tui",
+ "cloofy-ytmusic",
+ "crossterm",
  "libc",
  "librespot",
  "reqwest 0.13.5",
@@ -523,8 +526,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloofy-core"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "cloofy-os",
+ "etcetera",
+ "flate2",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tokio",
+ "toml",
+ "toml_edit",
+ "tracing",
+]
+
+[[package]]
 name = "cloofy-os"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -545,9 +567,10 @@ dependencies = [
 
 [[package]]
 name = "cloofy-player"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
+ "cloofy-core",
  "cloofy-os",
  "cloofy-spotify",
  "librespot",
@@ -558,13 +581,11 @@ dependencies = [
 
 [[package]]
 name = "cloofy-spotify"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
- "cloofy-os",
- "etcetera",
- "flate2",
+ "cloofy-core",
  "futures",
  "iana-time-zone",
  "librespot",
@@ -576,24 +597,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "tar",
  "thiserror 2.0.21",
  "tokio",
- "toml",
- "toml_edit",
  "tracing",
  "url",
 ]
 
 [[package]]
 name = "cloofy-tui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
+ "cloofy-core",
  "cloofy-os",
  "cloofy-player",
  "cloofy-spotify",
+ "cloofy-ytmusic",
  "crossterm",
  "fontdue",
  "futures",
@@ -614,6 +634,24 @@ dependencies = [
  "toml_edit",
  "tracing",
  "unicode-width",
+]
+
+[[package]]
+name = "cloofy-ytmusic"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "cloofy-core",
+ "futures",
+ "libc",
+ "open",
+ "reqwest 0.13.5",
+ "serde_json",
+ "sha1",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

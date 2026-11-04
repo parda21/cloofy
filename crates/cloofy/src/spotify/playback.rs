@@ -1,24 +1,24 @@
-use std::{
-    io::Write,
-    time::{Duration, Instant},
-};
+//! `cloofy play` and `cloofy connect`: Spotify without the interface.
+
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use cloofy_player::{DEFAULT_VOLUME, Engine};
-use cloofy_spotify::{paths::Paths, session};
+use cloofy_core::{paths::Paths, player::PlayerEvent};
+use cloofy_os::media::Command;
+use cloofy_player::{DEFAULT_VOLUME, Engine, events};
+use cloofy_spotify::session;
 use librespot::{
-    connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack},
+    connect::{LoadContextOptions, LoadRequest, LoadRequestOptions, Options, PlayingTrack, Spirc},
     core::SpotifyUri,
-    metadata::{
-        Metadata, Track,
-        audio::{AudioItem, UniqueFields},
-    },
-    playback::player::PlayerEvent,
+    metadata::{Metadata, Track},
 };
 
-use crate::{media::Media, style};
+use crate::{
+    headless::{Clock, describe, draw_progress},
+    media::Media,
+    style,
+};
 
-const BAR_WIDTH: usize = 40;
 const DEVICE_NAME: &str = "cloofy";
 
 /// Plays standalone: cloofy activates itself as the playing device and loads the context.
@@ -27,7 +27,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
     let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
-    let mut events = engine.player.get_player_event_channel();
+    let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;
     tokio::pin!(task);
@@ -57,21 +57,24 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = media_events.recv() => media.on_event(event, |command| control(&spirc, command)),
             Some(name) = lost_outputs.recv() => {
                 spirc.pause()?;
                 println!("\r\x1b[2K  {}", style::dim(&format!("❚❚ paused: {name} disconnected")));
             }
-            Some(event) = events.recv() => {
+            Some(event) = player_events.recv() => {
+                let Some(event) = events::neutral(event) else { continue };
+                let event = events::refusals(event, Some(&session));
                 media.on_player(&event);
                 match event {
-                    PlayerEvent::TrackChanged { audio_item } => {
-                        duration = Duration::from_millis(audio_item.duration_ms.into());
+                    PlayerEvent::Unavailable { refused, .. } => println!("\r\x1b[2K  {}", unavailable(refused)),
+                    PlayerEvent::TrackChanged { track } => {
+                        duration = Duration::from_millis(track.duration_ms.into());
                         clock = Clock::default();
-                        println!("\r\x1b[2K  ▶  {}", describe(&audio_item));
+                        println!("\r\x1b[2K  ▶  {}", describe(&track));
                     }
-                    PlayerEvent::Playing { position_ms, .. } => clock.resume(position_ms),
-                    PlayerEvent::Paused { position_ms, .. } => clock.pause(position_ms),
+                    PlayerEvent::Playing { position_ms } => clock.resume(position_ms),
+                    PlayerEvent::Paused { position_ms } => clock.pause(position_ms),
                     _ => {}
                 }
             }
@@ -92,7 +95,7 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
     let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
-    let mut events = engine.player.get_player_event_channel();
+    let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, name.clone(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;
     tokio::pin!(task);
@@ -108,16 +111,19 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     loop {
         tokio::select! {
             () = &mut task => break,
-            Some(event) = media_events.recv() => media.on_event(event, &spirc),
+            Some(event) = media_events.recv() => media.on_event(event, |command| control(&spirc, command)),
             Some(name) = lost_outputs.recv() => {
                 spirc.pause()?;
                 paused = true;
                 println!("  {}", style::dim(&format!("❚❚ paused: {name} disconnected")));
             }
-            Some(event) = events.recv() => {
+            Some(event) = player_events.recv() => {
+                let Some(event) = events::neutral(event) else { continue };
+                let event = events::refusals(event, Some(&session));
                 media.on_player(&event);
                 match event {
-                    PlayerEvent::TrackChanged { audio_item } => println!("  ▶  {}", describe(&audio_item)),
+                    PlayerEvent::Unavailable { refused, .. } => println!("  {}", unavailable(refused)),
+                    PlayerEvent::TrackChanged { track } => println!("  ▶  {}", describe(&track)),
                     PlayerEvent::Paused { .. } if !paused => {
                         paused = true;
                         println!("  {}", style::dim("❚❚ paused"));
@@ -139,6 +145,20 @@ pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     Ok(())
 }
 
+/// Hands a request from the system's media controls to Spirc.
+fn control(spirc: &Spirc, command: Command) -> Result<()> {
+    match command {
+        Command::Play => spirc.play()?,
+        Command::Pause => spirc.pause()?,
+        Command::Toggle => spirc.play_pause()?,
+        Command::Next => spirc.next()?,
+        Command::Previous => spirc.prev()?,
+        Command::Seek(position) => spirc.set_position_ms(position.as_millis().try_into().unwrap_or(u32::MAX))?,
+        Command::Volume(volume) => spirc.set_volume(volume)?,
+    }
+    Ok(())
+}
+
 /// Accepts `spotify:…` URIs as well as `https://open.spotify.com/…` links.
 fn parse_uri(input: &str) -> Result<SpotifyUri> {
     let uri = match input.strip_prefix("https://open.spotify.com/") {
@@ -154,53 +174,11 @@ fn parse_uri(input: &str) -> Result<SpotifyUri> {
     SpotifyUri::from_uri(&uri).with_context(|| format!("“{input}” is not a valid Spotify URI"))
 }
 
-fn describe(item: &AudioItem) -> String {
-    let by = match &item.unique_fields {
-        UniqueFields::Track { artists, .. } => artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", "),
-        UniqueFields::Episode { show_name, .. } => show_name.clone(),
-        UniqueFields::Local { artists, .. } => artists.clone().unwrap_or_default(),
-    };
-    format!("{}  {}", style::bold(&item.name), style::dim(&by))
-}
-
-fn draw_progress(position: Duration, duration: Duration) {
-    let ratio = if duration.is_zero() { 0.0 } else { position.as_secs_f64() / duration.as_secs_f64() };
-    let filled = ((ratio * BAR_WIDTH as f64).round() as usize).min(BAR_WIDTH);
-    print!(
-        "\r\x1b[2K  {}  {}{}{}  {}",
-        style::dim(&clock(position)),
-        style::green(&"━".repeat(filled)),
-        style::green("●"),
-        style::dim(&"─".repeat(BAR_WIDTH - filled)),
-        style::dim(&clock(duration)),
-    );
-    let _ = std::io::stdout().flush();
-}
-
-fn clock(duration: Duration) -> String {
-    let secs = duration.as_secs();
-    format!("{}:{:02}", secs / 60, secs % 60)
-}
-
-/// Playback position, extrapolated between player events.
-#[derive(Default)]
-struct Clock {
-    base_ms: u32,
-    since: Option<Instant>,
-}
-
-impl Clock {
-    fn resume(&mut self, position_ms: u32) {
-        self.base_ms = position_ms;
-        self.since = Some(Instant::now());
-    }
-
-    fn pause(&mut self, position_ms: u32) {
-        self.base_ms = position_ms;
-        self.since = None;
-    }
-
-    fn position(&self) -> Duration {
-        Duration::from_millis(self.base_ms.into()) + self.since.map_or(Duration::ZERO, |s| s.elapsed())
+/// What `cloofy play` and `connect` print for a track that couldn't load.
+fn unavailable(refused: bool) -> String {
+    if refused {
+        style::red("✗  Spotify refused the key to this song, so it was skipped: cloofy.app/docs/troubleshooting")
+    } else {
+        style::dim("✗  this song couldn't load, so it was skipped")
     }
 }

@@ -3,16 +3,17 @@
 use std::io::Write;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cloofy_spotify::{
+use cloofy_core::{
     catalog::{AlbumInfo, PlaylistInfo, Track},
     home::{HomeItem, ItemKind},
+    player::CurrentTrack,
 };
 
 use super::{App, Focus, LibraryEntry, NavItem};
 use crate::{
+    backend::{self, Player, Service},
     icons::icons,
     overlay::{ContextTarget, Menu, MenuAction, Overlay, TargetKind},
-    playback::CurrentTrack,
     queue::Provider,
     views::{ArtistSelection, QueueRow, SearchEntry, TrackSource, View},
 };
@@ -57,7 +58,7 @@ impl App {
                 v.tracks.get(v.list.selected).map(|t| track_target(t, context))
             }
             View::Search(v) => match v.selected()? {
-                SearchEntry::Track(t) => Some(track_target(t, Some(t.album_uri.clone()))),
+                SearchEntry::Track(t) => Some(track_target(t, Some(t.album_uri.clone()).filter(|uri| !uri.is_empty()))),
                 SearchEntry::Album(a) => Some(album_target(a)),
                 SearchEntry::Playlist(p) => Some(self.playlist_target(p)),
                 SearchEntry::Artist(a) => Some(target(&a.uri, &a.name, TargetKind::Artist, a.image_url.clone())),
@@ -120,9 +121,8 @@ impl App {
     }
 
     fn playlist_target(&self, playlist: &PlaylistInfo) -> ContextTarget {
-        let owned = self.me.as_ref().is_some_and(|me| me.id == playlist.owner_id);
         ContextTarget {
-            owned,
+            owned: self.owns(playlist),
             ..target(&playlist.uri, &playlist.name, TargetKind::Playlist, playlist.image_url.clone())
         }
     }
@@ -143,13 +143,11 @@ impl App {
         }
     }
 
-    /// Liked Songs as a playable context.
+    /// Liked Songs of the service shown as a playable context.
     pub(super) fn liked_uri(&self) -> Option<String> {
-        let user = match &self.controller {
-            Some(c) => c.session.username(),
-            None => self.me.as_ref()?.id.clone(),
-        };
-        Some(format!("spotify:user:{user}:collection"))
+        let service = self.loader.service()?;
+        let user = self.players.get(&service).and_then(Player::user).or_else(|| Some(self.me.as_ref()?.id.clone()));
+        backend::liked_context(service, user.as_deref())
     }
 
     pub(super) fn run_menu(&mut self, action: MenuAction, target: ContextTarget) {
@@ -192,7 +190,7 @@ impl App {
                 }
             }
             MenuAction::CopyLink => {
-                copy_to_clipboard(&web_link(&target.uri));
+                copy_to_clipboard(&backend::web_link(&target.uri));
                 self.notice("Link copied".into());
             }
         }
@@ -203,38 +201,22 @@ impl App {
         self.library_target(entry).map(|target| target.uri)
     }
 
-    /// A short name for a playing context, like “Playlist · Deep Focus”.
+    /// A short name for a playing context, like “Playlist · Deep Focus”, from the pages of the
+    /// service it belongs to, shown or not.
     pub fn context_label(&self, uri: &str) -> Option<String> {
-        if Some(uri) == self.liked_uri().as_deref() || uri.ends_with(":collection") {
+        if Some(uri) == self.liked_uri().as_deref() || backend::is_liked_context(uri) {
             return Some("Liked Songs".into());
         }
-        if uri == super::DJ_URI {
+        if backend::is_dj(uri) {
             return Some("DJ".into());
         }
-        let label = |kind: &str, name: &str| Some(format!("{kind} · {name}"));
-        if let Some(p) = self.playlists.iter().find(|p| p.uri == uri) {
-            return label("Playlist", &p.name);
-        }
-        if let Some(a) = self.albums.iter().find(|a| a.uri == uri) {
-            return label("Album", &a.name);
-        }
-        if let Some(a) = self.artists.iter().find(|a| a.uri == uri) {
-            return label("Artist", &a.name);
-        }
-        let item = self.home_cache.as_ref()?.shelves.iter().flat_map(|s| &s.items).find(|i| i.uri == uri)?;
-        label(
-            match item.kind {
-                ItemKind::Album => "Album",
-                ItemKind::Artist => "Artist",
-                _ => "Playlist",
-            },
-            &item.title,
-        )
+        let (kind, name) = self.known(Service::of(uri)).name(uri)?;
+        (!name.is_empty()).then(|| format!("{kind} · {name}"))
     }
 
     /// Opens the page of a playlist, album or artist known only by its URI.
     pub(super) fn open_context(&mut self, uri: String) {
-        if uri.ends_with(":collection") {
+        if backend::is_liked_context(&uri) {
             return self.open_library_entry(LibraryEntry::Liked);
         }
         let kind = match uri.split(':').nth(1) {
@@ -322,7 +304,7 @@ fn track_target(track: &Track, context: Option<String>) -> ContextTarget {
 
 /// The playing track or episode; `context` is what it plays from.
 fn current_track_target(track: &CurrentTrack, context: Option<String>) -> ContextTarget {
-    let kind = if track.uri.starts_with("spotify:episode:") { TargetKind::Episode } else { TargetKind::Track };
+    let kind = if backend::is_episode(&track.uri) { TargetKind::Episode } else { TargetKind::Track };
     ContextTarget {
         context,
         album: track.album_uri.clone().map(|uri| (uri, track.album.clone())),
@@ -400,15 +382,6 @@ fn menu_items(target: &ContextTarget, saved: bool) -> Vec<(MenuAction, String)> 
     items
 }
 
-/// `spotify:track:123` → `https://open.spotify.com/track/123`
-fn web_link(uri: &str) -> String {
-    let mut parts = uri.split(':').skip(1);
-    match (parts.next(), parts.next()) {
-        (Some(kind), Some(id)) => format!("https://open.spotify.com/{kind}/{id}"),
-        _ => uri.to_owned(),
-    }
-}
-
 /// OSC 52: the terminal puts the text on the clipboard, which also works over SSH.
 fn copy_to_clipboard(text: &str) {
     let mut stdout = std::io::stdout();
@@ -419,11 +392,6 @@ fn copy_to_clipboard(text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn builds_web_links() {
-        assert_eq!(web_link("spotify:track:abc"), "https://open.spotify.com/track/abc");
-    }
 
     #[test]
     fn track_menu_offers_library_and_navigation() {

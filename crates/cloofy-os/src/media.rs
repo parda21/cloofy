@@ -13,6 +13,9 @@ pub struct Track {
     pub duration: Duration,
     /// Encoded cover art (JPEG or PNG), once it has loaded.
     pub artwork: Option<Arc<[u8]>>,
+    /// The track's page on the web, such as open.spotify.com. It also tells clients which
+    /// service plays.
+    pub link: Option<String>,
 }
 
 /// Everything the media controls show.
@@ -23,6 +26,8 @@ pub struct State {
     pub playing: bool,
     /// Where playback was at the moment of the update; the system advances it while playing.
     pub position: Duration,
+    /// The player's volume, from 0 to 65535.
+    pub volume: u16,
 }
 
 /// A request from the system: a media key, a headphone button, Control Center, Siri, or an MPRIS
@@ -36,6 +41,8 @@ pub enum Command {
     Next,
     Previous,
     Seek(Duration),
+    /// From 0 to 65535, like [`State::volume`]: a volume slider such as the desktop's.
+    Volume(u16),
 }
 
 /// cloofy's entry in the system's media controls. Requests need [`crate::run_main`].

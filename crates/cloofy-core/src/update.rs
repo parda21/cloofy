@@ -21,7 +21,7 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Bounds the whole download, which the usual request timeout would cut short.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// What to run where cloofy can't replace itself.
-pub const INSTALLER: &str = "curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash";
+pub const INSTALLER: &str = "curl -fsSL https://cloofy.app/install.sh | bash";
 
 /// A package manager that installed cloofy. It owns the binary and updates it, so cloofy only
 /// says how.
@@ -31,7 +31,8 @@ pub enum PackageManager {
     /// The system's, such as pacman with cloofy-bin from the AUR.
     System,
     Nix,
-    /// mise, with `ubi:parda21/cloofy`; it keeps each version in a folder of its own.
+    /// mise, with `github:parda21/cloofy[matching=…]`; it keeps each version in a folder of its
+    /// own.
     Mise,
 }
 
@@ -63,14 +64,23 @@ impl PackageManager {
         }
     }
 
-    /// How to update cloofy, as a sentence.
-    pub fn how_to_update(self) -> &'static str {
+    /// How to update the `variant` build of cloofy, as a sentence.
+    pub fn how_to_update(self, variant: &str) -> String {
         match self {
-            Self::Homebrew => "Update with brew upgrade cloofy",
-            Self::System => "Update with your package manager",
-            Self::Nix => "Update with Nix",
-            Self::Mise => "Update with mise upgrade",
+            Self::Homebrew => format!("Update with brew upgrade {}", homebrew_formula(variant)),
+            Self::System => "Update with your package manager".into(),
+            Self::Nix => "Update with Nix".into(),
+            Self::Mise => "Update with mise upgrade".into(),
         }
+    }
+}
+
+/// Homebrew's formula for the `variant` build: `cloofy` is Spotify's, the others are named
+/// after theirs.
+fn homebrew_formula(variant: &str) -> String {
+    match variant {
+        "ytmusic" | "full" => format!("cloofy-{variant}"),
+        _ => "cloofy".into(),
     }
 }
 
@@ -170,12 +180,20 @@ fn target() -> Option<&'static str> {
     })
 }
 
-/// Downloads `release` for this machine, checks it against its published checksum and puts it
-/// in place of the running binary, which carries on until restarted. `progress` hears the bytes
-/// that arrived so far and the total, when known. Returns where the new binary is.
-pub async fn install(release: &Release, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
+/// The release archive of the `variant` build for `target`. Each variant has the services it is
+/// named after: `spotify`, `ytmusic`, or both in `full`.
+fn archive_name(variant: &str, target: &str) -> String {
+    format!("cloofy-{variant}-{target}.tar.gz")
+}
+
+/// Downloads the `variant` build of `release` for this machine, checks it against its published
+/// checksum and puts it in place of the running binary, which carries on until restarted. The
+/// running binary names its own variant, so an update keeps the services it has. `progress`
+/// hears the bytes that arrived so far and the total, when known. Returns where the new binary
+/// is.
+pub async fn install(release: &Release, variant: &str, mut progress: impl FnMut(u64, Option<u64>)) -> Result<PathBuf> {
     if let Some(manager) = PackageManager::of_running() {
-        bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update())
+        bail!("A package manager installed cloofy, so it doesn't replace itself. {}", manager.how_to_update(variant))
     }
     let Some(target) = target() else {
         bail!("There is no prebuilt cloofy for this system; update with `cargo install` instead")
@@ -186,12 +204,12 @@ pub async fn install(release: &Release, mut progress: impl FnMut(u64, Option<u64
     // Before downloading anything, make sure the binary can be replaced at all.
     let mut staged = Staged::create(dir)?;
 
-    let archive_name = format!("cloofy-{target}.tar.gz");
+    let archive_name = archive_name(variant, target);
     let base = format!("https://github.com/{REPO}/releases/download/{}", release.tag);
     let http = crate::http::client(USER_AGENT).timeout(DOWNLOAD_TIMEOUT).build()?;
     let mut response = http.get(format!("{base}/{archive_name}")).send().await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        bail!("cloofy {} has no build for {target}", release.version());
+        bail!("cloofy {} has no {variant} build for {target}", release.version());
     }
     response = response.error_for_status()?;
     let total = response.content_length();
@@ -306,7 +324,7 @@ mod tests {
         assert_eq!(of("/home/linuxbrew/.linuxbrew/Cellar/cloofy/0.3.0/bin/cloofy"), Some(PackageManager::Homebrew));
         assert_eq!(of("/usr/bin/cloofy"), Some(PackageManager::System));
         assert_eq!(
-            of("/home/sam/.local/share/mise/installs/ubi-parda21-cloofy/0.3.0/cloofy"),
+            of("/home/sam/.local/share/mise/installs/github-parda21-cloofy/0.3.0/cloofy"),
             Some(PackageManager::Mise)
         );
         assert_eq!(of("/home/sam/.local/bin/cloofy"), None);
@@ -320,6 +338,24 @@ mod tests {
         assert_eq!(of("/home/me/.cargo/bin/cloofy"), None);
         assert_eq!(of("/home/me/cloofy/target/release/cloofy"), None);
         assert_eq!(of("/usr/bin-old/cloofy"), None);
+    }
+
+    #[test]
+    fn homebrew_upgrades_the_formula_of_the_build() {
+        let brew = |variant| PackageManager::Homebrew.how_to_update(variant);
+        assert_eq!(brew("spotify"), "Update with brew upgrade cloofy");
+        assert_eq!(brew("ytmusic"), "Update with brew upgrade cloofy-ytmusic");
+        assert_eq!(brew("full"), "Update with brew upgrade cloofy-full");
+        assert_eq!(PackageManager::Mise.how_to_update("full"), "Update with mise upgrade");
+    }
+
+    #[test]
+    fn each_variant_downloads_its_own_archive() {
+        assert_eq!(
+            archive_name("spotify", "x86_64-unknown-linux-gnu"),
+            "cloofy-spotify-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(archive_name("full", "aarch64-apple-darwin"), "cloofy-full-aarch64-apple-darwin.tar.gz");
     }
 
     #[test]

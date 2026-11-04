@@ -5,16 +5,19 @@ members = ["crates/*"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/parda21/cloofy"
 
 [workspace.dependencies]
+cloofy-core = { path = "crates/cloofy-core" }
 cloofy-spotify = { path = "crates/cloofy-spotify" }
+cloofy-ytmusic = { path = "crates/cloofy-ytmusic" }
 cloofy-player = { path = "crates/cloofy-player" }
-cloofy-tui = { path = "crates/cloofy-tui" }
+# Its services are features; the binary picks them.
+cloofy-tui = { path = "crates/cloofy-tui", default-features = false }
 cloofy-os = { path = "crates/cloofy-os" }
 
 # librespot-core 0.8 fails to build with vergen 9.1, so Cargo.lock pins vergen 9.0.6.
@@ -58,6 +61,8 @@ reqwest = { version = "0.13", features = ["json", "form", "query"] }
 security-framework = "3.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# SAPISIDHASH, the signature YouTube Music wants with cookie sign-ins.
+sha1 = "0.10"
 sha2 = "0.11"
 tachyonfx = "0.25"
 # Release archives only; the default features would also restore extended attributes.

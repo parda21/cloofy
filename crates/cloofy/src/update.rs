@@ -5,14 +5,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
-use cloofy_spotify::update;
+use anyhow::{Context, Result, bail};
+use cloofy_core::update;
 
 use crate::style;
 
 const BAR_WIDTH: usize = 30;
 
 pub async fn run() -> Result<()> {
+    let Some(variant) = cloofy_tui::VARIANT else {
+        bail!("This cloofy has no music service built in, so there is no release of it to update to.");
+    };
     let current = update::current_version();
     let release = update::latest().await.context("Couldn't ask GitHub for the latest release")?;
     println!();
@@ -22,11 +25,11 @@ pub async fn run() -> Result<()> {
     }
     println!("  {} cloofy {} is out, this is {current}", style::cyan("↑"), style::bold(release.version()));
     if let Some(manager) = update::PackageManager::of_running() {
-        println!("    {}\n", manager.how_to_update());
+        println!("    {}\n", manager.how_to_update(variant));
         return Ok(());
     }
     let mut progress = Progress::default();
-    let installed = update::install(&release, |done, total| progress.draw(done, total)).await;
+    let installed = update::install(&release, variant, |done, total| progress.draw(done, total)).await;
     progress.clear();
     let binary = installed?;
     println!("  {} Updated {}\n", style::green("✓"), style::dim(&binary.display().to_string()));

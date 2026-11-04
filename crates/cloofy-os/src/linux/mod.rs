@@ -1,8 +1,10 @@
 //! Linux speaks D-Bus: MPRIS for the media controls, logind for sleep and wake,
-//! power-profiles-daemon and the desktop's settings portal for the settings.
+//! power-profiles-daemon and the desktop's settings portal for the settings, and the
+//! notification server for notifications with a cover.
 
 mod bus;
 pub mod media;
+pub mod notifications;
 pub mod power;
 pub mod settings;
 

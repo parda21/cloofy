@@ -2,13 +2,15 @@
 
 use std::time::Duration;
 
-use cloofy_spotify::config;
+use cloofy_core::config;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::{App, COVER_SIZE, Focus, ImageSlot};
 use crate::{
+    backend,
+    commands::Command,
     preferences::{AccentChoice, Setting},
-    theme::DEFAULT_ACCENT,
+    theme,
     views::{SettingsView, View},
 };
 
@@ -35,9 +37,19 @@ impl App {
         self.zen = false;
         if !matches!(self.view, View::Settings(_)) {
             let id = self.next_id();
-            self.push_view(View::Settings(SettingsView::new(id)));
+            self.push_view(View::Settings(SettingsView::new(id, self.shown_settings())));
         }
         self.focus = Focus::Content;
+    }
+
+    /// The settings that mean something here; crossfade, say, only with a service that has it.
+    fn shown_settings(&self) -> Vec<Setting> {
+        let shown = |setting: &Setting| match setting {
+            Setting::Crossfade => self.loader.services().into_iter().any(backend::supports_crossfade),
+            Setting::UpdateCheck => self.offers(Command::Update),
+            _ => true,
+        };
+        Setting::all().filter(shown).collect()
     }
 
     pub(super) fn on_settings_key(&mut self, key: KeyEvent) {
@@ -65,8 +77,8 @@ impl App {
         self.prefs.step(setting, forward);
         match setting {
             Setting::Crossfade => {
-                if let Some(controller) = &self.controller {
-                    controller.set_crossfade(Duration::from_secs(self.prefs.crossfade));
+                for player in self.players.values() {
+                    player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
                 }
             }
             Setting::Covers if self.prefs.covers => {
@@ -76,14 +88,7 @@ impl App {
             }
             Setting::Covers => self.drop_covers(),
             Setting::Images => self.set_image_protocol(self.prefs.images),
-            Setting::Accent => {
-                let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(DEFAULT_ACCENT);
-                if self.settings.low_power {
-                    self.accent.jump(color);
-                } else {
-                    self.accent.set(color);
-                }
-            }
+            Setting::Accent => self.show_accent(),
             Setting::Icons => crate::icons::init(self.prefs.icons.config()),
             Setting::PowerSaving => self.settings = self.prefs.apply(self.system_settings),
             Setting::Notifications => {}
@@ -94,6 +99,24 @@ impl App {
             }
         }
         self.save_setting(setting);
+    }
+
+    /// Moves the accent to the color the setting, the cover or the palette gives it now.
+    fn show_accent(&mut self) {
+        let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
+        if self.settings.low_power {
+            self.accent.jump(color);
+        } else {
+            self.accent.set(color);
+        }
+    }
+
+    /// Draws with the system theme's `palette` from the next frame on. The accent goes along
+    /// where it comes from the palette, and the fixed ones adapt to a light background.
+    #[cfg(target_os = "linux")]
+    pub fn set_palette(&mut self, palette: theme::Palette) {
+        theme::set_palette(palette);
+        self.show_accent();
     }
 
     /// Writes `setting` to the config file. The demo keeps changes until it closes.
@@ -133,7 +156,7 @@ impl App {
         self.zen_cover_pending = None;
         self.cover_accent = None;
         if self.prefs.accent == AccentChoice::Cover {
-            self.accent.set(DEFAULT_ACCENT);
+            self.accent.set(theme::palette().accent);
         }
         crate::release_freed_memory();
     }

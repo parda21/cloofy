@@ -121,6 +121,12 @@ impl ImageTerminal {
         Self { picker, auto }
     }
 
+    /// Half blocks, without asking a terminal, for tests.
+    #[cfg(test)]
+    pub fn halfblocks() -> Self {
+        Self { picker: Picker::halfblocks(), auto: ProtocolType::Halfblocks }
+    }
+
     /// What `Auto` draws with in this terminal.
     pub fn auto(&self) -> ImageProtocol {
         ImageProtocol::of(self.auto)
