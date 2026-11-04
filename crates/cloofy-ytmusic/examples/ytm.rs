@@ -4,7 +4,7 @@
 //! cargo run -p cloofy-ytmusic --example ytm -- home
 //! cargo run -p cloofy-ytmusic --example ytm -- search daft punk
 //! cargo run -p cloofy-ytmusic --example ytm -- playlist|album|artist|radio|lyrics <uri>
-//! cargo run -p cloofy-ytmusic --example ytm -- suggest|tracks|saved|me|browsers|doctor …
+//! cargo run -p cloofy-ytmusic --example ytm -- suggest|tracks|saved|me|accounts|browsers|doctor …
 //! cargo run -p cloofy-ytmusic --example ytm -- play <uri> [--demo] [--ao=null …mpv options]
 //! cargo run -p cloofy-ytmusic --example ytm -- raw <endpoint> '<json body>' > response.json
 //! cargo run -p cloofy-ytmusic --example ytm -- capture <dir>
@@ -156,13 +156,18 @@ async fn main() -> Result<()> {
             }
         }
         "saved" => println!("{:?}", client.check_saved(rest).await?),
-        "me" => println!("{:?}", client.me().await?),
+        "me" => println!("{:?}\n{:?}", client.me().await?, client.account().await?),
         "browsers" => println!("{:#?}\ndefault: {:?}", auth::browsers(), auth::default_browser()),
         // Reads the default browser's sign-in without keeping it.
         "browser-sign-in" => {
             let mut browser = auth::default_browser().ok_or_else(|| anyhow::anyhow!("no default browser known"))?;
             match auth::from_browser(&paths, &mut browser).await? {
-                Some(sign_in) => println!("{} signed in as {:?}", browser.spec, sign_in.check().await?.name),
+                Some(sign_in) => {
+                    println!("{} is signed in to YouTube as:", browser.spec);
+                    for account in sign_in.accounts().await? {
+                        println!("  {}  {:?}", account.label(), account.identity);
+                    }
+                }
                 None => println!("{} isn't signed in to YouTube", browser.spec),
             }
         }

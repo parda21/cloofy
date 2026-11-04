@@ -3,6 +3,7 @@
 //! browsing and playing work without an account; liking and the library need the cookies of
 //! a browser that is signed in.
 
+mod account;
 pub mod auth;
 mod cookies;
 pub mod doctor;
@@ -30,11 +31,12 @@ use cloofy_core::{
 use futures::Stream;
 use serde_json::Value;
 
-use crate::{innertube::InnerTube, library::Library};
 pub use crate::{
+    account::{Account, Identity},
     link::{Playable, playable},
     player::Player,
 };
+use crate::{innertube::InnerTube, library::Library};
 
 /// What `tracks` lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +88,12 @@ impl YtMusic {
             return Ok(None);
         }
         library::me(&self.inner.api).await.map(Some)
+    }
+
+    /// Which of the browser's accounts the sign-in acts as, with its address; `None` when
+    /// signed out, or when YouTube no longer lists it.
+    pub async fn account(&self) -> Result<Option<Account>> {
+        account::current(&self.inner.api).await
     }
 
     /// The Home feed's shelves, as music.youtube.com shows them. Home items have no kind for

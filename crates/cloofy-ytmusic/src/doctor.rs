@@ -70,7 +70,11 @@ pub async fn innertube(client: &YtMusic) -> Section {
     ];
     let account = if client.signed_in() {
         timed("Signed in", Expect::Available, async {
-            let user = client.me().await?.map(|u| u.name).unwrap_or_default();
+            // The address tells a work and a private account of the same name apart.
+            let user = match client.account().await? {
+                Some(account) => account.label(),
+                None => client.me().await?.map(|u| u.name).unwrap_or_default(),
+            };
             let liked = client.liked_count().await?;
             Ok(format!("{user} · {liked} liked songs"))
         })

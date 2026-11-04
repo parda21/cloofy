@@ -1,7 +1,8 @@
 //! Signing in to YouTube Music with a browser's cookies. Google's sign-in for TV apps no longer
 //! works for YouTube Music, so cloofy borrows the session of a browser that is signed in:
 //! yt-dlp reads its cookies (it knows every browser's cookie store and keyring), and cloofy
-//! keeps only those of youtube.com.
+//! keeps only those of youtube.com. They sign in every Google account signed in to the
+//! browser, so the sign-in also keeps which one it acts as.
 
 use std::{
     fs,
@@ -14,7 +15,12 @@ use anyhow::{Context, Result, bail};
 use cloofy_core::{catalog::User, paths::Paths};
 use tokio::process::Command;
 
-use crate::{YtMusic, cookies::Jar, innertube, library};
+use crate::{
+    YtMusic,
+    account::{self, Account},
+    cookies::Jar,
+    innertube, library,
+};
 
 /// A browser yt-dlp can read cookies from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +105,11 @@ impl Known {
 /// YouTube's sign-in, which leads to YouTube Music afterwards.
 const SIGN_IN_URL: &str =
     "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fmusic.youtube.com%2F";
+/// Google's sign-in for one more account, as YouTube's "Add account" opens it: through
+/// YouTube's own sign-in, which gives youtube.com the new account's cookies, to YouTube Music.
+const ADD_ACCOUNT_URL: &str = "https://accounts.google.com/AddSession?service=youtube&passive=false&continue=\
+     https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26next%3D\
+     https%253A%252F%252Fmusic.youtube.com%252F";
 
 /// yt-dlp exports the cookies of every site; this many seconds is plenty for that.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -167,8 +178,15 @@ pub fn open_sign_in() -> bool {
     open::that_detached(SIGN_IN_URL).is_ok()
 }
 
+/// Opens Google's sign-in for one more account in the browser that opens links; whether it
+/// could.
+pub fn open_add_account() -> bool {
+    open::that_detached(ADD_ACCOUNT_URL).is_ok()
+}
+
 /// A sign-in read from a browser or pasted, not kept yet: it replaces the one before only once
-/// YouTube Music took it, so one that doesn't work leaves a working one in place.
+/// YouTube Music took it, so one that doesn't work leaves a working one in place. It acts as the
+/// browser's first account until `choose` picks another.
 pub struct SignIn {
     client: YtMusic,
 }
@@ -178,16 +196,28 @@ impl SignIn {
         Ok(Self { client: YtMusic::unsaved(jar)? })
     }
 
+    /// The accounts it can act as: each Google account signed in to the browser, in Google's
+    /// order, with its brand accounts. Fails when YouTube turns the cookies down.
+    pub async fn accounts(&self) -> Result<Vec<Account>> {
+        account::list(self.client.api()).await
+    }
+
+    /// Acts as `account` from now on, and once kept.
+    pub fn choose(&self, account: &Account) {
+        self.client.api().set_identity(account.identity.clone());
+    }
+
     /// Asks YouTube Music whose sign-in it is; fails when it turns the cookies down.
     pub async fn check(&self) -> Result<User> {
         library::me(self.client.api()).await
     }
 
-    /// Keeps it in place of the sign-in before, with the cookies YouTube refreshed meanwhile.
+    /// Keeps it in place of the sign-in before, with the account chosen and the cookies
+    /// YouTube refreshed meanwhile.
     pub fn save(self, paths: &Paths) -> Result<()> {
-        let jar = self.client.api().jar().context("No cookies to keep")?;
+        let text = self.client.api().sign_in_text().context("No cookies to keep")?;
         private_dir(paths)?;
-        save(paths, &jar)
+        paths.ytmusic_cookies().write(text.as_bytes())
     }
 }
 
@@ -294,10 +324,6 @@ pub fn sign_out(paths: &Paths) -> Result<()> {
     paths.ytmusic_cookies().delete()
 }
 
-fn save(paths: &Paths, jar: &Jar) -> Result<()> {
-    paths.ytmusic_cookies().write(jar.to_text().as_bytes())
-}
-
 /// The folder of the sign-in, readable by the user only.
 fn private_dir(paths: &Paths) -> Result<PathBuf> {
     let cookies = paths.ytmusic_cookies();
@@ -314,6 +340,7 @@ fn private_dir(paths: &Paths) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Identity;
 
     fn paths(name: &str) -> Paths {
         let root = std::env::temp_dir().join(format!("cloofy-ytm-{name}-{}", std::process::id()));
@@ -339,6 +366,7 @@ mod tests {
         }
         let client = crate::YtMusic::new(&paths).unwrap();
         assert!(client.signed_in());
+        assert_eq!(client.api().identity(), Some(Identity::default()), "the first account unless one was picked");
         // One that YouTube Music turned down is never saved, which leaves this one.
         drop(from_cookie_header("SAPISID=other; LOGIN_INFO=other").unwrap());
         assert_eq!(Jar::parse(&fs::read_to_string(&file).unwrap()).get("SAPISID"), Some("abc"));
@@ -347,6 +375,31 @@ mod tests {
         assert!(!crate::YtMusic::new(&paths).unwrap().signed_in());
         sign_out(&paths).unwrap();
         fs::remove_dir_all(paths.data.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_account_picked_is_kept_with_the_sign_in() {
+        let paths = paths("account");
+        let sign_in = from_cookie_header("SAPISID=abc; LOGIN_INFO=def").unwrap();
+        let brand = Identity { index: 1, page_id: Some("100000000000000000099".into()) };
+        sign_in.client.api().set_identity(brand.clone());
+        sign_in.save(&paths).unwrap();
+        let client = crate::YtMusic::new(&paths).unwrap();
+        assert_eq!(client.api().identity(), Some(brand));
+        assert_eq!(client.api().jar().unwrap().get("SAPISID"), Some("abc"));
+        fs::remove_dir_all(paths.data.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn adding_an_account_comes_back_to_youtube_music() {
+        let url = url::Url::parse(ADD_ACCOUNT_URL).unwrap();
+        assert_eq!(url.host_str(), Some("accounts.google.com"));
+        let query: std::collections::HashMap<_, _> = url.query_pairs().collect();
+        assert_eq!(query["service"], "youtube");
+        let next = url::Url::parse(&query["continue"]).unwrap();
+        assert_eq!(next.host_str(), Some("www.youtube.com"));
+        let next: std::collections::HashMap<_, _> = next.query_pairs().collect();
+        assert_eq!(next["next"], "https://music.youtube.com/");
     }
 
     #[test]

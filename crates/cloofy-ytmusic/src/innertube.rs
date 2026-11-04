@@ -1,6 +1,6 @@
 //! InnerTube, the API music.youtube.com itself talks to: JSON in, deeply nested renderers out.
-//! Signed out, every request is anonymous; signed in, it carries the browser's cookies and the
-//! SAPISIDHASH signature that goes with them.
+//! Signed out, every request is anonymous; signed in, it carries the browser's cookies, the
+//! SAPISIDHASH signature that goes with them, and which of the browser's accounts it acts as.
 
 use std::{
     sync::Mutex,
@@ -13,7 +13,10 @@ use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
-use crate::cookies::{self, Jar};
+use crate::{
+    account::Identity,
+    cookies::{self, Jar},
+};
 
 pub(crate) const ORIGIN: &str = "https://music.youtube.com";
 const HOST: &str = "music.youtube.com";
@@ -52,6 +55,7 @@ pub(crate) struct InnerTube {
 
 struct Auth {
     jar: Jar,
+    identity: Identity,
     /// Where the cookies are kept; `None` for a sign-in that isn't kept, or no longer is.
     store: Option<Stored>,
     dirty: bool,
@@ -67,15 +71,17 @@ struct Stored {
 impl InnerTube {
     pub fn new(store: Secret) -> Result<Self> {
         let auth = store.read()?.and_then(|bytes| {
-            let jar = Jar::parse(&String::from_utf8_lossy(&bytes));
-            signed_in(&jar).then(|| Auth::new(jar, Some(Stored { secret: store, bytes })))
+            let text = String::from_utf8_lossy(&bytes);
+            let (jar, identity) = (Jar::parse(&text), Identity::parse(&text));
+            signed_in(&jar).then(|| Auth::new(jar, identity, Some(Stored { secret: store, bytes })))
         });
         Self::with_auth(auth)
     }
 
-    /// Signed in with cookies that aren't kept, to try them before they are.
+    /// Signed in with cookies that aren't kept, to try them before they are. They act as the
+    /// browser's first account until `set_identity` picks another.
     pub fn unsaved(jar: Jar) -> Result<Self> {
-        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, None)))
+        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, Identity::default(), None)))
     }
 
     fn with_auth(auth: Option<Auth>) -> Result<Self> {
@@ -85,6 +91,21 @@ impl InnerTube {
 
     pub fn signed_in(&self) -> bool {
         self.auth.lock().unwrap().is_some()
+    }
+
+    /// The account the sign-in acts as; `None` signed out.
+    pub fn identity(&self) -> Option<Identity> {
+        self.auth.lock().unwrap().as_ref().map(|auth| auth.identity.clone())
+    }
+
+    /// Acts as another of the browser's accounts from now on, and keeps it with the cookies.
+    pub fn set_identity(&self, identity: Identity) {
+        if let Some(auth) = self.auth.lock().unwrap().as_mut() {
+            auth.dirty |= auth.identity != identity;
+            auth.identity = identity;
+        }
+        // The visitor YouTube gave the account before isn't this one's.
+        *self.visitor.lock().unwrap() = None;
     }
 
     /// Calls an endpoint, e.g. `browse` or `music/get_queue`, as the web client.
@@ -102,9 +123,24 @@ impl InnerTube {
     }
 
     pub async fn call_as(&self, kind: ClientKind, endpoint: &str, body: Value) -> Result<Value> {
+        self.call_with(kind, None, endpoint, body).await
+    }
+
+    /// Calls an endpoint as the web client, acting as `identity` for this request only.
+    pub async fn call_as_identity(&self, identity: &Identity, endpoint: &str, body: Value) -> Result<Value> {
+        self.call_with(ClientKind::Web, Some(identity), endpoint, body).await
+    }
+
+    async fn call_with(
+        &self,
+        kind: ClientKind,
+        identity: Option<&Identity>,
+        endpoint: &str,
+        body: Value,
+    ) -> Result<Value> {
         let mut attempt = 1;
         loop {
-            match self.request(kind, endpoint, &body).await {
+            match self.request(kind, identity, endpoint, &body).await {
                 Ok(value) => return Ok(value),
                 Err(Failure::Retry(err)) if attempt < MAX_ATTEMPTS => {
                     tracing::debug!("{endpoint}: {err:#}, trying again");
@@ -116,14 +152,21 @@ impl InnerTube {
         }
     }
 
-    async fn request(&self, kind: ClientKind, endpoint: &str, body: &Value) -> Result<Value, Failure> {
-        let mut payload = json!({ "context": self.context(kind) });
+    async fn request(
+        &self,
+        kind: ClientKind,
+        identity: Option<&Identity>,
+        endpoint: &str,
+        body: &Value,
+    ) -> Result<Value, Failure> {
+        let identity = identity.cloned().or_else(|| self.identity());
+        let mut payload = json!({ "context": self.context(kind, identity.as_ref()) });
         if let (Some(target), Some(extra)) = (payload.as_object_mut(), body.as_object()) {
             target.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         let url = format!("{API}{endpoint}?prettyPrint=false");
         let mut request = self.http.post(url).json(&payload).header("Referer", format!("{ORIGIN}/"));
-        for (name, value) in self.headers(kind) {
+        for (name, value) in self.headers(kind, identity.as_ref()) {
             request = request.header(name, value);
         }
         let response = request.send().await.map_err(|err| {
@@ -148,10 +191,9 @@ impl InnerTube {
         if value.is_null() {
             return Err(Failure::Retry(anyhow::anyhow!("YouTube Music sent no JSON ({endpoint})")));
         }
-        // The Android client's visitor is one of its own.
-        if let Some(visitor) =
-            value.pointer("/responseContext/visitorData").and_then(Value::as_str).filter(|_| kind == ClientKind::Web)
-        {
+        // The Android client's visitor is one of its own, as is that of another account.
+        let own = kind == ClientKind::Web && identity == self.identity();
+        if let Some(visitor) = value.pointer("/responseContext/visitorData").and_then(Value::as_str).filter(|_| own) {
             let mut current = self.visitor.lock().unwrap();
             if current.is_none() {
                 *current = Some(visitor.to_owned());
@@ -160,7 +202,7 @@ impl InnerTube {
         Ok(value)
     }
 
-    fn context(&self, kind: ClientKind) -> Value {
+    fn context(&self, kind: ClientKind, identity: Option<&Identity>) -> Value {
         let mut client = match kind {
             ClientKind::Web => json!({ "clientName": "WEB_REMIX", "clientVersion": self.version }),
             ClientKind::Android => json!({
@@ -178,10 +220,16 @@ impl InnerTube {
         if let Some(visitor) = self.visitor.lock().unwrap().as_deref() {
             client["visitorData"] = visitor.into();
         }
-        json!({ "client": client, "user": {} })
+        let mut user = json!({});
+        if let Some(page_id) = identity.and_then(|identity| identity.page_id.as_deref()) {
+            user["onBehalfOfUser"] = page_id.into();
+        }
+        json!({ "client": client, "user": user })
     }
 
-    fn headers(&self, kind: ClientKind) -> Vec<(&'static str, String)> {
+    /// The headers of a request acting as `identity`, which is the sign-in's own unless one is
+    /// asked for. Signed out, there is none.
+    fn headers(&self, kind: ClientKind, identity: Option<&Identity>) -> Vec<(&'static str, String)> {
         let mut headers = vec![("Origin", ORIGIN.to_owned()), ("X-Origin", ORIGIN.to_owned())];
         match kind {
             ClientKind::Web => {
@@ -203,7 +251,11 @@ impl InnerTube {
                 if let Some(sapisid) = sapisid(&auth.jar) {
                     headers.push(("Authorization", sapisid_hash(sapisid, unix_time(), ORIGIN)));
                 }
-                headers.push(("X-Goog-AuthUser", "0".into()));
+                let identity = identity.unwrap_or(&auth.identity);
+                headers.push(("X-Goog-AuthUser", identity.index.to_string()));
+                if let Some(page_id) = &identity.page_id {
+                    headers.push(("X-Goog-PageId", page_id.clone()));
+                }
             }
             // Accepts YouTube's cookie consent, which Europe would otherwise ask for first.
             None => headers.push(("Cookie", "SOCS=CAI".into())),
@@ -233,14 +285,26 @@ impl InnerTube {
     }
 
     /// The cookies as they are now, with what YouTube refreshed; `None` signed out.
+    #[cfg(test)]
     pub fn jar(&self) -> Option<Jar> {
         self.auth.lock().unwrap().as_ref().map(|auth| auth.jar.clone())
+    }
+
+    /// The sign-in as it is kept: the cookies as they are now, and the account they act as.
+    /// `None` signed out.
+    pub fn sign_in_text(&self) -> Option<String> {
+        self.auth.lock().unwrap().as_ref().map(Auth::text)
     }
 }
 
 impl Auth {
-    fn new(jar: Jar, store: Option<Stored>) -> Self {
-        Self { jar, store, dirty: false, saved: Instant::now() }
+    fn new(jar: Jar, identity: Identity, store: Option<Stored>) -> Self {
+        Self { jar, identity, store, dirty: false, saved: Instant::now() }
+    }
+
+    /// The `cookies.txt` it is kept as, with the account in comments at the end.
+    fn text(&self) -> String {
+        self.jar.to_text() + &self.identity.notes()
     }
 
     /// Writes the cookies back, unless the sign-in was replaced or removed since this client
@@ -249,6 +313,7 @@ impl Auth {
     fn save(&mut self) {
         self.dirty = false;
         self.saved = Instant::now();
+        let text = self.text().into_bytes();
         let Some(store) = &mut self.store else { return };
         match store.secret.read() {
             Ok(Some(bytes)) if bytes == store.bytes => {}
@@ -262,9 +327,8 @@ impl Auth {
                 return;
             }
         }
-        let bytes = self.jar.to_text().into_bytes();
-        match store.secret.write(&bytes) {
-            Ok(()) => store.bytes = bytes,
+        match store.secret.write(&text) {
+            Ok(()) => store.bytes = text,
             Err(err) => tracing::warn!("saving YouTube Music cookies: {err:#}"),
         }
     }
@@ -375,18 +439,54 @@ mod tests {
         cloofy_core::paths::write_private(&file, text.as_bytes()).unwrap();
         let api = InnerTube::new(Secret::File(file)).unwrap();
         assert!(api.signed_in());
-        let headers: std::collections::HashMap<_, _> = api.headers(ClientKind::Web).into_iter().collect();
+        let headers: std::collections::HashMap<_, _> = api.headers(ClientKind::Web, None).into_iter().collect();
         assert_eq!(headers["Cookie"], "SAPISID=synthetic/sapisid; LOGIN_INFO=synthetic-login");
         assert!(headers["Authorization"].starts_with("SAPISIDHASH "), "{}", headers["Authorization"]);
-        assert_eq!(headers["X-Goog-AuthUser"], "0");
+        assert_eq!(headers["X-Goog-AuthUser"], "0", "a sign-in without an account acts as the first");
+        assert!(!headers.contains_key("X-Goog-PageId"));
         assert_eq!(headers["Origin"], ORIGIN);
         std::fs::remove_dir_all(dir).unwrap();
 
         let signed_out = InnerTube::new(Secret::File(std::env::temp_dir().join("cloofy-no-such-file"))).unwrap();
         assert!(!signed_out.signed_in());
-        let headers: std::collections::HashMap<_, _> = signed_out.headers(ClientKind::Web).into_iter().collect();
+        let headers: std::collections::HashMap<_, _> = signed_out.headers(ClientKind::Web, None).into_iter().collect();
         assert_eq!(headers["Cookie"], "SOCS=CAI");
         assert!(!headers.contains_key("Authorization"));
+        assert!(!headers.contains_key("X-Goog-AuthUser"));
+    }
+
+    #[test]
+    fn requests_act_as_the_account_picked() {
+        let dir = std::env::temp_dir().join(format!("cloofy-ytm-identity-{}", std::process::id()));
+        let file = dir.join("cookies.txt");
+        let brand = Identity { index: 1, page_id: Some("100000000000000000099".into()) };
+        let text = Jar::from_header("SAPISID=a; LOGIN_INFO=b").to_text() + &brand.notes();
+        cloofy_core::paths::write_private(&file, text.as_bytes()).unwrap();
+        let api = InnerTube::new(Secret::File(file)).unwrap();
+        assert_eq!(api.identity(), Some(brand.clone()));
+        let headers: std::collections::HashMap<_, _> = api.headers(ClientKind::Web, None).into_iter().collect();
+        assert_eq!(headers["X-Goog-AuthUser"], "1");
+        assert_eq!(headers["X-Goog-PageId"], "100000000000000000099");
+        let context = api.context(ClientKind::Web, api.identity().as_ref());
+        assert_eq!(context["user"]["onBehalfOfUser"], "100000000000000000099");
+        // One request may ask as another account, which leaves the sign-in's as it is.
+        let other = Identity { index: 3, page_id: None };
+        let headers: std::collections::HashMap<_, _> = api.headers(ClientKind::Web, Some(&other)).into_iter().collect();
+        assert_eq!(headers["X-Goog-AuthUser"], "3");
+        assert!(!headers.contains_key("X-Goog-PageId"));
+        assert_eq!(api.context(ClientKind::Web, Some(&other))["user"], json!({}));
+        assert_eq!(api.identity(), Some(brand));
+        std::fs::remove_dir_all(dir).unwrap();
+
+        // A sign-in being tried acts as the first account until another is picked, and keeps it.
+        let api = InnerTube::unsaved(Jar::from_header("SAPISID=a; LOGIN_INFO=b")).unwrap();
+        assert_eq!(api.identity(), Some(Identity::default()));
+        api.set_identity(Identity { index: 2, page_id: None });
+        let headers: std::collections::HashMap<_, _> = api.headers(ClientKind::Web, None).into_iter().collect();
+        assert_eq!(headers["X-Goog-AuthUser"], "2");
+        let kept = api.sign_in_text().unwrap();
+        assert_eq!(Identity::parse(&kept), Identity { index: 2, page_id: None });
+        assert_eq!(Jar::parse(&kept).get("SAPISID"), Some("a"));
     }
 
     #[test]

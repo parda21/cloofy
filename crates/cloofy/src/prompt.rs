@@ -56,8 +56,13 @@ fn cancels(key: &KeyEvent) -> bool {
 /// Asks `question` with `items` below it; returns the index picked, `None` when cancelled. The
 /// list goes away afterwards, and the question stays with the answer.
 pub fn pick(question: &str, items: &[String]) -> Result<Option<usize>> {
+    pick_from(question, items, 0)
+}
+
+/// [`pick`] with the item at `selected` picked to begin with.
+pub fn pick_from(question: &str, items: &[String], selected: usize) -> Result<Option<usize>> {
     let mut out = std::io::stdout();
-    let mut selected = 0;
+    let mut selected = selected.min(items.len().saturating_sub(1));
     let draw = |out: &mut std::io::Stdout, selected: usize| -> Result<()> {
         write!(out, "\r\x1b[2K  {}\r\n", style::bold(question))?;
         for (index, item) in items.iter().enumerate() {
