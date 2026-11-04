@@ -1,0 +1,64 @@
+/* Starlight in cloofy's colors: the dark of the app, its pink-to-violet wordmark, and
+   JetBrains Mono for what reads like the terminal. */
+
+:root {
+	--sl-font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+	--sl-text-h1: 2.25rem;
+	--cloofy-pink: #ff8fb1;
+	--cloofy-violet: #8b5cf6;
+}
+
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #2a1c4a;
+	--sl-color-accent: #8b5cf6;
+	--sl-color-accent-high: #d9ccff;
+	--sl-color-white: #ececf1;
+	--sl-color-gray-1: #dcdce4;
+	--sl-color-gray-2: #b4b4c0;
+	--sl-color-gray-3: #8c8c98;
+	--sl-color-gray-4: #4e4e58;
+	--sl-color-gray-5: #2c2a38;
+	--sl-color-gray-6: #1a1824;
+	--sl-color-black: #0d0b14;
+	--sl-color-bg-nav: #110e1b;
+	--sl-color-bg-sidebar: #0f0c18;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #ece6ff;
+	--sl-color-accent: #6d3fe0;
+	--sl-color-accent-high: #3b1d8f;
+}
+
+.site-title img {
+	height: 1.35rem;
+	width: auto;
+}
+
+h1,
+h2,
+h3,
+.sl-markdown-content h4 {
+	font-family: var(--sl-font-mono);
+	letter-spacing: -0.02em;
+}
+
+/* Keys as small keycaps, as the README draws them. */
+kbd {
+	font-family: var(--sl-font-mono);
+	font-size: 0.8em;
+	padding: 0.1em 0.45em;
+	border: 1px solid var(--sl-color-gray-5);
+	border-bottom-width: 2px;
+	border-radius: 0.3em;
+	background: var(--sl-color-gray-6);
+	white-space: nowrap;
+}
+
+.sl-markdown-content img {
+	border-radius: 0.6rem;
+}
+
+.sl-markdown-content table code {
+	white-space: nowrap;
+}

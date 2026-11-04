@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> · <a href="#setup">Setup</a> · <a href="#keys">Keys</a> · <a href="#omarchy">Omarchy</a> · <a href="#faq">FAQ</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="https://cloofy.app">cloofy.app</a> · <a href="https://cloofy.app/docs/">Docs</a> · <a href="#install">Install</a> · <a href="#setup">Setup</a> · <a href="#keys">Keys</a> · <a href="#omarchy">Omarchy</a> · <a href="#faq">FAQ</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
@@ -83,7 +83,7 @@ The demo opens the full interface with a sample library: real albums and artists
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
+curl -fsSL https://cloofy.app/install.sh | bash
 ```
 
 The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's [bar widget, theme, menu entries and launcher](#omarchy). Run it again to switch; cloofy offers new releases itself, see [updates](#updates).

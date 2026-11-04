@@ -1,0 +1,47 @@
+name: Website
+
+# cloofy.app: builds with every change to the site, and deploys from main to Cloudflare.
+on:
+  pull_request:
+    paths: ["website/**", ".github/workflows/website.yml"]
+  push:
+    branches: [main]
+    paths: ["website/**", ".github/workflows/website.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build and deploy
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # Until the repository has the secret, the site is only built here, and deployed by hand
+      # with `npm run deploy`. The token needs Workers Scripts: Edit on the account and
+      # Workers Routes: Edit on the cloofy.app zone.
+      - name: Deploy to cloofy.app
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::notice::No CLOUDFLARE_API_TOKEN secret, so the website was built but not deployed."
+            exit 0
+          fi
+          npx wrangler deploy

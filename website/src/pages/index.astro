@@ -1,0 +1,890 @@
+---
+import '@fontsource-variable/jetbrains-mono';
+import { Icon } from '@astrojs/starlight/components';
+
+const repo = 'https://github.com/parda21/cloofy';
+const install = 'curl -fsSL https://cloofy.app/install.sh | bash';
+const title = 'cloofy · Spotify and YouTube Music in your terminal';
+const description =
+	'cloofy plays Spotify and YouTube Music in the terminal: Home, your library, synced lyrics, real cover art and a mouse that works everywhere. One of them, or both side by side.';
+
+const features = [
+	{ glyph: '▶', title: 'Plays on its own', text: 'No official app in the background. Spotify plays through librespot, as a Spotify Connect device; YouTube Music through mpv, gapless.' },
+	{ glyph: '⇄', title: 'Both, side by side', text: 'Install one service or both. S or the switch in the top bar shows the other one, just as you left it.' },
+	{ glyph: '♪', title: 'YouTube Music, no account', text: 'Home, search, every page, lyrics and song radios work signed out. Sign in with your browser for your library.' },
+	{ glyph: '✦', title: 'Home and the DJ', text: 'Your shelves and mixes, and on Spotify Made For You and the DJ, with its voice between tracks. Ask it for something.' },
+	{ glyph: '¶', title: 'Synced lyrics', text: 'The current line lights up next to a large cover, line by line, in the now-playing view.' },
+	{ glyph: '▣', title: 'Real cover art', text: 'Images through the Kitty, Sixel or iTerm2 protocol, and block art in every other terminal.' },
+	{ glyph: '⌘', title: 'Mouse and keyboard', text: 'Click, hover, scroll, drag the seek bar. Every action has a key, and Ctrl K finds the rest.' },
+	{ glyph: '⌂', title: 'At home on your system', text: 'Media keys and media controls on macOS and Linux, sleep and wake, less motion when the system asks for it.' },
+];
+
+const builds = {
+	spotify: { brew: 'cloofy', mise: 'spotify', aur: 'cloofy-bin', cargo: '--no-default-features --features spotify' },
+	ytmusic: { brew: 'cloofy-ytmusic', mise: 'ytmusic', aur: 'cloofy-ytmusic-bin', cargo: '--no-default-features --features ytmusic' },
+	both: { brew: 'cloofy-full', mise: 'full', aur: 'cloofy-full-bin', cargo: '' },
+};
+const commands = (b: (typeof builds)['ytmusic']) => ({
+	brew: `brew install parda21/cloofy/${b.brew}`,
+	mise: `mise use -g 'github:parda21/cloofy[matching=${b.mise}]'`,
+	aur: `curl -L -o PKGBUILD https://github.com/parda21/cloofy/releases/latest/download/${b.aur}.PKGBUILD && makepkg -si`,
+	cargo: `cargo install --git https://github.com/parda21/cloofy --locked cloofy ${b.cargo}`.trim(),
+});
+const managers = [
+	{ id: 'brew', label: 'Homebrew' },
+	{ id: 'mise', label: 'mise' },
+	{ id: 'aur', label: 'Arch Linux' },
+	{ id: 'cargo', label: 'Cargo' },
+] as const;
+const initial = commands(builds.ytmusic);
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>{title}</title>
+		<meta name="description" content={description} />
+		<link rel="canonical" href="https://cloofy.app/" />
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<meta name="theme-color" content="#0a0911" />
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://cloofy.app/" />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:image" content="https://cloofy.app/og.png" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<link rel="preload" as="image" href="/screenshots/hero.webp" fetchpriority="high" />
+	</head>
+	<body>
+		<header class="nav">
+			<a class="nav-logo" href="/" aria-label="cloofy home"><img src="/logo.svg" alt="cloofy" width="84" height="20" /></a>
+			<nav>
+				<a href="/docs/">Docs</a>
+				<a href="#install">Install</a>
+				<a href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
+				<a class="nav-icon" href={repo} aria-label="cloofy on GitHub"><Icon name="github" size="1.15rem" /></a>
+				<a class="button small" href="#install">Install</a>
+			</nav>
+		</header>
+
+		<main>
+			<section class="hero">
+				<canvas id="field" aria-hidden="true"></canvas>
+				<div class="hero-inner">
+					<a class="pill" href="/docs/youtube-music/">New in 0.5 · YouTube Music, side by side with Spotify <span aria-hidden="true">→</span></a>
+					<h1 class="wordmark"><img src="/logo.svg" alt="cloofy" width="504" height="120" /></h1>
+					<p class="tagline">Spotify and YouTube Music<br />in your terminal.</p>
+					<p class="sub">
+						It plays the music itself. Home, your library, synced lyrics, real cover art,<br class="wide" /> and a mouse that works everywhere.
+					</p>
+					<div class="command" data-copy={install}>
+						<span class="prompt" aria-hidden="true">$</span>
+						<code>{install}</code>
+						<button class="copy" type="button" aria-label="Copy the install command">Copy</button>
+					</div>
+					<div class="actions">
+						<a class="button" href="/docs/">Read the docs</a>
+						<a class="button ghost" href="#look"><span aria-hidden="true">▶</span> See it in action</a>
+					</div>
+					<p class="platforms">macOS and Linux · Homebrew, mise and Arch Linux too · MIT</p>
+				</div>
+			</section>
+
+			<section class="screen" id="look">
+				<img
+					src="/screenshots/hero.webp"
+					width="1400"
+					height="932"
+					alt="cloofy in a terminal: the Home page with cover art, a playlist with the playing song, and the now-playing view with synced lyrics"
+				/>
+				<p class="caption">Recorded from <code>cloofy demo</code>, which needs no account and plays nothing. Try it in your own terminal.</p>
+			</section>
+
+			<section class="section">
+				<h2>Everything you'd miss from the app.</h2>
+				<p class="section-sub">It looks and works like the desktop client you know. Just in your terminal.</p>
+				<div class="features">
+					{
+						features.map((f) => (
+							<article class="feature">
+								<span class="glyph" aria-hidden="true">{f.glyph}</span>
+								<h3>{f.title}</h3>
+								<p>{f.text}</p>
+							</article>
+						))
+					}
+				</div>
+			</section>
+
+			<section class="section split">
+				<div class="split-text">
+					<h2>Now playing, with lyrics in time.</h2>
+					<p>
+						<kbd>z</kbd> opens the track in full: a large cover, and lyrics that follow the song line by line. From Spotify, from YouTube Music, or from
+						LRCLIB where they have none.
+					</p>
+				</div>
+				<img class="shot" src="/screenshots/nowplaying.webp" width="1400" height="932" loading="lazy" alt="The now-playing view: a large album cover, and synced lyrics with the current line lit" />
+			</section>
+
+			<section class="section">
+				<h2>Every page you know.</h2>
+				<p class="section-sub">Playlists and albums with the playing song marked, artist pages, search with covers, and your whole library as a grid.</p>
+				<div class="gallery">
+					<img class="shot" src="/screenshots/playlist.webp" width="1400" height="932" loading="lazy" alt="A playlist page with its mosaic cover, Play and Shuffle buttons, and the track list" />
+					<img class="shot" src="/screenshots/artist.webp" width="1400" height="932" loading="lazy" alt="An artist page with a round portrait, monthly listeners, and the popular tracks" />
+					<img class="shot" src="/screenshots/search.webp" width="1400" height="932" loading="lazy" alt="Search results with album covers" />
+					<img class="shot" src="/screenshots/library.webp" width="1400" height="932" loading="lazy" alt="The library as a full page: a grid of playlist covers with filter tabs" />
+				</div>
+			</section>
+
+			<section class="section split reverse">
+				<div class="split-text">
+					<h2>A key for everything. Or a click.</h2>
+					<p>
+						<kbd>Ctrl</kbd> <kbd>K</kbd> opens a command palette for every action and playlist, <kbd>?</kbd> lists all keys, and the hint bar shows what works
+						on the current page. All of it works with the mouse too.
+					</p>
+					<a class="more" href="/docs/keys/">All shortcuts →</a>
+				</div>
+				<img class="shot" src="/screenshots/palette.webp" width="1400" height="932" loading="lazy" alt="The command palette open over Home, listing actions with their keys" />
+			</section>
+
+			<section class="section">
+				<h2>Two services. One player.</h2>
+				<p class="section-sub">Install one, or both. Each build carries only the service it's for.</p>
+				<div class="services">
+					<article class="service">
+						<h3><span class="dot spotify"></span>Spotify</h3>
+						<ul>
+							<li>Plays through librespot, as a Spotify Connect device you pick from your phone</li>
+							<li>Controls your other devices, and follows them live</li>
+							<li>The DJ, with its voice between tracks; ask it for something</li>
+							<li>Made For You, podcasts and crossfade</li>
+							<li>Needs Premium and a free developer app, which the installer sets up with you</li>
+						</ul>
+						<a class="more" href="/docs/spotify/">Set up Spotify →</a>
+					</article>
+					<article class="service">
+						<h3><span class="dot ytmusic"></span>YouTube Music</h3>
+						<ul>
+							<li>Plays through mpv, with streams from yt-dlp, without a gap between songs</li>
+							<li>Home, search, pages, lyrics and radios without an account</li>
+							<li>Sign in with your browser for your playlists, albums, artists and likes</li>
+							<li>Pick the Google account by its address, brand accounts too</li>
+							<li>The radio of the last song follows a playlist, as on YouTube Music</li>
+						</ul>
+						<a class="more" href="/docs/youtube-music/">Set up YouTube Music →</a>
+					</article>
+				</div>
+			</section>
+
+			<section class="section split">
+				<div class="split-text">
+					<h2>At home on Omarchy.</h2>
+					<p>On <a href="https://omarchy.org">Omarchy</a>, cloofy takes its colors from the theme and follows it when you switch. One command adds the rest:</p>
+					<ul class="checks">
+						<li>A bar widget next to the clock, with the song, a small equalizer and a card with the controls</li>
+						<li>Music in the Omarchy menu, and cloofy in the launcher</li>
+						<li>Super+Shift+M opens cloofy instead of Spotify, if you like</li>
+						<li>Song notifications from the desktop, with the cover</li>
+					</ul>
+					<a class="more" href="/docs/omarchy/">cloofy on Omarchy →</a>
+				</div>
+				<div class="terminal" aria-label="Setting up cloofy in Omarchy">
+					<div class="terminal-bar"><span></span><span></span><span></span></div>
+					<pre><code><span class="dim">$</span> cloofy omarchy install
+
+  cloofy for Omarchy
+
+  <span class="ok">✓</span>  Bar widget      cloofy.nowplaying, in the bar
+  <span class="ok">✓</span>  Theme           follows everforest
+  <span class="ok">✓</span>  Menu            Music in the Omarchy menu
+  <span class="ok">✓</span>  Launcher        cloofy in the app launcher
+  <span class="ok">✓</span>  Super+Shift+M   opens cloofy</code></pre>
+				</div>
+			</section>
+
+			<section class="section install" id="install">
+				<h2>Install in a minute.</h2>
+				<p class="section-sub">
+					The installer asks what you listen to, puts the build in <code>~/.local/bin</code> and walks you through the setup, on Omarchy too.
+				</p>
+				<div class="command large" data-copy={install}>
+					<span class="prompt" aria-hidden="true">$</span>
+					<code>{install}</code>
+					<button class="copy" type="button" aria-label="Copy the install command">Copy</button>
+				</div>
+
+				<div class="managers" data-commands={JSON.stringify(Object.fromEntries(Object.entries(builds).map(([k, b]) => [k, commands(b)])))}>
+					<p class="or">Or with a package manager, for</p>
+					<div class="toggle" role="radiogroup" aria-label="Services">
+						<button type="button" role="radio" aria-checked="false" data-build="spotify">Spotify</button>
+						<button type="button" role="radio" aria-checked="true" data-build="ytmusic">YouTube Music</button>
+						<button type="button" role="radio" aria-checked="false" data-build="both">Both</button>
+					</div>
+					<div class="tabs" role="tablist">
+						{
+							managers.map((m, i) => (
+								<button type="button" role="tab" aria-selected={i === 0 ? 'true' : 'false'} data-tab={m.id}>
+									{m.label}
+								</button>
+							))
+						}
+					</div>
+					<div class="command" data-copy={initial.brew}>
+						<span class="prompt" aria-hidden="true">$</span>
+						<code>{initial.brew}</code>
+						<button class="copy" type="button" aria-label="Copy the command">Copy</button>
+					</div>
+					<p class="note">More in the <a href="/docs/install/">install guide</a>: installer options, building from source, uninstalling.</p>
+				</div>
+			</section>
+
+			<section class="section faq">
+				<h2>Questions.</h2>
+				<details>
+					<summary>Do I need Premium?</summary>
+					<p>For Spotify, yes: outside its own apps, Spotify streams only to Premium accounts. For YouTube Music, no: it plays without any account, and signing in only adds your library.</p>
+				</details>
+				<details>
+					<summary>Why do I need my own Spotify app?</summary>
+					<p>Spotify gives its Web API only to registered apps, and apps in development mode are limited to a handful of users. Yours is free and only yours, and the installer sets it up with you in about two minutes.</p>
+				</details>
+				<details>
+					<summary>Is signing in with my browser's cookies safe?</summary>
+					<p>cloofy keeps only youtube.com's cookies, in a file only you can read, or in the macOS Keychain, and sends them only to music.youtube.com. Streams, covers and lyrics load without them. <code>cloofy logout ytmusic</code> deletes them.</p>
+				</details>
+				<details>
+					<summary>What does cloofy send where?</summary>
+					<p>Requests to the services you use, to LRCLIB for lyrics they don't have, and to GitHub for new releases. No telemetry, no server of its own.</p>
+				</details>
+				<a class="more" href="/docs/faq/">More questions →</a>
+			</section>
+		</main>
+
+		<footer class="footer">
+			<img src="/logo.svg" alt="cloofy" width="84" height="20" />
+			<nav>
+				<a href="/docs/">Docs</a>
+				<a href="/docs/install/">Install</a>
+				<a href="/docs/troubleshooting/">Troubleshooting</a>
+				<a href={`${repo}/blob/main/CHANGELOG.md`}>Changelog</a>
+				<a href={repo}>GitHub</a>
+			</nav>
+			<p>
+				cloofy is not affiliated with Spotify or YouTube. <a href={`${repo}/blob/main/LICENSE`}>MIT</a> licensed. Built with
+				<a href="https://ratatui.rs">ratatui</a>, <a href="https://github.com/librespot-org/librespot">librespot</a>, <a href="https://mpv.io">mpv</a> and
+				<a href="https://github.com/yt-dlp/yt-dlp">yt-dlp</a>.
+			</p>
+			<p class="quip">Was this made with the help of AI? Yes. Do I care, as long as it works? No.</p>
+		</footer>
+
+		<script>
+			import { startField } from '../scripts/field';
+
+			const field = document.getElementById('field');
+			if (field instanceof HTMLCanvasElement) startField(field);
+
+			for (const box of document.querySelectorAll<HTMLElement>('.command')) {
+				const button = box.querySelector('button');
+				button?.addEventListener('click', async () => {
+					await navigator.clipboard.writeText(box.dataset.copy ?? '');
+					button.textContent = 'Copied';
+					setTimeout(() => (button.textContent = 'Copy'), 1600);
+				});
+			}
+
+			const managers = document.querySelector<HTMLElement>('.managers');
+			if (managers) {
+				const all = JSON.parse(managers.dataset.commands ?? '{}');
+				const box = managers.querySelector<HTMLElement>('.command')!;
+				let build = 'ytmusic';
+				let tab = 'brew';
+				const show = () => {
+					const command = all[build][tab];
+					box.dataset.copy = command;
+					box.querySelector('code')!.textContent = command;
+					for (const b of managers.querySelectorAll<HTMLElement>('[data-build]')) b.setAttribute('aria-checked', String(b.dataset.build === build));
+					for (const t of managers.querySelectorAll<HTMLElement>('[data-tab]')) t.setAttribute('aria-selected', String(t.dataset.tab === tab));
+				};
+				managers.addEventListener('click', (event) => {
+					const target = (event.target as HTMLElement).closest<HTMLElement>('[data-build], [data-tab]');
+					if (!target) return;
+					build = target.dataset.build ?? build;
+					tab = target.dataset.tab ?? tab;
+					show();
+				});
+			}
+		</script>
+
+		<style is:global>
+			:root {
+				--bg: #0a0911;
+				--surface: #12101c;
+				--raised: #1b1828;
+				--border: rgba(255, 255, 255, 0.08);
+				--text: #ececf1;
+				--muted: #9a98a8;
+				--faint: #5e5c6c;
+				--pink: #ff8fb1;
+				--violet: #8b5cf6;
+				--green: #1ed760;
+				--mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+				--sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+				color-scheme: dark;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			html {
+				scroll-behavior: smooth;
+			}
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--text);
+				font-family: var(--sans);
+				font-size: 16px;
+				line-height: 1.6;
+				-webkit-font-smoothing: antialiased;
+			}
+			a {
+				color: inherit;
+			}
+			code,
+			kbd,
+			pre {
+				font-family: var(--mono);
+			}
+			kbd {
+				font-size: 0.8em;
+				padding: 0.1em 0.45em;
+				border: 1px solid #2c2a38;
+				border-bottom-width: 2px;
+				border-radius: 0.3em;
+				background: var(--raised);
+			}
+			h1,
+			h2,
+			h3 {
+				font-family: var(--mono);
+				letter-spacing: -0.03em;
+				line-height: 1.15;
+			}
+
+			.nav {
+				position: fixed;
+				inset: 0 0 auto;
+				z-index: 10;
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 0.9rem clamp(1rem, 4vw, 2.5rem);
+				background: linear-gradient(to bottom, rgba(10, 9, 17, 0.85), rgba(10, 9, 17, 0));
+				backdrop-filter: blur(6px);
+			}
+			.nav-logo img {
+				display: block;
+				height: 20px;
+				width: auto;
+			}
+			.nav nav {
+				display: flex;
+				align-items: center;
+				gap: clamp(0.8rem, 2.5vw, 1.6rem);
+				font-family: var(--mono);
+				font-size: 0.85rem;
+			}
+			.nav nav a {
+				text-decoration: none;
+				color: var(--muted);
+				transition: color 0.15s;
+			}
+			.nav nav a:hover {
+				color: var(--text);
+			}
+			.nav-icon {
+				display: flex;
+			}
+
+			.button {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.5rem;
+				padding: 0.7rem 1.2rem;
+				border-radius: 0.5rem;
+				font-family: var(--mono);
+				font-size: 0.9rem;
+				font-weight: 600;
+				text-decoration: none;
+				color: #fff !important;
+				background: linear-gradient(90deg, #e86a9a, var(--violet));
+				border: 1px solid transparent;
+				transition:
+					transform 0.15s,
+					box-shadow 0.15s;
+			}
+			.button:hover {
+				transform: translateY(-1px);
+				box-shadow: 0 8px 30px rgba(139, 92, 246, 0.35);
+			}
+			.button.small {
+				padding: 0.4rem 0.8rem;
+				font-size: 0.8rem;
+			}
+			.button.ghost {
+				background: rgba(18, 16, 28, 0.7);
+				border-color: rgba(139, 92, 246, 0.5);
+			}
+
+			.hero {
+				position: relative;
+				min-height: 100vh;
+				min-height: 100svh;
+				display: grid;
+				place-items: center;
+				overflow: hidden;
+				isolation: isolate;
+				background: radial-gradient(ellipse 80% 60% at 50% 35%, rgba(76, 40, 140, 0.28), transparent 70%), var(--bg);
+			}
+			#field {
+				position: absolute;
+				inset: 0;
+				width: 100%;
+				height: 100%;
+				z-index: -1;
+			}
+			.hero-inner {
+				width: 100%;
+				min-width: 0;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				text-align: center;
+				padding: 7rem 1.25rem 9rem;
+				max-width: 52rem;
+			}
+			.pill {
+				font-family: var(--mono);
+				font-size: 0.78rem;
+				text-decoration: none;
+				color: #cdbcff;
+				padding: 0.35rem 0.85rem;
+				border: 1px solid rgba(139, 92, 246, 0.45);
+				border-radius: 0.4rem;
+				background: rgba(18, 16, 28, 0.75);
+				margin-bottom: 2.2rem;
+				transition: border-color 0.15s;
+			}
+			.pill:hover {
+				border-color: var(--pink);
+			}
+			.wordmark {
+				margin: 0;
+			}
+			.wordmark img {
+				display: block;
+				width: min(30rem, 78vw);
+				height: auto;
+				image-rendering: pixelated;
+				filter: drop-shadow(0 0.35rem 0 #3a1f7a) drop-shadow(0 1.2rem 2.5rem rgba(139, 92, 246, 0.35));
+			}
+			.tagline {
+				font-family: var(--mono);
+				font-size: clamp(1.25rem, 3.2vw, 1.75rem);
+				font-weight: 600;
+				line-height: 1.3;
+				letter-spacing: -0.02em;
+				margin: 2.4rem 0 0.8rem;
+				color: #ffd8e4;
+			}
+			.sub {
+				color: var(--muted);
+				font-size: 1.02rem;
+				margin: 0 0 2rem;
+			}
+			.command {
+				display: flex;
+				align-items: center;
+				gap: 0.8rem;
+				width: min(100%, 36rem);
+				padding: 0.75rem 0.75rem 0.75rem 1.1rem;
+				border: 1px solid rgba(139, 92, 246, 0.35);
+				border-radius: 0.6rem;
+				background: rgba(14, 12, 22, 0.88);
+				text-align: left;
+			}
+			.command .prompt {
+				color: var(--pink);
+				font-family: var(--mono);
+			}
+			.command code {
+				flex: 1;
+				min-width: 0;
+				overflow-x: auto;
+				white-space: nowrap;
+				font-size: 0.88rem;
+				scrollbar-width: none;
+			}
+			.copy {
+				font-family: var(--mono);
+				font-size: 0.75rem;
+				color: var(--text);
+				background: var(--raised);
+				border: 1px solid var(--border);
+				border-radius: 0.4rem;
+				padding: 0.35rem 0.7rem;
+				cursor: pointer;
+			}
+			.copy:hover {
+				border-color: var(--violet);
+			}
+			.actions {
+				display: flex;
+				flex-wrap: wrap;
+				justify-content: center;
+				gap: 0.8rem;
+				margin-top: 1.4rem;
+			}
+			.platforms {
+				margin-top: 1.6rem;
+				font-family: var(--mono);
+				font-size: 0.75rem;
+				color: var(--faint);
+			}
+
+			.screen {
+				position: relative;
+				max-width: 72rem;
+				margin: -6rem auto 0;
+				padding: 0 1.25rem;
+				text-align: center;
+			}
+			.screen img {
+				display: block;
+				width: 100%;
+				height: auto;
+				border-radius: 1rem;
+				border: 1px solid var(--border);
+				box-shadow:
+					0 40px 120px rgba(0, 0, 0, 0.6),
+					0 0 0 1px rgba(139, 92, 246, 0.12);
+			}
+			.caption {
+				color: var(--faint);
+				font-size: 0.85rem;
+				margin-top: 1rem;
+			}
+
+			.section {
+				max-width: 72rem;
+				margin: 0 auto;
+				padding: clamp(4rem, 9vw, 7rem) 1.25rem 0;
+			}
+			.section h2 {
+				font-size: clamp(1.6rem, 4vw, 2.4rem);
+				margin: 0 0 0.6rem;
+			}
+			.section-sub {
+				color: var(--muted);
+				margin: 0 0 2.5rem;
+				max-width: 40rem;
+			}
+			.features {
+				display: grid;
+				grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+				gap: 1rem;
+			}
+			.feature {
+				padding: 1.4rem;
+				border: 1px solid var(--border);
+				border-radius: 0.8rem;
+				background: linear-gradient(180deg, var(--surface), rgba(18, 16, 28, 0.4));
+				transition: border-color 0.2s;
+			}
+			.feature:hover {
+				border-color: rgba(139, 92, 246, 0.45);
+			}
+			.feature h3 {
+				font-size: 1rem;
+				margin: 0.9rem 0 0.4rem;
+			}
+			.feature p {
+				color: var(--muted);
+				font-size: 0.92rem;
+				margin: 0;
+			}
+			.glyph {
+				display: grid;
+				place-items: center;
+				width: 2.2rem;
+				height: 2.2rem;
+				border-radius: 0.5rem;
+				font-family: var(--mono);
+				color: #fff;
+				background: linear-gradient(135deg, rgba(255, 143, 177, 0.3), rgba(139, 92, 246, 0.3));
+				border: 1px solid rgba(139, 92, 246, 0.4);
+			}
+
+			.split {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+				gap: clamp(2rem, 5vw, 4rem);
+				align-items: center;
+			}
+			.split.reverse {
+				grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+			}
+			.split.reverse .split-text {
+				order: 2;
+			}
+			.split-text p {
+				color: var(--muted);
+			}
+			.shot {
+				display: block;
+				width: 100%;
+				height: auto;
+				border-radius: 0.9rem;
+				border: 1px solid var(--border);
+				box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+			}
+			.gallery {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 1rem;
+			}
+			.more {
+				display: inline-block;
+				margin-top: 0.6rem;
+				font-family: var(--mono);
+				font-size: 0.88rem;
+				color: #cdbcff;
+				text-decoration: none;
+			}
+			.more:hover {
+				color: var(--pink);
+			}
+
+			.services {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+				gap: 1rem;
+			}
+			.service {
+				padding: 1.8rem;
+				border: 1px solid var(--border);
+				border-radius: 0.9rem;
+				background: var(--surface);
+			}
+			.service h3 {
+				display: flex;
+				align-items: center;
+				gap: 0.6rem;
+				margin: 0 0 1rem;
+				font-size: 1.15rem;
+			}
+			.service ul,
+			.checks {
+				margin: 0 0 1rem;
+				padding: 0;
+				list-style: none;
+				color: var(--muted);
+				font-size: 0.95rem;
+			}
+			.service li,
+			.checks li {
+				position: relative;
+				padding-left: 1.4rem;
+				margin: 0.45rem 0;
+			}
+			.service li::before,
+			.checks li::before {
+				content: '▪';
+				position: absolute;
+				left: 0;
+				color: var(--violet);
+			}
+			.dot {
+				width: 0.7rem;
+				height: 0.7rem;
+				border-radius: 0.15rem;
+			}
+			.dot.spotify {
+				background: var(--green);
+			}
+			.dot.ytmusic {
+				background: #ff3b3b;
+			}
+
+			.terminal {
+				border: 1px solid var(--border);
+				border-radius: 0.9rem;
+				background: #0e0c16;
+				overflow: hidden;
+				box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+			}
+			.terminal-bar {
+				display: flex;
+				gap: 0.45rem;
+				padding: 0.8rem 1rem;
+				border-bottom: 1px solid var(--border);
+			}
+			.terminal-bar span {
+				width: 0.7rem;
+				height: 0.7rem;
+				border-radius: 50%;
+				background: #2c2a38;
+			}
+			.terminal pre {
+				margin: 0;
+				padding: 1.2rem 1.4rem 1.6rem;
+				overflow-x: auto;
+				font-size: 0.85rem;
+				line-height: 1.7;
+			}
+			.terminal .dim {
+				color: var(--pink);
+			}
+			.terminal .ok {
+				color: var(--green);
+			}
+
+			.install .command.large {
+				width: min(100%, 44rem);
+				padding: 1rem 1rem 1rem 1.3rem;
+			}
+			.install .command.large code {
+				font-size: 1rem;
+			}
+			.managers {
+				margin-top: 2.5rem;
+				max-width: 44rem;
+			}
+			.or {
+				color: var(--muted);
+				margin: 0 0 0.8rem;
+			}
+			.toggle,
+			.tabs {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin-bottom: 0.8rem;
+			}
+			.toggle button,
+			.tabs button {
+				font-family: var(--mono);
+				font-size: 0.8rem;
+				color: var(--muted);
+				background: transparent;
+				border: 1px solid var(--border);
+				border-radius: 0.4rem;
+				padding: 0.4rem 0.8rem;
+				cursor: pointer;
+			}
+			.toggle button[aria-checked='true'] {
+				color: #fff;
+				border-color: var(--violet);
+				background: rgba(139, 92, 246, 0.18);
+			}
+			.tabs button[aria-selected='true'] {
+				color: #fff;
+				border-color: var(--pink);
+			}
+			.note {
+				color: var(--faint);
+				font-size: 0.88rem;
+			}
+			.note a {
+				color: #cdbcff;
+			}
+
+			.faq details {
+				border-bottom: 1px solid var(--border);
+				padding: 1.1rem 0;
+				max-width: 46rem;
+			}
+			.faq summary {
+				cursor: pointer;
+				font-family: var(--mono);
+				font-weight: 600;
+				list-style: none;
+			}
+			.faq summary::before {
+				content: '+';
+				display: inline-block;
+				width: 1.4rem;
+				color: var(--violet);
+			}
+			.faq details[open] summary::before {
+				content: '−';
+			}
+			.faq details p {
+				color: var(--muted);
+				margin: 0.7rem 0 0 1.4rem;
+			}
+
+			.footer {
+				max-width: 72rem;
+				margin: clamp(5rem, 10vw, 8rem) auto 0;
+				padding: 2.5rem 1.25rem 3rem;
+				border-top: 1px solid var(--border);
+				color: var(--faint);
+				font-size: 0.85rem;
+			}
+			.footer img {
+				height: 18px;
+				width: auto;
+			}
+			.footer nav {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 1.2rem;
+				margin: 1.2rem 0;
+				font-family: var(--mono);
+			}
+			.footer nav a {
+				color: var(--muted);
+				text-decoration: none;
+			}
+			.footer p a {
+				color: var(--muted);
+			}
+			.quip {
+				font-style: italic;
+			}
+
+			@media (max-width: 860px) {
+				.split,
+				.split.reverse {
+					grid-template-columns: 1fr;
+				}
+				.split.reverse .split-text {
+					order: 0;
+				}
+				.gallery {
+					grid-template-columns: 1fr;
+				}
+				.wide {
+					display: none;
+				}
+				.nav nav a:not(.button):not(.nav-icon):not([href='/docs/']) {
+					display: none;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				html {
+					scroll-behavior: auto;
+				}
+				.button,
+				.feature {
+					transition: none;
+				}
+			}
+		</style>
+	</body>
+</html>

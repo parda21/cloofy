@@ -18,6 +18,7 @@ YouTube Music joins Spotify, on its own or side by side, and cloofy becomes part
 - **cloofy in Omarchy's bar.** `cloofy omarchy install` puts a widget next to the clock: the service, a small equalizer while a song plays, and the title and artist, which scroll by when they don't fit. A click opens a card with the cover, the album, the position to click or drag, the controls and the volume. Middle click plays or pauses, right click brings cloofy to the front, and scrolling skips.
 - **Omarchy's menu, launcher and Super+Shift+M.** The same command adds Music to the Omarchy menu, to open cloofy, play or pause and skip, and cloofy with its icon to the app launcher. Asked, or with `--bind-music-key`, Super+Shift+M opens cloofy instead of Spotify. `cloofy omarchy status` shows what is set up, and `cloofy omarchy remove` takes out exactly what it added. The installer offers it on Omarchy, and `--uninstall` takes it out again.
 - **Notifications with the cover.** On Omarchy, song notifications come from the desktop with the cover, also in terminals without notifications of their own, like Alacritty. Each replaces the one before, and a click brings cloofy's window to the front.
+- **[cloofy.app](https://cloofy.app).** A website with the docs, and a shorter way to install: `curl -fsSL https://cloofy.app/install.sh | bash`.
 - **More for desktop widgets.** On Linux, they can read and set cloofy's volume and get a link to the song on the web, which also tells them the service. On Hyprland they can bring cloofy's window to the front.
 
 ### Changed

@@ -2,7 +2,7 @@
 # Installs cloofy, the music client for the terminal, and sets it up step by step. It asks what
 # you listen to, Spotify, YouTube Music or both, and installs the build with just that:
 #
-#   curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash
+#   curl -fsSL https://cloofy.app/install.sh | bash
 #
 # Run it again to update, or to switch. Options, after `bash -s --` when piped:
 #

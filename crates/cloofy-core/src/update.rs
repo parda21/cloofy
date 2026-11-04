@@ -21,7 +21,7 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Bounds the whole download, which the usual request timeout would cut short.
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// What to run where cloofy can't replace itself.
-pub const INSTALLER: &str = "curl -fsSL https://raw.githubusercontent.com/parda21/cloofy/main/install.sh | bash";
+pub const INSTALLER: &str = "curl -fsSL https://cloofy.app/install.sh | bash";
 
 /// A package manager that installed cloofy. It owns the binary and updates it, so cloofy only
 /// says how.

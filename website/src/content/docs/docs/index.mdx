@@ -1,0 +1,35 @@
+---
+title: Overview
+description: cloofy plays Spotify and YouTube Music in the terminal, one of them or both side by side.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+cloofy plays Spotify and YouTube Music in the terminal, one of them or both side by side. It plays the music itself, with no official app in the background: Spotify through librespot, as a Spotify Connect device you can pick from your phone, and YouTube Music through mpv, with or without an account.
+
+It looks and works like the desktop client you know: your Home feed, your library in a sidebar, cover art, synced lyrics, and on Spotify the DJ talking between tracks.
+
+![cloofy in a terminal: the Home page with cover art, a playlist with the playing song, and the now-playing view with synced lyrics](/screenshots/hero.webp)
+
+## Try it first
+
+```sh
+cloofy demo
+```
+
+The demo opens the full interface with a sample library: real albums and artists, and a few made-up playlists. It needs no account and plays nothing, so it's a quick way to see how cloofy looks in your terminal. Every picture on this site comes from it.
+
+## What you need
+
+- **macOS or Linux**, and a terminal with true color. Cover art shows as real images in [most terminals](/docs/terminals/), as blocks in the rest.
+- **For Spotify:** Spotify Premium and a free Spotify developer app of your own. The installer sets it up with you in about two minutes.
+- **For YouTube Music:** nothing but [mpv](https://mpv.io), [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [deno](https://deno.com), which the installer offers to install. No account needed.
+
+## Next
+
+<CardGrid>
+	<LinkCard title="Install" description="One command, and the installer walks you through the rest." href="/docs/install/" />
+	<LinkCard title="Keys and mouse" description="Every action has a key, and everything works with the mouse." href="/docs/keys/" />
+	<LinkCard title="YouTube Music" description="Signed out or with your library, through mpv and yt-dlp." href="/docs/youtube-music/" />
+	<LinkCard title="Spotify" description="Your app, your sign-in, and cloofy as a Spotify Connect device." href="/docs/spotify/" />
+</CardGrid>
