@@ -3,13 +3,12 @@
 //! click leads back to the terminal. Under Omarchy they go to the desktop directly instead,
 //! which shows the cover with them.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use cloofy_core::player::CurrentTrack;
+
+use crate::clock::Instant;
 
 /// How long a track has to play before it gets announced, so skipping through doesn't flood.
 const SETTLE: Duration = Duration::from_millis(1500);

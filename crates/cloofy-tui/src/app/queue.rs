@@ -1,11 +1,12 @@
 //! The queue page: what plays next, from Spotify's pushes about the device that plays and from
 //! cloofy's own player.
 
-use std::{collections::HashSet, time::Instant};
+use std::collections::HashSet;
 
 use cloofy_core::catalog::Track;
 
 use super::{App, Focus, QUEUE_GRACE};
+use crate::clock::Instant;
 use crate::{
     commands::Command,
     queue::{Provider, Queue, Upcoming},

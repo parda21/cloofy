@@ -3,7 +3,7 @@
 //! looks; the others' wait in a [`Browsing`] each, and a switch trades them, so each service
 //! comes back as it was left, at once.
 
-use std::{collections::HashMap, time::Instant};
+use std::collections::HashMap;
 
 use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, User},
@@ -11,6 +11,7 @@ use cloofy_core::{
 };
 
 use super::{App, Focus, LIBRARY_PARTS, LibraryFilter};
+use crate::clock::Instant;
 use crate::{
     backend::Service,
     datacache,

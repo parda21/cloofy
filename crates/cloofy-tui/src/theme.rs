@@ -1,10 +1,12 @@
 use std::{
     sync::{PoisonError, RwLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use image::DynamicImage;
 use ratatui::style::Color;
+
+use crate::clock::Instant;
 
 const ACCENT_FADE: Duration = Duration::from_millis(600);
 

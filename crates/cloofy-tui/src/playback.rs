@@ -1,13 +1,14 @@
 //! What plays, as the interface shows it: cloofy's own player as its events report it, or
 //! another of the account's devices as polls and pushes report it.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use cloofy_core::{
     connect::Playback,
     player::{CurrentTrack, PlayerEvent},
 };
 
+use crate::clock::Instant;
 use crate::queue::Queue;
 
 /// How long a change made in cloofy wins over reports the player sent before it got there.

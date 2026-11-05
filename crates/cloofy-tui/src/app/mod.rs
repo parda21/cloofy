@@ -13,7 +13,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use cloofy_core::{
@@ -32,6 +32,7 @@ use ratatui::{
     layout::{Position, Rect, Size},
 };
 
+use crate::clock::Instant;
 use crate::{
     backend::{self, Player, Remote, Service},
     commands::Command,

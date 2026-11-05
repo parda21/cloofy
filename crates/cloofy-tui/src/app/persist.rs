@@ -1,15 +1,12 @@
 //! Remembering the session: each service's open page and selections, the service shown and
 //! the last track survive a restart.
 
-use std::{
-    collections::HashMap,
-    io,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, io, time::Duration};
 
 use cloofy_core::catalog::{AlbumInfo, PlaylistInfo};
 
 use super::{App, Focus, LIBRARY_PARTS, LibraryFilter};
+use crate::clock::Instant;
 use crate::{
     backend::Service,
     datacache,
