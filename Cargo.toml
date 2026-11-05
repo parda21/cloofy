@@ -76,7 +76,8 @@ unicode-width = "0.2"
 url = "2"
 zeno = "0.3"
 # D-Bus on Linux in pure Rust, driven by tokio rather than a runtime of its own.
-zbus = { version = "6", default-features = false, features = ["proxy", "service", "tokio"] }
+# unixexec: zbus 5 always had it, for session buses reached through a command.
+zbus = { version = "6", default-features = false, features = ["proxy", "service", "tokio", "unixexec"] }
 
 # vendor/ holds forks as git submodules, both on branch `cloofy`:
 # - librespot (github.com/parda21/librespot) with two open upstream PRs merged, DJ with

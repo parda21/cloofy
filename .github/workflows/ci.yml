@@ -151,9 +151,20 @@ jobs:
           persist-credentials: false
           # Cargo.toml patches librespot and ratatui-image with them.
           submodules: true
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          command: check advisories bans sources
+          toolchain: stable
+      # The release binary, checked against the checksum it was published with.
+      - name: Install cargo-deny
+        env:
+          VERSION: 0.20.2
+          SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          archive="cargo-deny-$VERSION-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/EmbarkStudios/cargo-deny/releases/download/$VERSION/$archive"
+          echo "$SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$HOME/.cargo/bin" --strip-components=1 "${archive%.tar.gz}/cargo-deny"
+      - run: cargo deny check advisories bans sources
 
   packaging:
     name: packaging
