@@ -98,7 +98,7 @@ pub(crate) async fn playlists(api: &InnerTube, library: &Library) -> Result<Vec<
             owner_id: item.owner_id,
             owner_name: item.owner_name,
             collaborative: false,
-            total: count(&item.subtitle).unwrap_or(0),
+            total: count(&item.subtitle),
             image_url: item.image_url,
         })
         .collect();
@@ -190,7 +190,7 @@ pub(crate) fn library_page(page: &Value) -> (Vec<HomeItem>, Option<String>) {
 pub(crate) async fn liked_count(api: &InnerTube) -> Result<u32> {
     require_sign_in(api)?;
     let info = pages::playlist_info(api, &format!("{PLAYLIST}{LIKED}")).await?;
-    Ok(info.total)
+    Ok(info.total.unwrap_or_default())
 }
 
 pub(crate) async fn check_saved(api: &InnerTube, library: &Library, uris: &[String]) -> Result<Vec<(String, bool)>> {

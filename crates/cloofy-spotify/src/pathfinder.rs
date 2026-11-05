@@ -4,10 +4,16 @@
 //! Queries are persisted: Spotify only accepts known query hashes, and those rotate every few
 //! weeks. The current ones are read from the web player's JavaScript and cached on disk.
 
-use std::{collections::HashMap, fs, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
 use cloofy_core::paths::write_private;
+use futures::{StreamExt, stream};
 use librespot::core::session::Session;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -15,11 +21,19 @@ use tokio::sync::Mutex;
 const ENDPOINT: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
 const WEB_PLAYER: &str = "https://open.spotify.com/";
 /// Used until the web player has been read once.
-const KNOWN_HASHES: &[(&str, &str)] = &[("home", "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1")];
+const KNOWN_HASHES: &[(&str, &str)] = &[
+    ("home", "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1"),
+    ("libraryV3", "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455"),
+    ("searchDesktop", "eef7cc54888d91bdd6802623477873caa3948ae173a0c34fd86827b267e94c03"),
+];
 /// Greetings and shelf titles come back in this language, matching the English UI.
 const ACCEPT_LANGUAGE: &str = "en";
 /// The web player's JavaScript bundles are large; reading them may take a while.
 const BUNDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// The web player's chunks read at the same time; there are over a hundred.
+const CHUNK_CONCURRENCY: usize = 8;
+/// After reading the web player, how long a query it lacked fails without reading it again.
+const REFRESH_PAUSE: Duration = Duration::from_secs(10 * 60);
 const USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
 
@@ -28,6 +42,9 @@ pub struct Pathfinder {
     session: Session,
     cache_path: PathBuf,
     hashes: Mutex<HashMap<String, String>>,
+    /// When the web player was last read. Held while reading it, so queries that need it at
+    /// the same time read it once.
+    refreshed: Mutex<Option<Instant>>,
 }
 
 impl Pathfinder {
@@ -44,6 +61,7 @@ impl Pathfinder {
             session,
             cache_path,
             hashes: Mutex::new(hashes),
+            refreshed: Mutex::new(None),
         }
     }
 
@@ -96,21 +114,48 @@ impl Pathfinder {
         body.get("data").cloned().context("pathfinder: response without data")
     }
 
-    /// Reads all persisted-query hashes from the web player bundle and caches them.
+    /// Reads all persisted-query hashes from the web player and caches them. Does nothing when
+    /// it was read moments ago, so a query it lacks doesn't read it again on every call.
     async fn refresh_hashes(&self) -> Result<()> {
+        let mut refreshed = self.refreshed.lock().await;
+        if refreshed.is_some_and(|at| at.elapsed() < REFRESH_PAUSE) {
+            return Ok(());
+        }
         let html = self.http.get(WEB_PLAYER).send().await?.text().await?;
         let mut found = HashMap::new();
+        let mut chunks = Vec::new();
         for script in script_urls(&html).filter(|url| url.contains("web-player")) {
-            // The bundles are several megabytes, more than the default timeout allows for.
-            let source = self.http.get(&script).timeout(BUNDLE_TIMEOUT).send().await?.text().await?;
+            let source = self.script(&script).await?;
             found.extend(persisted_hashes(&source));
+            chunks.extend(chunk_urls(&script, &source));
+        }
+        // Search, browse and many other pages come in chunks the web player loads on demand.
+        let mut failed = 0;
+        let mut sources = stream::iter(chunks.clone())
+            .map(|url| async move { self.script(&url).await })
+            .buffer_unordered(CHUNK_CONCURRENCY);
+        while let Some(source) = sources.next().await {
+            match source {
+                Ok(source) => found.extend(persisted_hashes(&source)),
+                Err(_) => failed += 1,
+            }
+        }
+        if failed > 0 {
+            tracing::warn!("pathfinder: {failed} of {} web player chunks could not be read", chunks.len());
         }
         if found.is_empty() {
             bail!("Could not read Spotify’s web player");
         }
         let _ = write_private(&self.cache_path, &serde_json::to_vec(&found)?);
         self.hashes.lock().await.extend(found);
+        *refreshed = Some(Instant::now());
         Ok(())
+    }
+
+    async fn script(&self, url: &str) -> Result<String> {
+        // The bundles are several megabytes, more than the default timeout allows for.
+        let response = self.http.get(url).timeout(BUNDLE_TIMEOUT).send().await?.error_for_status()?;
+        Ok(response.text().await?)
     }
 }
 
@@ -124,6 +169,48 @@ fn script_urls(html: &str) -> impl Iterator<Item = String> + '_ {
     html.split("<script").skip(1).filter_map(|tag| {
         let src = tag.split("src=\"").nth(1)?.split('"').next()?;
         src.ends_with(".js").then(|| src.to_owned())
+    })
+}
+
+/// The web player's chunks, from the map in its main bundle that webpack builds their file
+/// names from: `(({1872:"xpui-routes-playlist",…})[e]||e)+"."+({1872:"1072dd2e",…})[e]+".js"`.
+/// Chunks without a name go by their number. They sit next to the bundle that names them.
+fn chunk_urls(script: &str, source: &str) -> Vec<String> {
+    let (Some((base, _)), Some((names, hashes))) = (script.rsplit_once('/'), chunk_maps(source)) else {
+        return Vec::new();
+    };
+    let names: HashMap<&str, &str> = map_entries(names).collect();
+    map_entries(hashes).map(|(id, hash)| format!("{base}/{}.{hash}.js", names.get(id).unwrap_or(&id))).collect()
+}
+
+/// The names and the hashes of the chunks, the maps on either side of `)+"."+(`. The CSS
+/// chunks have maps of the same shape, ending in ".css" instead.
+fn chunk_maps(source: &str) -> Option<(&str, &str)> {
+    const JOIN: &str = ")+\".\"+({";
+    source.match_indices(JOIN).find_map(|(at, _)| {
+        let (hashes, rest) = source[at + JOIN.len()..].split_once('}')?;
+        let (_, rest) = rest.strip_prefix(")[")?.split_once(']')?;
+        if !rest.starts_with("+\".js\"") {
+            return None;
+        }
+        let before = &source[..at];
+        let names = before
+            .rfind("(({")
+            .and_then(|start| before[start + 3..].rsplit_once('}'))
+            .filter(|(_, rest)| rest.starts_with(")["))
+            .map_or("", |(names, _)| names);
+        Some((names, hashes))
+    })
+}
+
+/// `1872:"1072dd2e",934:"07549133"` as pairs.
+fn map_entries(map: &str) -> impl Iterator<Item = (&str, &str)> {
+    map.split(',').filter_map(|entry| {
+        let (key, value) = entry.split_once(':')?;
+        let value = value.strip_prefix('"')?.strip_suffix('"')?;
+        let key = key.trim_matches('"');
+        (!key.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || "-_~".contains(c)))
+            .then_some((key, value))
     })
 }
 
@@ -161,6 +248,25 @@ mod tests {
         let hashes = persisted_hashes(&js);
         assert_eq!(hashes.get("home"), Some(&hash));
         assert_eq!(hashes.len(), 1);
+    }
+
+    #[test]
+    fn finds_the_web_players_chunks() {
+        let js = concat!(
+            r#"u.u=e=>""+(({1872:"xpui-routes-playlist",4406:"xpui-routes-search"})[e]||e)+"."+"#,
+            r#"({1872:"1072dd2e",4406:"a89e24fe",934:"07549133"})[e]+".js",u.miniCssF=e=>""+"#,
+            r#"(({1872:"xpui-routes-playlist"})[e]||e)+"."+({1872:"5d0c4a1e"})[e]+".css""#
+        );
+        let base = "https://cdn/build/web-player/";
+        assert_eq!(
+            chunk_urls(&format!("{base}web-player.421304b0.js"), js),
+            [
+                format!("{base}xpui-routes-playlist.1072dd2e.js"),
+                format!("{base}xpui-routes-search.a89e24fe.js"),
+                format!("{base}934.07549133.js"),
+            ]
+        );
+        assert!(chunk_urls("https://cdn/vendor~web-player.5858da05.js", "no chunks here").is_empty());
     }
 
     #[test]

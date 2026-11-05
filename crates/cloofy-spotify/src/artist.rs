@@ -8,9 +8,10 @@ use cloofy_core::{
 };
 use serde_json::{Value, json};
 
-use crate::pathfinder::Pathfinder;
-
-const IMAGE_WIDTH: u64 = 300;
+use crate::{
+    parse::{image, text},
+    pathfinder::Pathfinder,
+};
 
 pub async fn artist(pathfinder: &Pathfinder, uri: &str) -> Result<ArtistPage> {
     let variables = json!({ "uri": uri, "locale": "", "includePrerelease": true });
@@ -144,17 +145,6 @@ fn names(list: Option<&Value>) -> Vec<String> {
         .filter_map(|entry| entry.pointer("/profile/name").and_then(Value::as_str))
         .map(str::to_owned)
         .collect()
-}
-
-fn image(sources: Option<&Value>) -> Option<String> {
-    list(sources)
-        .min_by_key(|s| s["width"].as_u64().unwrap_or(IMAGE_WIDTH).abs_diff(IMAGE_WIDTH))
-        .and_then(|s| s["url"].as_str())
-        .map(str::to_owned)
-}
-
-fn text(value: &Value, pointer: &str) -> String {
-    value.pointer(pointer).and_then(Value::as_str).unwrap_or_default().to_owned()
 }
 
 #[cfg(test)]

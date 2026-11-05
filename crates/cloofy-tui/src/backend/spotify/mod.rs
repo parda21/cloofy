@@ -17,7 +17,9 @@ use cloofy_core::{
     lyrics::{Lyrics, LyricsQuery},
     paths::Paths,
 };
-use cloofy_spotify::{artist, catalog, connect, home, lyrics, pathfinder::Pathfinder, session, webapi::WebApi};
+use cloofy_spotify::{
+    artist, catalog, connect, home, library, lyrics, pathfinder::Pathfinder, search, session, webapi::WebApi,
+};
 use futures::{
     StreamExt, future,
     stream::{self, BoxStream},
@@ -136,8 +138,17 @@ impl Catalog {
         artist::artist(self.pathfinder().await?, uri).await
     }
 
+    /// Playlists come from Spotify's own search, which also finds the mixes it made for the
+    /// user; the Web API's search adds their song counts and finds everything else.
     pub async fn search(&self, query: &str) -> Result<SearchResults> {
-        catalog::search(&self.api, query).await
+        let internal = async { search::playlists(self.pathfinder().await?, query).await };
+        let (results, internal) = tokio::join!(catalog::search(&self.api, query), internal);
+        let mut results = results?;
+        match internal {
+            Ok(found) => results.playlists = library::with_web_details(found, std::mem::take(&mut results.playlists)).0,
+            Err(err) => tracing::warn!("Spotify's own search failed, showing the Web API's playlists: {err:#}"),
+        }
+        Ok(results)
     }
 
     /// Pages after the first are fetched a few at a time and arrive in order.
@@ -210,8 +221,25 @@ impl Catalog {
             .boxed()
     }
 
+    /// The library as Spotify's apps list it, mixes and other Spotify-made playlists included,
+    /// with song counts from the Web API. Either list alone does when the other fails.
     pub async fn playlists(&self) -> Result<Vec<PlaylistInfo>> {
-        catalog::playlists(&self.api).await
+        let internal = async { library::playlists(self.pathfinder().await?).await };
+        match tokio::join!(internal, catalog::playlists(&self.api)) {
+            (Ok(found), Ok(web)) => {
+                let (mut playlists, rest) = library::with_web_details(found, web);
+                playlists.extend(rest);
+                Ok(playlists)
+            }
+            (Ok(found), Err(err)) => {
+                tracing::warn!("Web API playlists failed, showing them without song counts: {err:#}");
+                Ok(found)
+            }
+            (Err(err), web) => {
+                tracing::warn!("Spotify's own library failed, showing the Web API's playlists: {err:#}");
+                web
+            }
+        }
     }
 
     pub async fn liked_count(&self) -> Result<u32> {

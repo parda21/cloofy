@@ -11,7 +11,7 @@ use librespot::{
 use protobuf::Message;
 use serde_json::Value;
 
-use crate::webapi::WebApi;
+use crate::{library, pathfinder::Pathfinder, search, webapi::WebApi};
 
 const ARTIST: &str = "4tZwfgrHOc3mvqYlEYSvVi"; // Daft Punk
 const ALBUM: &str = "2noRn2Aes5aoNVsU6iWThc"; // Discovery
@@ -96,7 +96,7 @@ pub async fn web_api(api: &WebApi) -> Section {
     Section { title: "WEB API · your app", checks }
 }
 
-pub async fn spclient(session: &Session) -> Section {
+pub async fn spclient(session: &Session, pathfinder: &Pathfinder) -> Section {
     let mut checks = vec![Check {
         name: "Session".into(),
         expect: Expect::Available,
@@ -108,6 +108,24 @@ pub async fn spclient(session: &Session) -> Section {
             let bytes = session.spclient().get_rootlist(0, Some(500)).await?;
             let list = SelectedListContent::parse_from_bytes(&bytes)?;
             Ok(format!("{} Playlists", list.length()))
+        })
+        .await,
+    );
+
+    checks.push(
+        timed("Library (internal)", async {
+            let playlists = library::playlists(pathfinder).await?;
+            let by_spotify = playlists.iter().filter(|p| p.owner_id == "spotify").count();
+            Ok(format!("{} playlists · {by_spotify} by Spotify", playlists.len()))
+        })
+        .await,
+    );
+
+    checks.push(
+        timed("Search (internal)", async {
+            let playlists = search::playlists(pathfinder, "mix").await?;
+            let by_spotify = playlists.iter().filter(|p| p.owner_id == "spotify").count();
+            Ok(format!("{} playlists · {by_spotify} by Spotify", playlists.len()))
         })
         .await,
     );

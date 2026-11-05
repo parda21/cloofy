@@ -1532,7 +1532,7 @@ impl App {
             }
             DataEvent::AddFailed { playlist_id, count, error } => {
                 if let Some(playlist) = self.playlists.iter_mut().find(|p| p.id == playlist_id) {
-                    playlist.total = playlist.total.saturating_sub(count);
+                    playlist.total = playlist.total.map(|total| total.saturating_sub(count));
                 }
                 self.error(error);
             }
@@ -2722,7 +2722,7 @@ impl App {
             .filter(|(_, p)| p.collaborative || self.owns(p))
             .map(|(index, p)| PickItem {
                 label: p.name.clone(),
-                detail: format!("{} songs", p.total),
+                detail: p.total.map(|total| format!("{total} songs")).unwrap_or_default(),
                 image_url: p.image_url.clone(),
                 value: index,
             })
@@ -2744,7 +2744,7 @@ impl App {
     fn add_to_playlist(&mut self, index: usize) {
         let Some(Overlay::AddToPlaylist { uris, .. }) = self.overlay.take() else { return };
         if let Some(playlist) = self.playlists.get_mut(index) {
-            playlist.total += uris.len() as u32;
+            playlist.total = playlist.total.map(|total| total + uris.len() as u32);
             let text = format!("Added to “{}”", playlist.name);
             self.loader.add_to_playlist(playlist, uris);
             self.notice(text);
@@ -3480,7 +3480,7 @@ impl App {
                 owner_id: item.owner_id,
                 owner_name: item.owner_name,
                 collaborative: false,
-                total: 0,
+                total: None,
                 image_url: item.image_url,
             })),
             ItemKind::Album => self.open_tracks(TrackSource::Album(AlbumInfo {

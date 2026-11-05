@@ -31,7 +31,8 @@ pub struct PlaylistInfo {
     pub owner_id: String,
     pub owner_name: String,
     pub collaborative: bool,
-    pub total: u32,
+    /// Songs in the playlist; unknown for some, like the mixes Spotify makes for the user.
+    pub total: Option<u32>,
     pub image_url: Option<String>,
 }
 

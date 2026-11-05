@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
             owner_id,
             owner_name,
             collaborative: false,
-            total: songs.len() as u32,
+            total: Some(songs.len() as u32),
             image_url: mosaic(&songs),
         };
         tracks.insert(playlist.uri.clone(), songs);

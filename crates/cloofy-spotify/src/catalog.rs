@@ -314,7 +314,7 @@ impl From<RawPlaylist> for PlaylistInfo {
             owner_name: raw.owner.display_name.unwrap_or_else(|| raw.owner.id.clone()),
             owner_id: raw.owner.id,
             collaborative: raw.collaborative,
-            total: raw.items.or(raw.tracks).map_or(0, |c| c.total),
+            total: raw.items.or(raw.tracks).map(|c| c.total),
             image_url: pick_image(&raw.images),
         }
     }
