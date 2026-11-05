@@ -168,6 +168,11 @@ fn managed_update(release: &Release, manager: PackageManager) -> String {
     format!("cloofy {} is out · {}", release.version(), manager.how_to_update(variant))
 }
 
+/// Reduced motion and low power as the system has them; all off in tests, whatever the machine.
+fn system_settings() -> Settings {
+    if cfg!(test) { Settings::default() } else { cloofy_os::settings::current() }
+}
+
 // Events move through a channel once each; boxing the big ones would only add allocations.
 #[allow(clippy::large_enum_variant)]
 pub enum AppEvent {
@@ -601,7 +606,7 @@ impl App {
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
     ) -> Self {
-        let system_settings = cloofy_os::settings::current();
+        let system_settings = system_settings();
         let mut accent = Accent::new();
         if let Some(color) = prefs.accent.fixed() {
             accent.jump(color);
@@ -762,6 +767,12 @@ impl App {
         self.after_track_change(None);
         let (queued, rest) = demo.upcoming();
         self.start_demo_queue(queued, rest);
+    }
+
+    /// Whether every load the app asked for has ended.
+    #[cfg(test)]
+    pub fn is_idle(&self) -> bool {
+        self.loader.is_idle()
     }
 
     /// The last session's track is shown and ␣ would continue it.
@@ -1722,7 +1733,7 @@ impl App {
 
         if self.settings_checked.elapsed() >= SETTINGS_INTERVAL {
             self.settings_checked = Instant::now();
-            self.system_settings = cloofy_os::settings::current();
+            self.system_settings = system_settings();
             let settings = self.prefs.apply(self.system_settings);
             redraw |= settings != self.settings;
             self.settings = settings;

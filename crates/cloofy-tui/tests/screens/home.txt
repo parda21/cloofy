@@ -1,0 +1,36 @@
+
+   ▄▀▀ █ ▄▀▄ ▄▀▄ ▄▀▀ █ █
+   █   █ █ █ █ █ █▀▀  ▀█     ‹     ⌂     ⌕  What do you want to play?                                          ◉  Sam
+    ▀▀ ▀  ▀   ▀  ▀   ▀▀
+
+
+   ≡  Your Library          ⤢      Good evening                                                                       ┃
+                                                                                                                      ┃
+   Playlists  Albums  Artists      ▀ ▄▄ ▀                                    ▀ ▄▄ ▀                                   ┃
+                                   ▀▄▄▀▀▀  Liked Songs                       ▀▄▄▀▀▀  Late Night Coding           ⡄⡇⡆  ┃
+   ▄▄▄▄  Liked Songs           ┃    ▀▀▀▀▀                                     ▀▀▀▀▀                                   ┃
+   ▄▀▀▄  Playlist · 20 songs   ┃                                                                                      ┃
+                               ┃   ▀ ▄▄ ▀                                    ▀ ▄▄ ▀                                   │
+   ▀▄▄▀  Late Night Coding ⡄⡇⡆ │   ▀▄▄▀▀▀  Random Access Memories            ▀▄▄▀▀▀  Deep Focus                       │
+   ▀▀▀▀  Playlist · Sam        │    ▀▀▀▀▀                                     ▀▀▀▀▀                                   │
+                               │                                                                                      │
+   ▀▄▄▀  Morning Run           │   ▀ ▄▄ ▀                                    ▀ ▄▄ ▀                                   │
+   ▀▀▀▀  Playlist · Sam        │   ▀▄▄▀▀▀  Tame Impala                       ▀▄▄▀▀▀  Synthwave Drive                  │
+                               │    ▀▀▀▀▀                                     ▀▀▀▀▀                                   │
+   ▀▄▄▀  Deep Focus            │                                                                                      │
+   ▀▀▀▀  Playlist · Sam        │   ▀ ▄▄ ▀                                    ▀ ▄▄ ▀                                   │
+                               │   ▀▄▄▀▀▀  Currents                          ▀▄▄▀▀▀  Daily Mix 1                      │
+   ▀▄▄▀  Sunday Morning        │    ▀▀▀▀▀                                     ▀▀▀▀▀                                   │
+   ▀▀▀▀  Playlist · Sam        │                                                                                      │
+                               │                                                                                      │
+   ▀▄▄▀  Synthwave Drive       │   Made For You                                                     1–5 of 6   ‹   ›  │
+   ▀▀▀▀  Playlist · Sam        │                                                                                      │
+                               │    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀ │
+                               │    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀ │
+                               │     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀ │
+
+  ▀ ▄▄ ▀   Around the World  ✓   ♫  Playlist · Late Night Coding                                  ⤨   ◂◂   ❚❚   ▸▸   ↻
+  ▀▄▄▀▀▀   Daft Punk · Homework                                                                  ≡   ♪ ━━━━━━━━━━  69%
+   ▀▀▀▀▀   1:21  ━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────────────────────────────────  7:09
+
+  enter open   p play   . actions   D DJ   / search   ^K commands   ? help                                   ▣  cloofy

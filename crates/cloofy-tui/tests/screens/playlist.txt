@@ -1,0 +1,36 @@
+
+   ▄▀▀ █ ▄▀▄ ▄▀▄ ▄▀▀ █ █
+   █   █ █ █ █ █ █▀▀  ▀█     ‹     ⌂     ⌕  What do you want to play?                                          ◉  Sam
+    ▀▀ ▀  ▀   ▀  ▀   ▀▀
+
+
+   ≡  Your Library          ⤢       ▀ ▀    ▀ ▀  ▀
+                                    ▀  ▀ ▀▄▀  ▀ ▀   PLAYLIST
+   Playlists  Albums  Artists        ▀ ▀  ▄▄▄ ▀ ▀   Deep Focus
+                                     ▀ ▄▄▄▄▀▀ ▀     By Sam · 10 songs · 55 min
+   ▄▄▄▄  Liked Songs           ┃   ▀ ▀ ▀▀▄▀▀▀  ▀
+   ▄▀▀▄  Playlist · 20 songs   ┃   ▀  ▀ ▀▀▀  ▀ ▀     ▶  Play    ⤨  Shuffle    ···
+                               ┃    ▀ ▀ ▀  ▀ ▀ ▀
+   ▀▄▄▀  Late Night Coding ⡄⡇⡆ │
+   ▀▀▀▀  Playlist · Sam        │     #  TITLE                                   ARTIST                            ◷
+                               │  ────────────────────────────────────────────────────────────────────────────────────
+   ▀▄▄▀  Morning Run           │ ▌   1  Says                                    Nils Frahm                       8:18
+   ▀▀▀▀  Playlist · Sam        │     2  saman                                   Ólafur Arnalds                   2:11
+                               │     3  An Ending (Ascent) - Remastered 2019    Brian Eno                        4:24
+ ▎ ▀▄▄▀  Deep Focus            │     4  A Walk                                  Tycho                            5:16
+ ▎ ▀▀▀▀  Playlist · Sam        │     5  Cirrus                                  Bonobo                           5:52
+                               │     6  On the Nature of Daylight               Max Richter, Louisa Fuller,…     6:11
+   ▀▄▄▀  Sunday Morning        │     7  Emerald Rush                            Jon Hopkins                      5:36
+   ▀▀▀▀  Playlist · Sam        │     8  #3                                      Aphex Twin                       7:44
+                               │     9  Dayvan Cowboy                           Boards of Canada                 5:00
+   ▀▄▄▀  Synthwave Drive       │    10  Eden                                    Hania Rani                       4:55
+   ▀▀▀▀  Playlist · Sam        │
+                               │
+                               │
+                               │
+
+  ▀ ▄▄ ▀   Around the World  ✓   ♫  Playlist · Late Night Coding                                  ⤨   ◂◂   ❚❚   ▸▸   ↻
+  ▀▄▄▀▀▀   Daft Punk · Homework                                                                  ≡   ♪ ━━━━━━━━━━  69%
+   ▀▀▀▀▀   1:21  ━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────────────────────────────────  7:09
+
+  enter play   . actions   f like   q queue   a add to playlist   z now playing   esc back   ^K commands     ▣  cloofy
