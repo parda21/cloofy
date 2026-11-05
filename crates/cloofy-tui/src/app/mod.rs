@@ -3560,8 +3560,7 @@ impl App {
 
     /// Plays a context here, or on the other device that is currently playing.
     fn play(&mut self, context: String, track: Option<String>) {
-        self.resume = None;
-        self.last_context = Some(context.clone());
+        let before = (self.resume.take(), self.last_context.replace(context.clone()));
         let sent = if self.remote_active && self.plays_here(&context) {
             self.remote(Remote::PlayContext { context, track: track.clone(), shuffle: false });
             true
@@ -3571,6 +3570,9 @@ impl App {
         };
         if sent {
             self.now.start(track);
+        } else {
+            // Nothing plays, so the last session's context stays, and ␣ still resumes it.
+            (self.resume, self.last_context) = before;
         }
     }
 
@@ -3590,8 +3592,7 @@ impl App {
     }
 
     fn play_shuffled(&mut self, context: String) {
-        self.resume = None;
-        self.last_context = Some(context.clone());
+        let before = (self.resume.take(), self.last_context.replace(context.clone()));
         let sent = if self.remote_active && self.plays_here(&context) {
             self.remote(Remote::PlayContext { context, track: None, shuffle: true });
             true
@@ -3600,6 +3601,8 @@ impl App {
         };
         if sent {
             self.now.start(None);
+        } else {
+            (self.resume, self.last_context) = before;
         }
     }
 
