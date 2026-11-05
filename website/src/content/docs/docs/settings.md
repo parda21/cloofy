@@ -54,7 +54,7 @@ Power saving stops animations and redraws less often. Unless set otherwise, it t
 
 ## Notifications
 
-Each new track shows a desktop notification while cloofy's window is in the background, in kitty, Ghostty, WezTerm and iTerm2. Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. On Omarchy they come from the desktop, with the cover, in every terminal.
+Each new track shows a desktop notification while cloofy's window is in the background. kitty, Ghostty, WezTerm and iTerm2 show them themselves. On Linux, every other terminal gets them from the desktop, with the cover: from GNOME, KDE Plasma or a notification daemon like mako or dunst. On Hyprland, [Omarchy](/docs/omarchy/) included, they always come from the desktop, and a click on one brings cloofy to the front. Inside tmux, notifications need `set -g focus-events on`, and the terminal's own also `set -g allow-passthrough all`, in `~/.tmux.conf`.
 
 ## Keychain
 

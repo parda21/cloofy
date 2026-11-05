@@ -25,7 +25,7 @@ Some tests need a program and skip themselves without it. CI has them all and se
 | Needs | Tests | In CI |
 |---|---|---|
 | mpv | YouTube Music's player | `CLOOFY_REQUIRE_MPV=1` |
-| a D-Bus session bus (Linux) | the media controls over MPRIS | `CLOOFY_REQUIRE_DBUS=1`, under `dbus-run-session` |
+| a D-Bus session bus (Linux) | the media controls over MPRIS, the desktop's notifications | `CLOOFY_REQUIRE_DBUS=1`, under `dbus-run-session` |
 
 Tests that go online are `#[ignore = "online"]`. Run them with:
 

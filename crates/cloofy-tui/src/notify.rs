@@ -1,7 +1,8 @@
 //! Desktop notifications for new tracks while cloofy's window is in the background. They go
 //! through the terminal's own escape sequence, so they need no permission of their own and a
-//! click leads back to the terminal. Under Omarchy they go to the desktop directly instead,
-//! which shows the cover with them.
+//! click leads back to the terminal. On Linux they go to the desktop directly in terminals
+//! without notifications of their own, and on Hyprland in all of them: the desktop shows the
+//! cover with them, and there a click brings cloofy's window to the front.
 
 use std::{sync::Arc, time::Duration};
 
@@ -38,37 +39,28 @@ enum Channel {
         /// Inside tmux, which passes the sequence on only when wrapped.
         tmux: bool,
     },
-    /// The desktop's notification server, under Omarchy: its notifications show the cover, and
-    /// a click on one brings cloofy's window to the front.
+    /// The desktop's notification server: its notifications show the cover, and on Hyprland a
+    /// click on one brings cloofy's window to the front.
     #[cfg(target_os = "linux")]
     Desktop(cloofy_os::notifications::Notifications),
 }
 
 impl Notifier {
-    /// `None` in terminals without notifications, unless Omarchy shows them.
+    /// The terminal's notifications, or the desktop's on Linux where they do better. `None`
+    /// without either.
     pub fn detect() -> Option<Self> {
+        let terminal = Protocol::detect().map(|protocol| Channel::Terminal { protocol, tmux: set("TMUX") });
+        // A click on the terminal's notification brings its window to the front, which only
+        // Hyprland lets cloofy do for the desktop's. Over SSH the desktop's session bus belongs
+        // to another computer, whose screen nobody is looking at.
         #[cfg(target_os = "linux")]
-        if crate::omarchy::state_dir().is_some()
+        if (terminal.is_none() || cloofy_os::notifications::click_raises())
+            && !set("SSH_CONNECTION")
             && let Some(desktop) = cloofy_os::notifications::Notifications::new()
         {
             return Some(Self::new(Channel::Desktop(desktop)));
         }
-        let var = |name| std::env::var(name).unwrap_or_default();
-        let set = |name| std::env::var_os(name).is_some();
-        let protocol = if set("KITTY_WINDOW_ID") || var("TERM").contains("kitty") {
-            Protocol::Kitty
-        } else if set("GHOSTTY_RESOURCES_DIR") || set("WEZTERM_PANE") {
-            Protocol::Rxvt
-        } else if set("ITERM_SESSION_ID") {
-            Protocol::ITerm
-        } else {
-            match var("TERM_PROGRAM").as_str() {
-                "ghostty" | "WezTerm" => Protocol::Rxvt,
-                "iTerm.app" => Protocol::ITerm,
-                _ => return None,
-            }
-        };
-        Some(Self::new(Channel::Terminal { protocol, tmux: set("TMUX") }))
+        terminal.map(Self::new)
     }
 
     fn new(channel: Channel) -> Self {
@@ -122,6 +114,30 @@ impl Notifier {
             }
         }
     }
+}
+
+impl Protocol {
+    /// The terminal's, from what it sets in the environment.
+    fn detect() -> Option<Self> {
+        let var = |name| std::env::var(name).unwrap_or_default();
+        if set("KITTY_WINDOW_ID") || var("TERM").contains("kitty") {
+            Some(Self::Kitty)
+        } else if set("GHOSTTY_RESOURCES_DIR") || set("WEZTERM_PANE") {
+            Some(Self::Rxvt)
+        } else if set("ITERM_SESSION_ID") {
+            Some(Self::ITerm)
+        } else {
+            match var("TERM_PROGRAM").as_str() {
+                "ghostty" | "WezTerm" => Some(Self::Rxvt),
+                "iTerm.app" => Some(Self::ITerm),
+                _ => None,
+            }
+        }
+    }
+}
+
+fn set(name: &str) -> bool {
+    std::env::var_os(name).is_some()
 }
 
 fn sequence(protocol: Protocol, tmux: bool, title: &str, body: &str) -> String {

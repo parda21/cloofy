@@ -243,7 +243,7 @@ cloofy draws with its own dark colors, or with Omarchy's theme. With Colors set 
 
 Power saving stops animations and redraws less often. Unless set otherwise, it turns on by itself with Low Power Mode on macOS and the Power Saver profile on Linux.
 
-Inside tmux, notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.
+Inside tmux, notifications need `set -g focus-events on`, and the terminal's own also `set -g allow-passthrough all`, in `~/.tmux.conf`. With `credentials = "keychain"`, cloofy moves its sign-ins into the macOS Keychain on the next start; macOS asks once after each update, because release builds aren't signed yet.
 
 cloofy keeps its sign-ins (unless they are in the Keychain) and its session in `~/.local/share/cloofy`, and its caches and log in `~/.cache/cloofy`.
 
@@ -265,10 +265,11 @@ On [Omarchy](https://omarchy.org), cloofy takes its colors from the theme and fo
 | --- | --- | --- | --- |
 | Ghostty, kitty, WezTerm | Real images | Built in | Yes |
 | iTerm2 | Real images | With a Nerd Font | Yes |
-| foot, Windows Terminal, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | No |
-| Others | Real images with Sixel, else blocks | With a Nerd Font | No |
+| foot, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | On Linux |
+| Windows Terminal | Real images | With a Nerd Font | No |
+| Others | Real images with Sixel, else blocks | With a Nerd Font | On Linux |
 
-Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. On Omarchy, notifications come from the desktop in every terminal.
+Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. On Linux, terminals without notifications of their own get them from the desktop, with the cover, and on Hyprland and Omarchy every terminal does.
 
 ## FAQ
 
