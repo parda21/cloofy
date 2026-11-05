@@ -70,25 +70,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let buf = frame.buffer_mut();
-    buf.set_string(info.x, info.y + 1, text::truncate(&title, info.width as usize), Style::new().fg(p.text).bold());
-    buf.set_string(info.x, info.y + 2, text::truncate(&by, info.width as usize), Style::new().fg(p.muted));
-    let bar = Rect { y: info.y + 4, height: 1, ..info };
-    let seek =
-        player_bar::progress(buf, bar, app.seek_preview.unwrap_or(app.now.position_ms()), duration_ms, accent_color);
-
-    let (controls, targets) = player_bar::controls(app, accent_color);
-    let controls_width = controls.width() as u16;
-    let controls_x = info.x + info.width.saturating_sub(controls_width) / 2;
-    buf.set_line(controls_x, info.y + 6, &controls, controls_width);
+    // Windows shorter than the info leave out its lower rows.
+    let fits = |row: u16| info.y + row < area.bottom();
+    if fits(2) {
+        buf.set_string(info.x, info.y + 1, text::truncate(&title, info.width as usize), Style::new().fg(p.text).bold());
+        buf.set_string(info.x, info.y + 2, text::truncate(&by, info.width as usize), Style::new().fg(p.muted));
+    }
+    if fits(4) {
+        let bar = Rect { y: info.y + 4, height: 1, ..info };
+        let position = app.seek_preview.unwrap_or(app.now.position_ms());
+        app.hits.extend(player_bar::progress(buf, bar, position, duration_ms, accent_color));
+    }
+    if fits(6) {
+        let (controls, targets) = player_bar::controls(app, accent_color);
+        let controls_width = controls.width() as u16;
+        let controls_x = info.x + info.width.saturating_sub(controls_width) / 2;
+        buf.set_line(controls_x, info.y + 6, &controls, controls_width);
+        app.hits.extend(targets.into_iter().map(|(offset, width, command)| {
+            (Rect::new(controls_x + offset, info.y + 6, width, 1), Hit::Command(command))
+        }));
+    }
 
     draw_lyrics(buf, app, lyrics_area, accent_color);
-
-    app.hits.extend(seek);
-    app.hits.extend(
-        targets.into_iter().map(|(offset, width, command)| {
-            (Rect::new(controls_x + offset, info.y + 6, width, 1), Hit::Command(command))
-        }),
-    );
 }
 
 fn draw_cover(frame: &mut Frame, app: &mut App, area: Rect) {
