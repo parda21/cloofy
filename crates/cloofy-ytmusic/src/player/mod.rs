@@ -1067,13 +1067,15 @@ mod tests {
         (engine, (events_rx, mpv_rx))
     }
 
-    /// [`idle_engine`] with mpv running, silently; `None` where mpv isn't installed.
+    /// [`idle_engine`] with mpv running, silently; `None` where mpv isn't installed, unless
+    /// `CLOOFY_REQUIRE_MPV` is set, as in CI.
     async fn engine(name: &str) -> Option<(Engine, Reports)> {
         let (mut engine, events) = idle_engine(name);
         engine.mpv_args = vec!["--ao=null".into()];
         match engine.mpv().await {
             Ok(_) => Some((engine, events)),
             Err(err) if format!("{err:#}").contains("not installed") => {
+                assert!(std::env::var_os("CLOOFY_REQUIRE_MPV").is_none(), "{err:#}");
                 eprintln!("skipped: {err:#}");
                 None
             }

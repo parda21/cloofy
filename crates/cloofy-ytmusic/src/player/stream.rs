@@ -93,4 +93,12 @@ mod tests {
         assert!(valid_until(&expired) <= Instant::now() + Duration::from_secs(1));
         assert!(valid_until("https://example.com/a.webm") > Instant::now() + Duration::from_secs(4 * 3600));
     }
+
+    /// With yt-dlp as people install it; the nightly workflow has it without a JavaScript runtime.
+    #[tokio::test]
+    #[ignore = "online"]
+    async fn yt_dlp_finds_a_stream() {
+        let stream = resolve("d7woYjGWs6k", None).await.unwrap();
+        assert!(stream.url.starts_with("https://") && stream.fresh(), "{stream:?}");
+    }
 }

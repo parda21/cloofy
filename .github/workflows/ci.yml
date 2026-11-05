@@ -29,19 +29,21 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-      - name: Install audio headers and D-Bus
+      - name: Install audio headers, D-Bus and mpv
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpulse-dev dbus
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpulse-dev dbus mpv
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
         if: runner.os != 'Linux'
-      # A session bus of its own, for the media controls' test, which may not skip here.
+      # A session bus of its own for the media controls, and mpv for YouTube Music's player:
+      # their tests skip themselves elsewhere, but not here.
       - run: dbus-run-session -- cargo test --workspace --locked
         if: runner.os == 'Linux'
         env:
           CLOOFY_REQUIRE_DBUS: 1
+          CLOOFY_REQUIRE_MPV: 1
       - name: Lint install.sh
         if: runner.os == 'Linux'
         run: shellcheck install.sh
@@ -101,6 +103,27 @@ jobs:
         with:
           key: ${{ matrix.id }}
       - run: cargo clippy --workspace --all-targets --locked ${{ matrix.features }} -- -D warnings
+
+  # The oldest Rust that builds cloofy from source, as Cargo.toml's rust-version says.
+  msrv:
+    name: rust-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          submodules: true
+      - id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - name: Install audio headers
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpulse-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: msrv
+      - run: cargo check --workspace --all-targets --locked
 
   # Installs must not carry the service they weren't made for: what cloofy depends on with
   # each set of features, on every platform.
