@@ -1,8 +1,9 @@
 name: Nightly
 
-# YouTube Music as it answers today: the tests of cloofy-ytmusic that go online, which ordinary
-# runs leave out. A failure here means InnerTube or YouTube's streams changed, and the parsers or
-# the player need to catch up before people notice.
+# YouTube Music as it answers today: cloofy-ytmusic's tests against the live catalog, which
+# ordinary runs leave out. A failure here means InnerTube changed, and the parsers need to catch up
+# before people notice. Streams aren't tested here: YouTube asks yt-dlp to sign in from GitHub's
+# addresses, so that test only runs from home (see CONTRIBUTING.md).
 on:
   schedule:
     - cron: "17 4 * * *"
@@ -27,11 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
-      # The latest yt-dlp, as people install it, and no JavaScript runtime: streams must resolve
-      # without one.
-      - name: Install yt-dlp
-        run: pipx install yt-dlp && yt-dlp --version
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: nightly
-      - run: cargo test -p cloofy-ytmusic --locked -- --ignored
+      - run: cargo test -p cloofy-ytmusic --locked --test live -- --ignored
