@@ -56,6 +56,7 @@ async fn the_demo_says_it_plays_nothing() {
     h.press(Enter).await.press(Down).await.press(Enter).await;
     assert!(h.shows("This is the demo: nothing plays here"));
     assert!(h.shows("Around the World"), "the song stays");
+    assert!(h.shows("Playlist · Late Night Coding"), "and so does what it plays from:\n{}", h.screen());
     h.wait(Duration::from_secs(5)).await;
     assert!(!h.shows("nothing plays here"), "the notice goes away");
 }
@@ -127,4 +128,12 @@ async fn every_page_draws_at_any_size() {
         h.resize(120, 36).await;
         assert!(h.shows("cloofy"), "{name} recovers at full size:\n{}", h.screen());
     }
+}
+
+#[tokio::test]
+async fn shuffling_in_the_demo_keeps_what_plays() {
+    let mut h = Harness::demo().await;
+    h.click_on("Deep Focus").await.click_on("Shuffle").await;
+    assert!(h.shows("This is the demo: nothing plays here"));
+    assert!(h.shows("Playlist · Late Night Coding"), "{}", h.screen());
 }
