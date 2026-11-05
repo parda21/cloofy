@@ -27,11 +27,13 @@ Some tests need a program and skip themselves without it. CI has them all and se
 | mpv | YouTube Music's player | `CLOOFY_REQUIRE_MPV=1` |
 | a D-Bus session bus (Linux) | the media controls over MPRIS | `CLOOFY_REQUIRE_DBUS=1`, under `dbus-run-session` |
 
-Tests that go online are `#[ignore = "online"]`. The nightly workflow runs YouTube Music's against the live service, with the latest yt-dlp:
+Tests that go online are `#[ignore = "online"]`. Run them with:
 
 ```sh
 cargo test -p cloofy-ytmusic -- --ignored
 ```
+
+The nightly workflow runs the catalog's (`--test live`) against the live service. The stream test, which asks yt-dlp for a song's audio, only works from a home connection: from GitHub's servers, YouTube asks yt-dlp to sign in. Run it before a release, ideally without deno on `PATH`, since cloofy should need no JavaScript runtime.
 
 ## Fixes
 

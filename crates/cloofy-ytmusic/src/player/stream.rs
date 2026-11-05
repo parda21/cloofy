@@ -94,7 +94,8 @@ mod tests {
         assert!(valid_until("https://example.com/a.webm") > Instant::now() + Duration::from_secs(4 * 3600));
     }
 
-    /// With yt-dlp as people install it; the nightly workflow has it without a JavaScript runtime.
+    /// With yt-dlp as people install it. Only from a home connection: YouTube asks yt-dlp to sign
+    /// in from datacenters, GitHub's included.
     #[tokio::test]
     #[ignore = "online"]
     async fn yt_dlp_finds_a_stream() {
