@@ -4,6 +4,9 @@
 //! Every input is followed by [`Harness::settle`], which hands the app what its background tasks
 //! send and draws until nothing is left to do. The clock stands still unless [`Harness::wait`]
 //! moves it on, so screens come out the same on every run.
+//!
+//! [`Harness::demo`] shows the demo's sample. [`Harness::fakes`] signs in to fake services
+//! instead (see [`crate::backend::fake`]), whose players play, and which tests can make fail.
 
 use std::{
     path::PathBuf,
@@ -22,7 +25,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app::{App, AppEvent, Start},
-    backend::Service,
+    backend::{Catalog, Service, fake},
     clock,
     demo::Demo,
     graphics::ImageTerminal,
@@ -39,6 +42,7 @@ pub struct Harness {
     events: UnboundedReceiver<AppEvent>,
     terminal: Terminal<TestBackend>,
     root: PathBuf,
+    fakes: Vec<fake::Fake>,
 }
 
 impl Harness {
@@ -48,11 +52,7 @@ impl Harness {
     }
 
     pub async fn demo_sized(width: u16, height: u16) -> Self {
-        static RUNS: AtomicUsize = AtomicUsize::new(0);
-        let run = RUNS.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("cloofy-harness-{}-{run}", std::process::id()));
-        let paths =
-            Paths { config: root.join("config"), data: root.join("data"), cache: root.join("cache"), keychain: false };
+        let (root, paths) = new_paths();
         let demo = Arc::new(Demo::sample().expect("the demo sample loads"));
         let (tx, events) = mpsc::unbounded_channel();
         let service = Service::of(&demo.playing.track.uri);
@@ -60,10 +60,51 @@ impl Harness {
         let loader = Loader::new(Vec::new(), service, tx, ImageTerminal::halfblocks(), images, false)
             .with_demo(Some(demo.clone()));
         let app = App::new(loader, Preferences::default(), Start::Demo(&demo), paths, None, None);
-        let terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
-        let mut harness = Self { app, events, terminal, root };
+        Self::start(app, events, root, Vec::new(), (width, height)).await
+    }
+
+    /// A first start, signed in to a fake of each of `services`, whose players are up. The first
+    /// service is the one shown.
+    pub async fn fakes(services: &[Service]) -> Self {
+        let mut harness = Self::fakes_connecting(services).await;
+        for fake in harness.fakes.clone() {
+            fake.connect();
+        }
         harness.settle().await;
         harness
+    }
+
+    /// Like [`Harness::fakes`], with every player still connecting until a test calls
+    /// [`fake::Fake::connect`].
+    pub async fn fakes_connecting(services: &[Service]) -> Self {
+        let (root, paths) = new_paths();
+        let (tx, events) = mpsc::unbounded_channel();
+        let fakes: Vec<_> = services.iter().map(|service| fake::Fake::new(*service, tx.clone())).collect();
+        let started =
+            fakes.iter().map(|fake| (fake.service(), Ok(Catalog::Fake(fake::Catalog(fake.clone()))))).collect();
+        let images = paths.cache.join("images");
+        let loader = Loader::new(started, services.first().copied(), tx, ImageTerminal::halfblocks(), images, false);
+        let start = Start::Restore(Box::default());
+        let app = App::new(loader, Preferences::default(), start, paths, None, None);
+        Self::start(app, events, root, fakes, (120, 36)).await
+    }
+
+    async fn start(
+        app: App,
+        events: UnboundedReceiver<AppEvent>,
+        root: PathBuf,
+        fakes: Vec<fake::Fake>,
+        (width, height): (u16, u16),
+    ) -> Self {
+        let terminal = Terminal::new(TestBackend::new(width, height)).expect("a test terminal");
+        let mut harness = Self { app, events, terminal, root, fakes };
+        harness.settle().await;
+        harness
+    }
+
+    /// The fake standing in for `service`.
+    pub fn fake(&self, service: Service) -> &fake::Fake {
+        self.fakes.iter().find(|fake| fake.service() == service).expect("a fake of that service")
     }
 
     /// Presses `code`.
@@ -108,6 +149,12 @@ impl Harness {
             let step = left.min(TICK);
             clock::advance(step);
             left -= step;
+            for fake in &self.fakes {
+                fake.catch_up();
+            }
+            while let Ok(event) = self.events.try_recv() {
+                self.app.on_event(event);
+            }
             self.app.on_tick();
         }
         self.settle().await;
@@ -183,6 +230,14 @@ impl Harness {
         })
     }
 
+    /// The player bar's three rows.
+    pub fn player_bar(&self) -> String {
+        let screen = self.screen();
+        let rows: Vec<_> = screen.lines().collect();
+        // Above an empty row and the key hints.
+        rows[rows.len() - 5..rows.len() - 2].join("\n")
+    }
+
     pub fn shows(&self, text: &str) -> bool {
         self.find(text).is_some()
     }
@@ -212,6 +267,16 @@ impl Drop for Harness {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+/// A directory of its own for each harness.
+fn new_paths() -> (PathBuf, Paths) {
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    let run = RUNS.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("cloofy-harness-{}-{run}", std::process::id()));
+    let paths =
+        Paths { config: root.join("config"), data: root.join("data"), cache: root.join("cache"), keychain: false };
+    (root, paths)
 }
 
 /// The rows that differ, before and after.
