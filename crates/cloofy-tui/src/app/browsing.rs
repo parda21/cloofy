@@ -368,7 +368,7 @@ mod tests {
             Paths { config: root.join("config"), data: root.join("data"), cache: root.join("cache"), keychain: false };
         let (tx, _) = mpsc::unbounded_channel();
         let loader = Loader::for_tests(services, problems, tx);
-        App::new(loader, Preferences::default(), Start::Restore(Box::new(state)), paths, None, None)
+        App::new(loader, Preferences::default(), Start::Restore(Box::new(state)), paths, None, None, None)
     }
 
     fn page(view: SavedView) -> Page {

@@ -69,13 +69,11 @@ impl Palette {
 
     /// Whether this is a light theme, with dark text on a light background.
     pub fn is_light(&self) -> bool {
-        let Rgb(r, g, b) = Rgb::of(self.bg);
-        // The way Omarchy tells, by the sum of the channels.
-        u16::from(r) + u16::from(g) + u16::from(b) > 382
+        Rgb::of(self.bg).is_light()
     }
 }
 
-/// A lock rather than constants, so the colors can follow the system's theme. Drawing only
+/// A lock rather than constants, so the colors can follow the system's theme or the terminal's. Drawing only
 /// reads it, which costs next to nothing while nobody writes.
 static PALETTE: RwLock<Palette> = RwLock::new(Palette::DEFAULT);
 
@@ -86,7 +84,6 @@ pub fn palette() -> Palette {
 }
 
 /// Draws with `palette` from the next frame on.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Only Omarchy's theme feeds it so far.
 pub fn set_palette(palette: Palette) {
     *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = palette;
 }
@@ -98,6 +95,12 @@ impl Rgb {
     pub fn mix(self, other: Rgb, t: f32) -> Rgb {
         let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
         Rgb(lerp(self.0, other.0), lerp(self.1, other.1), lerp(self.2, other.2))
+    }
+
+    /// Whether dark text reads better on it than light text.
+    pub fn is_light(self) -> bool {
+        // The way Omarchy tells, by the sum of the channels.
+        u16::from(self.0) + u16::from(self.1) + u16::from(self.2) > 382
     }
 
     /// The parts of a palette color, which is always RGB; anything else counts as black.

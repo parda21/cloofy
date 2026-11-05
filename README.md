@@ -220,13 +220,14 @@ Installed with Homebrew, mise, a system package or Nix, cloofy leaves its update
 
 ## Settings
 
-<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
 
 ```toml
 client_id = "your client id"
 services = ["ytmusic"]     # "spotify", "ytmusic" or both, in the switch's order; every one built in when missing
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
 covers = false             # no cover art, for slower computers; on when missing
+colors = "terminal"        # "cloofy" or "terminal"; Omarchy's theme there, cloofy's own elsewhere, when missing
 accent = "violet"          # "theme", "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
 images = "blocks"          # "kitty", "sixel", "iterm2" or "blocks"; detected from the terminal when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
@@ -236,7 +237,9 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
-The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the Omarchy theme's, and cloofy's green elsewhere.
+The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the Omarchy theme's or `theme.toml`'s, and cloofy's green elsewhere.
+
+cloofy draws with its own dark colors, or with Omarchy's theme. With Colors set to Terminal, it takes your terminal's background and text instead, with the shades in between. To pick colors yourself, put any of `bg`, `surface`, `player`, `raised`, `text`, `muted`, `faint`, `accent` and the [others](integrations/omarchy/cloofy.toml.tpl) in `~/.config/cloofy/theme.toml`, as `bg = "#2b0a3d"`; they go over whichever colors are set, and cloofy follows the file as you edit it.
 
 Power saving stops animations and redraws less often. Unless set otherwise, it turns on by itself with Low Power Mode on macOS and the Power Saver profile on Linux.
 

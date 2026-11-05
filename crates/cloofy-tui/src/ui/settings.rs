@@ -10,7 +10,7 @@ use super::text;
 use crate::{
     app::{App, Focus, Hit},
     graphics::ImageProtocol,
-    preferences::{SECTIONS, Setting},
+    preferences::{ColorChoice, SECTIONS, Setting},
     theme,
     views::View,
 };
@@ -133,6 +133,9 @@ fn about(app: &App, setting: Setting) -> Cow<'static, str> {
     match setting {
         Setting::Notifications if !app.can_notify() && !app.is_demo() => {
             "This terminal can't show notifications; see the README for which ones can.".into()
+        }
+        Setting::Colors if app.prefs.colors == ColorChoice::Terminal && !app.knows_terminal_colors() => {
+            "This terminal doesn't tell its colors, so cloofy keeps its own.".into()
         }
         Setting::Images if app.prefs.images == ImageProtocol::Auto => {
             format!("How covers reach the terminal. Auto picked {} here.", app.auto_image_protocol().label()).into()

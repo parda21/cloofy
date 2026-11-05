@@ -24,10 +24,10 @@ use ratatui::{
 };
 use ratatui_image::{
     FontSize,
-    picker::{Capability, Picker, ProtocolType},
+    picker::{Capability, Picker, ProtocolType, cap_parser::QueryStdioOptions},
 };
 
-use crate::snapshot::Placement;
+use crate::{colors::TerminalColors, snapshot::Placement};
 
 /// What the cells of a Sixel or iTerm2 image hold while the frame is drawn. Anything drawn over
 /// the image replaces it, which is how cloofy tells which cells still show the picture.
@@ -80,17 +80,18 @@ impl ImageProtocol {
 }
 
 /// What the terminal said about images at startup, kept so that the protocol can change later
-/// without asking again.
+/// without asking again. Its colors come with the same answer.
 #[derive(Clone)]
 pub struct ImageTerminal {
     picker: Picker,
     /// What `Auto` draws with.
     auto: ProtocolType,
+    colors: Option<TerminalColors>,
 }
 
 impl ImageTerminal {
-    /// Asks the terminal how it shows images and how big its cells are. Must run after entering
-    /// the alternate screen and before reading input events.
+    /// Asks the terminal how it shows images, how big its cells are and what its colors are.
+    /// Must run after entering the alternate screen and before reading input events.
     ///
     /// When `CLOOFY_IMAGES` forces a protocol, nothing is asked and cells are taken as 10×22 px:
     /// that is for measuring a protocol where the terminal cannot answer, like tmux in tests.
@@ -99,9 +100,16 @@ impl ImageTerminal {
             // Deprecated because a guessed font size draws images at the wrong size; fine here.
             #[allow(deprecated)]
             let picker = Picker::from_fontsize(FontSize { width: 10, height: 22 });
-            return Self { picker, auto: ProtocolType::Halfblocks };
+            return Self { picker, auto: ProtocolType::Halfblocks, colors: None };
         }
-        let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+        // The colors are in the same question, so they take no extra time.
+        let options = QueryStdioOptions {
+            terminal_background_color_osc: true,
+            terminal_foreground_color_osc: true,
+            ..QueryStdioOptions::default()
+        };
+        let picker = Picker::from_query_stdio_with_options(options).unwrap_or_else(|_| Picker::halfblocks());
+        let colors = TerminalColors::from_capabilities(picker.capabilities());
         let cell_size = picker.capabilities().iter().any(|cap| matches!(cap, Capability::CellSize(Some(_))));
         let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
         let host = Host {
@@ -118,13 +126,19 @@ impl ImageTerminal {
             font.height,
             if picker.tmux_detected() { ", in tmux" } else { "" },
         );
-        Self { picker, auto }
+        tracing::info!("colors: terminal answered {colors:?}");
+        Self { picker, auto, colors }
     }
 
     /// Half blocks, without asking a terminal, for tests.
     #[cfg(test)]
     pub fn halfblocks() -> Self {
-        Self { picker: Picker::halfblocks(), auto: ProtocolType::Halfblocks }
+        Self { picker: Picker::halfblocks(), auto: ProtocolType::Halfblocks, colors: None }
+    }
+
+    /// The terminal's background and text colors, if it told them.
+    pub fn colors(&self) -> Option<TerminalColors> {
+        self.colors
     }
 
     /// What `Auto` draws with in this terminal.
@@ -433,7 +447,7 @@ mod tests {
     const FONT: FontSize = FontSize { width: 10, height: 20 };
 
     fn terminal(auto: ProtocolType) -> ImageTerminal {
-        ImageTerminal { picker: Picker::halfblocks(), auto }
+        ImageTerminal { picker: Picker::halfblocks(), auto, colors: None }
     }
 
     #[test]

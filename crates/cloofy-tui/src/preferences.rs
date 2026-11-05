@@ -17,6 +17,7 @@ pub struct Preferences {
     pub crossfade: u64,
     pub covers: bool,
     pub images: ImageProtocol,
+    pub colors: ColorChoice,
     pub accent: AccentChoice,
     pub icons: IconChoice,
     pub power_saving: PowerSaving,
@@ -36,6 +37,11 @@ impl Preferences {
             crossfade: config.crossfade.unwrap_or(0).min(12),
             covers: config.covers != Some(false),
             images: config.images.as_deref().and_then(ImageProtocol::parse).unwrap_or_default(),
+            colors: match config.colors.as_deref() {
+                Some("cloofy") => ColorChoice::Cloofy,
+                Some("terminal") => ColorChoice::Terminal,
+                _ => ColorChoice::Auto,
+            },
             accent: AccentChoice::from_config(config.accent.as_deref()),
             icons: match config.icons.as_deref() {
                 Some("nerd") => IconChoice::Nerd,
@@ -70,6 +76,7 @@ impl Preferences {
             Setting::Crossfade => format!("{} s", self.crossfade),
             Setting::Covers => on_off(self.covers),
             Setting::Images => self.images.label().to_owned(),
+            Setting::Colors => self.colors.label().to_owned(),
             Setting::Accent => self.accent.label().to_owned(),
             Setting::Icons => self.icons.label().to_owned(),
             Setting::PowerSaving => self.power_saving.label().to_owned(),
@@ -84,7 +91,12 @@ impl Preferences {
             Setting::Covers => Some(self.covers),
             Setting::Notifications => Some(self.notifications),
             Setting::UpdateCheck => Some(self.update_check),
-            Setting::Crossfade | Setting::Images | Setting::Accent | Setting::Icons | Setting::PowerSaving => None,
+            Setting::Crossfade
+            | Setting::Images
+            | Setting::Colors
+            | Setting::Accent
+            | Setting::Icons
+            | Setting::PowerSaving => None,
         }
     }
 
@@ -94,6 +106,7 @@ impl Preferences {
             Setting::Crossfade => self.crossfade = cycle(&CROSSFADE_STEPS, &self.crossfade, forward),
             Setting::Covers => self.covers = !self.covers,
             Setting::Images => self.images = cycle(&ImageProtocol::ALL, &self.images, forward),
+            Setting::Colors => self.colors = cycle(&ColorChoice::ALL, &self.colors, forward),
             Setting::Accent => self.accent = cycle(&AccentChoice::ALL, &self.accent, forward),
             Setting::Icons => self.icons = cycle(&IconChoice::ALL, &self.icons, forward),
             Setting::PowerSaving => self.power_saving = cycle(&PowerSaving::ALL, &self.power_saving, forward),
@@ -113,6 +126,7 @@ impl Preferences {
                 "images",
                 (self.images != ImageProtocol::Auto).then(|| Value::from(self.images.label().to_lowercase())),
             ),
+            Setting::Colors => ("colors", self.colors.config().map(Value::from)),
             Setting::Accent => ("accent", self.accent.config().map(Value::from)),
             Setting::Icons => ("icons", self.icons.config().map(Value::from)),
             Setting::PowerSaving => ("power_saving", self.power_saving.config().map(Value::from)),
@@ -135,6 +149,7 @@ pub enum Setting {
     Crossfade,
     Covers,
     Images,
+    Colors,
     Accent,
     Icons,
     PowerSaving,
@@ -145,7 +160,7 @@ pub enum Setting {
 /// The Settings page: section titles with their settings, in order.
 pub const SECTIONS: [(&str, &[Setting]); 4] = [
     ("Playback", &[Setting::Crossfade]),
-    ("Display", &[Setting::Covers, Setting::Images, Setting::Accent, Setting::Icons]),
+    ("Display", &[Setting::Covers, Setting::Images, Setting::Colors, Setting::Accent, Setting::Icons]),
     ("Power", &[Setting::PowerSaving]),
     ("Notifications and updates", &[Setting::Notifications, Setting::UpdateCheck]),
 ];
@@ -161,6 +176,7 @@ impl Setting {
             Setting::Crossfade => "Crossfade",
             Setting::Covers => "Cover art",
             Setting::Images => "Cover images",
+            Setting::Colors => "Colors",
             Setting::Accent => "Accent color",
             Setting::Icons => "Icons",
             Setting::PowerSaving => "Power saving",
@@ -174,6 +190,7 @@ impl Setting {
             Setting::Crossfade => "Let songs fade into each other.",
             Setting::Covers => "Turn off to save memory and processor time on slower computers.",
             Setting::Images => "How covers reach the terminal. Blocks work in every terminal.",
+            Setting::Colors => "Auto follows Omarchy's theme; Terminal takes the terminal's background and text.",
             Setting::Accent => "Follows the cover of the playing song or the system's theme, or stays one color.",
             Setting::Icons => "Text icons work with every font; Nerd Font icons need one installed.",
             Setting::PowerSaving => "Stops animations and redraws less often. Auto follows the system.",
@@ -187,7 +204,7 @@ impl Setting {
 pub enum AccentChoice {
     /// The dominant color of the playing cover.
     Cover,
-    /// The palette's accent, which Omarchy's theme sets; cloofy's green elsewhere.
+    /// The palette's accent, which Omarchy's theme or `theme.toml` sets; cloofy's green elsewhere.
     Theme,
     Fixed(NamedColor),
 }
@@ -272,6 +289,38 @@ impl NamedColor {
             NamedColor::Pink => Rgb(255, 143, 177),
             NamedColor::Blue => Rgb(96, 165, 250),
             NamedColor::Orange => Rgb(251, 146, 60),
+        }
+    }
+}
+
+/// Where the interface's colors come from. `theme.toml` in the config folder goes over any of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorChoice {
+    /// Omarchy's theme where there is one, cloofy's own colors elsewhere.
+    Auto,
+    /// cloofy's own dark colors, also on Omarchy.
+    Cloofy,
+    /// The terminal's background and text, with the shades in between; cloofy's own colors
+    /// when the terminal doesn't tell them.
+    Terminal,
+}
+
+impl ColorChoice {
+    const ALL: [ColorChoice; 3] = [ColorChoice::Auto, ColorChoice::Cloofy, ColorChoice::Terminal];
+
+    fn config(self) -> Option<&'static str> {
+        match self {
+            ColorChoice::Auto => None,
+            ColorChoice::Cloofy => Some("cloofy"),
+            ColorChoice::Terminal => Some("terminal"),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            ColorChoice::Auto => "Auto",
+            ColorChoice::Cloofy => "cloofy",
+            ColorChoice::Terminal => "Terminal",
         }
     }
 }

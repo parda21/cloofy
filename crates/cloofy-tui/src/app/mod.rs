@@ -35,6 +35,7 @@ use ratatui::{
 use crate::clock::Instant;
 use crate::{
     backend::{self, Player, Remote, Service},
+    colors::Colors,
     commands::Command,
     fx::{Effect, Effects},
     graphics::{INLINE_CELL, ImageProtocol, InlineLayer},
@@ -483,6 +484,8 @@ pub struct App {
     /// The system's settings with the user's choice for power saving applied.
     pub settings: Settings,
     settings_checked: Instant,
+    /// Where the palette comes from; `None` in tests, which keep cloofy's own colors.
+    colors: Option<Colors>,
     pub accent: Accent,
     /// The color of the playing cover, for when the accent follows it.
     cover_accent: Option<Rgb>,
@@ -605,8 +608,13 @@ impl App {
         paths: Paths,
         media: Option<cloofy_os::media::Controls>,
         notifier: Option<Notifier>,
+        mut colors: Option<Colors>,
     ) -> Self {
         let system_settings = system_settings();
+        // The palette from the first frame on, and the accent the app starts with.
+        if let Some(palette) = colors.as_mut().and_then(Colors::poll) {
+            theme::set_palette(palette);
+        }
         let mut accent = Accent::new();
         if let Some(color) = prefs.accent.fixed() {
             accent.jump(color);
@@ -656,6 +664,7 @@ impl App {
             slept_at: None,
             system_settings,
             settings_checked: Instant::now(),
+            colors,
             accent,
             cover_accent: None,
             me: None,
