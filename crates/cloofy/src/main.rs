@@ -27,7 +27,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, builder::PossibleValuesParser};
 use cloofy_core::{config::Config, paths::Paths, service::Service};
 use cloofy_tui::SERVICES;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{filter::Targets, fmt, prelude::*};
 
 #[derive(Parser)]
 #[command(name = "cloofy", version = version(), about = about())]
@@ -206,16 +206,20 @@ fn services(paths: &Paths, named: Option<&str>) -> Result<Vec<Service>> {
 
 /// Logs go to stderr for CLI commands; the TUI owns the screen, so it logs to a file.
 fn init_logging(paths: &Paths, tui: bool) -> Result<()> {
-    let filter = EnvFilter::try_from_env("CLOOFY_LOG").unwrap_or_else(|_| EnvFilter::new("error"));
-    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    // Same syntax as before, such as `info,librespot=debug`, without EnvFilter's regexes.
+    let filter = std::env::var("CLOOFY_LOG")
+        .ok()
+        .and_then(|filter| filter.parse::<Targets>().ok())
+        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::ERROR));
+    let logs = tracing_subscriber::registry().with(filter);
     if tui {
         std::fs::create_dir_all(&paths.cache)?;
         std::fs::File::create(paths.log_file())?;
         // Append mode: the TUI also redirects stderr into this file.
         let file = std::fs::OpenOptions::new().append(true).open(paths.log_file())?;
-        builder.with_ansi(false).with_writer(std::sync::Mutex::new(file)).init();
+        logs.with(fmt::layer().with_ansi(false).with_writer(std::sync::Mutex::new(file))).init();
     } else {
-        builder.with_writer(std::io::stderr).init();
+        logs.with(fmt::layer().with_writer(std::io::stderr)).init();
     }
     Ok(())
 }

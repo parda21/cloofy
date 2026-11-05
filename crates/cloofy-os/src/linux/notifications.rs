@@ -11,7 +11,7 @@ use std::{
 };
 
 use futures::StreamExt;
-use zbus::{Connection, Proxy, zvariant::Value};
+use zbus::{Connection, Proxy, Variant};
 
 use super::{bus, media};
 
@@ -73,19 +73,19 @@ impl Drop for Notifications {
     }
 }
 
-type NotifyArguments<'a> = (&'a str, u32, &'a str, &'a str, &'a str, &'a [&'a str], HashMap<&'a str, Value<'a>>, i32);
+type NotifyArguments<'a> = (&'a str, u32, &'a str, &'a str, &'a str, &'a [&'a str], HashMap<&'a str, Variant<'a>>, i32);
 
 /// What `Notify` takes: app, the notification it replaces, icon, title, body, actions, hints
 /// and how long it shows (the server's choice).
 fn notify_arguments<'a>(replaces: u32, title: &'a str, body: &'a str, image: Option<&Path>) -> NotifyArguments<'a> {
     let mut hints = HashMap::from([
-        ("desktop-entry", Value::from("cloofy")),
-        ("omarchy-glyph", Value::from(GLYPH)),
+        ("desktop-entry", Variant::from("cloofy")),
+        ("omarchy-glyph", Variant::from(GLYPH)),
         // Low: a new song is worth a glance, not an interruption.
-        ("urgency", Value::U8(0)),
+        ("urgency", Variant::U8(0)),
     ]);
     if let Some(url) = image.and_then(|path| url::Url::from_file_path(path).ok()) {
-        hints.insert("image-path", Value::from(url.to_string()));
+        hints.insert("image-path", Variant::from(url.to_string()));
     }
     // The action a click on the notification takes; it shows no button. A slice, since a fixed
     // array would go over the bus as a structure, which `Notify` doesn't take.
@@ -142,7 +142,7 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use zbus::zvariant::DynamicType;
+    use zbus::DynamicType;
 
     use super::*;
 
@@ -151,7 +151,7 @@ mod tests {
         let arguments = notify_arguments(3, "Strobe", "deadmau5", Some(Path::new("/run/cover.jpg")));
         assert_eq!(arguments.signature().to_string(), "(susssasa{sv}i)");
         assert_eq!(arguments.1, 3, "replaces the one before");
-        assert_eq!(arguments.6["image-path"], Value::from("file:///run/cover.jpg"));
+        assert_eq!(arguments.6["image-path"], Variant::from("file:///run/cover.jpg"));
     }
 
     #[test]

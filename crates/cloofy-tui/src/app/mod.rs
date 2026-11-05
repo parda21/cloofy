@@ -27,12 +27,15 @@ use cloofy_core::{
 };
 use cloofy_os::settings::Settings;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Position, Rect, Size};
-use tachyonfx::{CellFilter, Effect, EffectManager, Interpolation, Motion, fx};
+use ratatui::{
+    buffer::Cell,
+    layout::{Position, Rect, Size},
+};
 
 use crate::{
     backend::{self, Player, Remote, Service},
     commands::Command,
+    fx::{Effect, Effects},
     graphics::{INLINE_CELL, ImageProtocol, InlineLayer},
     loader::{DataEvent, Loader, Picture},
     media::MediaSync,
@@ -78,6 +81,13 @@ const ZEN_COVER_RETRY: Duration = Duration::from_secs(10);
 const SCROLL_STEP: isize = 3;
 /// The character Kitty's unicode-placeholder images are drawn with.
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
+
+/// Cells animations leave alone. Kitty images are drawn through placeholder cells whose color
+/// encodes the image, so recoloring them would show the wrong picture. Sixel and iTerm2 images
+/// aren't recolored either, so that they keep counting as uncovered.
+pub fn not_animated(cell: &Cell) -> bool {
+    cell.symbol().starts_with(KITTY_PLACEHOLDER) || cell.symbol() == INLINE_CELL
+}
 /// How often to check which device plays, and how soon to look again while a change sent to
 /// another device doesn't show yet.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
@@ -564,7 +574,7 @@ pub struct App {
     last_click: Option<(Instant, Hit)>,
     /// The target clicked last, where it was and when, so it can light up for a moment.
     pressed: Option<(Hit, Rect, Instant)>,
-    pub effects: EffectManager<Fx>,
+    pub effects: Effects<Fx>,
     pub last_draw: Instant,
     pub content_area: Rect,
     pub screen: Rect,
@@ -701,7 +711,7 @@ impl App {
             seek_preview: None,
             last_click: None,
             pressed: None,
-            effects: EffectManager::default(),
+            effects: Effects::default(),
             last_draw: Instant::now(),
             content_area: Rect::default(),
             screen: Rect::default(),
@@ -2767,11 +2777,11 @@ impl App {
         let p = theme::palette();
         self.overlay_fx_pending = false;
         let effect = if self.settings.reduce_motion {
-            fx::fade_from_fg(p.raised, (150, Interpolation::QuadOut))
+            Effect::fade_in(p.raised, 150, area)
         } else {
-            fx::sweep_in(Motion::UpToDown, 6, 0, p.raised, (180, Interpolation::QuadOut))
+            Effect::sweep_down(p.raised, 6, 180, area)
         };
-        self.animate(Fx::Overlay, effect.with_area(area));
+        self.animate(Fx::Overlay, effect);
     }
 
     fn toggle_saved(&mut self) {
@@ -2856,7 +2866,7 @@ impl App {
         let p = theme::palette();
         self.zen = !self.zen;
         let screen = self.screen;
-        self.animate(Fx::Screen, fx::fade_from_fg(p.bg, (320, Interpolation::QuadOut)).with_area(screen));
+        self.animate(Fx::Screen, Effect::fade_in(p.bg, 320, screen));
     }
 
     /// Starts an animation; the next frame measures time from now. None in Low Power Mode.
@@ -2864,13 +2874,7 @@ impl App {
         if self.settings.low_power {
             return;
         }
-        // Kitty images are drawn through placeholder cells whose color encodes the image;
-        // recoloring them mid-animation would show the wrong picture. Sixel and iTerm2 images
-        // are not recolored either, so that they keep counting as uncovered.
-        let effect = effect.with_filter(CellFilter::eval_cell(|cell| {
-            !cell.symbol().starts_with(KITTY_PLACEHOLDER) && cell.symbol() != INLINE_CELL
-        }));
-        self.effects.add_unique_effect(slot, effect);
+        self.effects.start(slot, effect);
         self.last_draw = Instant::now();
     }
 
@@ -3374,7 +3378,7 @@ impl App {
                 self.focus = Focus::Content;
                 // A page seen before comes back at once, without the rest of a transition.
                 self.last_nav = Some(Instant::now());
-                self.effects.cancel_unique_effect(Fx::Content);
+                self.effects.cancel(&Fx::Content);
             }
             None => self.focus = Focus::Nav,
         }
@@ -3384,8 +3388,7 @@ impl App {
     fn animate_content(&mut self) {
         let p = theme::palette();
         let area = self.content_area;
-        let effect = fx::fade_from_fg(p.bg, (120, Interpolation::QuadOut)).with_area(area);
-        self.animate(Fx::Content, effect);
+        self.animate(Fx::Content, Effect::fade_in(p.bg, 120, area));
     }
 
     fn next_id(&mut self) -> u64 {

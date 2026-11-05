@@ -116,7 +116,7 @@ Homebrew's and Arch's YouTube Music packages bring mpv, yt-dlp and deno along; w
 - `bash -s -- --yes` installs without asking anything: the services you have, or Spotify the first time.
 - `bash -s -- --uninstall` removes cloofy, and its Omarchy setup.
 
-On platforms without a prebuilt binary, the installer builds cloofy with cargo, with only the services you picked. To do that yourself (Rust 1.88 or newer), name them as features; without any, you get both:
+On platforms without a prebuilt binary, the installer builds cloofy with cargo, with only the services you picked. To do that yourself (Rust 1.89 or newer), name them as features; without any, you get both:
 
 ```sh
 cargo install --git https://github.com/parda21/cloofy --locked cloofy --no-default-features --features ytmusic

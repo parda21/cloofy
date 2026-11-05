@@ -36,12 +36,15 @@ use tokio::{
     sync::mpsc,
 };
 
+use tracing_subscriber::{filter::Targets, prelude::*};
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(std::io::stderr)
-        .init();
+    let filter = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|filter| filter.parse::<Targets>().ok())
+        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::ERROR));
+    tracing_subscriber::fmt().with_writer(std::io::stderr).finish().with(filter).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some((command, rest)) = args.split_first() else { bail!("usage: ytm <command> [args]") };
     let paths = Paths::resolve()?;

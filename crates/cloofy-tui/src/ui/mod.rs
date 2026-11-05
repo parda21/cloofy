@@ -27,7 +27,7 @@ use ratatui_image::Image;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, Focus, Hit},
+    app::{App, Focus, Hit, not_animated},
     graphics::INLINE_CELL,
     icons::icons,
     loader::{Graphic, Picture},
@@ -106,7 +106,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let elapsed = app.last_draw.elapsed();
     app.last_draw = Instant::now();
-    app.effects.process_effects(elapsed.into(), frame.buffer_mut(), area);
+    app.effects.process(elapsed, frame.buffer_mut(), not_animated);
     app.inline.prepare(frame.buffer_mut(), &app.placements);
     app.end_frame();
 }
