@@ -1,5 +1,6 @@
 //! Desktop notifications sent to the desktop's notification server itself, rather than through
-//! the terminal: that way they can carry the cover, which Omarchy's notifications show.
+//! the terminal: that way they carry the cover, and they also work in terminals without
+//! notifications of their own.
 
 use std::{
     collections::HashMap,
@@ -11,7 +12,7 @@ use std::{
 };
 
 use futures::StreamExt;
-use zbus::{Connection, Proxy, Variant};
+use zbus::{Connection, Proxy, Variant, fdo, names::WellKnownName};
 
 use super::{bus, media};
 
@@ -31,14 +32,24 @@ struct Shown {
     id: u32,
     image: Option<PathBuf>,
     written: u64,
+    /// Whether the server reads markup in the body, once asked.
+    markup: Option<bool>,
+}
+
+/// Whether a click on a notification brings cloofy's window to the front: on Hyprland.
+pub fn click_raises() -> bool {
+    media::can_raise()
 }
 
 impl Notifications {
-    /// `None` without a session bus.
+    /// `None` without a session bus, or without a notification server on it.
     pub fn new() -> Option<Self> {
-        let connection = bus::run(bus::session())?;
+        let connection = bus::run(async {
+            let connection = bus::session().await?;
+            has_server(&connection).await.then_some(connection)
+        })?;
         let shown = Arc::default();
-        if media::can_raise() {
+        if click_raises() {
             bus::spawn(raise_on_click(connection.clone(), Arc::downgrade(&shown)));
         }
         Some(Self { connection, shown })
@@ -48,13 +59,23 @@ impl Notifications {
     /// the notification shown before.
     pub fn show(&self, title: &str, body: &str, image: Option<Arc<[u8]>>) {
         let (connection, shown) = (self.connection.clone(), self.shown.clone());
-        let (title, body) = (title.to_owned(), escape(body));
+        let (title, body) = (title.to_owned(), body.to_owned());
         bus::spawn(async move {
+            let markup = shown.lock().unwrap_or_else(PoisonError::into_inner).markup;
+            let markup = match markup {
+                Some(markup) => markup,
+                None => {
+                    let markup = takes_markup(&connection).await;
+                    shown.lock().unwrap_or_else(PoisonError::into_inner).markup = Some(markup);
+                    markup
+                }
+            };
+            let body = if markup { escape(&body) } else { body };
             let (replaces, image) = {
                 let mut shown = shown.lock().unwrap_or_else(PoisonError::into_inner);
                 (shown.id, image.and_then(|image| shown.write(&image)))
             };
-            let arguments = notify_arguments(replaces, &title, &body, image.as_deref());
+            let arguments = notify_arguments(replaces, &title, &body, image.as_deref(), click_raises());
             let reply = connection.call_method(Some(SERVER), PATH, Some(SERVER), "Notify", &arguments).await;
             match reply.and_then(|reply| reply.body().deserialize::<u32>()) {
                 Ok(id) => shown.lock().unwrap_or_else(PoisonError::into_inner).id = id,
@@ -76,8 +97,15 @@ impl Drop for Notifications {
 type NotifyArguments<'a> = (&'a str, u32, &'a str, &'a str, &'a str, &'a [&'a str], HashMap<&'a str, Variant<'a>>, i32);
 
 /// What `Notify` takes: app, the notification it replaces, icon, title, body, actions, hints
-/// and how long it shows (the server's choice).
-fn notify_arguments<'a>(replaces: u32, title: &'a str, body: &'a str, image: Option<&Path>) -> NotifyArguments<'a> {
+/// and how long it shows (the server's choice). `clickable` where a click brings cloofy to the
+/// front.
+fn notify_arguments<'a>(
+    replaces: u32,
+    title: &'a str,
+    body: &'a str,
+    image: Option<&Path>,
+    clickable: bool,
+) -> NotifyArguments<'a> {
     let mut hints = HashMap::from([
         ("desktop-entry", Variant::from("cloofy")),
         ("omarchy-glyph", Variant::from(GLYPH)),
@@ -89,8 +117,35 @@ fn notify_arguments<'a>(replaces: u32, title: &'a str, body: &'a str, image: Opt
     }
     // The action a click on the notification takes; it shows no button. A slice, since a fixed
     // array would go over the bus as a structure, which `Notify` doesn't take.
-    let actions: &[&str] = &["default", "Show cloofy"];
+    let actions: &[&str] = if clickable { &["default", "Show cloofy"] } else { &[] };
     ("cloofy", replaces, "cloofy", title, body, actions, hints, -1)
+}
+
+/// Whether a notification server runs or the bus starts one when asked: without, notifications
+/// would go nowhere, as on a desktop without one or a server reached over SSH.
+async fn has_server(connection: &Connection) -> bool {
+    let found = async {
+        let bus = fdo::DBusProxy::new(connection).await?;
+        if bus.name_has_owner(WellKnownName::from_static_str_unchecked(SERVER).into()).await? {
+            return Ok(true);
+        }
+        let startable = bus.list_activatable_names().await?;
+        Ok::<_, fdo::Error>(startable.iter().any(|name| name.as_str() == SERVER))
+    };
+    found.await.inspect_err(|err| tracing::debug!("notification server: {err}")).unwrap_or(false)
+}
+
+/// Whether the server reads markup in the body; asked only once there is something to show, as
+/// asking starts a server that isn't running yet.
+async fn takes_markup(connection: &Connection) -> bool {
+    let reply = connection.call_method(Some(SERVER), PATH, Some(SERVER), "GetCapabilities", &()).await;
+    match reply.and_then(|reply| reply.body().deserialize::<Vec<String>>()) {
+        Ok(capabilities) => capabilities.iter().any(|capability| capability == "body-markup"),
+        Err(err) => {
+            tracing::debug!("notification server's capabilities: {err}");
+            false
+        }
+    }
 }
 
 /// Brings cloofy's window to the front when the notification on screen is clicked, for as long
@@ -135,7 +190,7 @@ impl Shown {
     }
 }
 
-/// The body may hold markup, so text that looks like it is escaped.
+/// For servers that read markup in the body, text that looks like it is escaped.
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -148,10 +203,14 @@ mod tests {
 
     #[test]
     fn calls_notify_with_its_signature() {
-        let arguments = notify_arguments(3, "Strobe", "deadmau5", Some(Path::new("/run/cover.jpg")));
+        let arguments = notify_arguments(3, "Strobe", "deadmau5", Some(Path::new("/run/cover.jpg")), true);
         assert_eq!(arguments.signature().to_string(), "(susssasa{sv}i)");
         assert_eq!(arguments.1, 3, "replaces the one before");
+        assert_eq!(arguments.5, ["default", "Show cloofy"]);
         assert_eq!(arguments.6["image-path"], Variant::from("file:///run/cover.jpg"));
+        let arguments = notify_arguments(0, "Strobe", "deadmau5", None, false);
+        assert!(arguments.5.is_empty(), "no click to offer where it does nothing");
+        assert_eq!(arguments.signature().to_string(), "(susssasa{sv}i)");
     }
 
     #[test]

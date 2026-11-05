@@ -7,8 +7,9 @@ description: Which terminals show cover art as real images, icons and notificati
 | --- | --- | --- | --- |
 | Ghostty, kitty, WezTerm | Real images | Built in | Yes |
 | iTerm2 | Real images | With a Nerd Font | Yes |
-| foot, Windows Terminal, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | No |
-| Others | Real images with Sixel, else blocks | With a Nerd Font | No |
+| foot, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | On Linux |
+| Windows Terminal | Real images | With a Nerd Font | No |
+| Others | Real images with Sixel, else blocks | With a Nerd Font | On Linux |
 
 Every terminal needs true color. Without a Nerd Font, pick text icons in [Settings](/docs/settings/).
 
@@ -22,8 +23,8 @@ cloofy draws covers through the Kitty graphics protocol, Sixel or the iTerm2 pro
 
 ## tmux
 
-Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. Notifications need `set -g focus-events on` and `set -g allow-passthrough all` in `~/.tmux.conf`.
+Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. Notifications need `set -g focus-events on`, and the terminal's own also `set -g allow-passthrough all`, in `~/.tmux.conf`.
 
-## Omarchy
+## Notifications
 
-On [Omarchy](/docs/omarchy/), notifications come from the desktop in every terminal, with the cover.
+kitty, Ghostty, WezTerm and iTerm2 show notifications themselves, and a click on one brings their window to the front. On Linux, every other terminal gets them from the desktop instead, with the cover: from GNOME, KDE Plasma or a notification daemon like mako or dunst. On Hyprland, [Omarchy](/docs/omarchy/) included, they always come from the desktop, in every terminal, and a click on one brings cloofy to the front. Over SSH, only terminals with notifications of their own show them.

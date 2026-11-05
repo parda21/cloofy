@@ -8,6 +8,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 - **Your terminal's colors.** Settings has Colors now. **Terminal** takes your terminal's background and text, with the shades in between mixed from them, so cloofy looks at home in a purple Ptyxis on Ubuntu or any other theme. **Auto** stays as before: Omarchy's theme there, cloofy's own dark colors elsewhere, which **cloofy** keeps everywhere.
 - **Your own colors.** Any of cloofy's colors in `~/.config/cloofy/theme.toml`, such as `bg = "#2b0a3d"`, go over the others. cloofy follows the file as you edit it.
+- **Notifications on Linux in every terminal.** Song notifications come from the desktop, with the cover, in terminals without notifications of their own, like Alacritty, foot, Konsole or GNOME Terminal: from GNOME, KDE Plasma or a notification daemon like mako or dunst. On Hyprland they always come from the desktop, as on Omarchy, and a click on one brings cloofy to the front. Over SSH they stay with the terminal.
 
 ### Changed
 
