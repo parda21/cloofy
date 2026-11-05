@@ -65,7 +65,7 @@ fn mix_info(id: &str, watch: &watch::Watch) -> PlaylistInfo {
         owner_id: String::new(),
         owner_name: "YouTube Music".into(),
         collaborative: false,
-        total: watch.tracks.len() as u32,
+        total: Some(watch.tracks.len() as u32),
         image_url: watch.tracks.first().and_then(|t| t.image_url.clone()),
     }
 }
@@ -105,7 +105,7 @@ fn parse_playlist(page: &Value, id: &str) -> Result<(PlaylistInfo, Vec<Track>, O
         owner_id,
         owner_name,
         collaborative: false,
-        total,
+        total: Some(total),
         image_url: parse::image(&header["thumbnail"], IMAGE_SIZE),
     };
     Ok((info, tracks, token))
@@ -288,7 +288,9 @@ async fn first_page(client: YtMusic, source: Source) -> Result<(Page<Track>, Sta
     if !is_mix(playlist) {
         let page = browse_playlist(api, playlist).await?;
         match parse_playlist(&page, playlist) {
-            Ok((info, tracks, token)) => return Ok(self::page(client, More::Playlist, tracks, token, 0, info.total)),
+            Ok((info, tracks, token)) => {
+                return Ok(self::page(client, More::Playlist, tracks, token, 0, info.total.unwrap_or_default()));
+            }
             Err(_) if playlist.starts_with("RD") => {}
             Err(err) => return Err(err),
         }
@@ -361,7 +363,7 @@ mod tests {
         assert_eq!(info.uri, "ytmusic:playlist:PLciALUPf8sIJlvH350O8PWh4UbSbOffSJ");
         assert_eq!(info.owner_name, "sweetchrisomine");
         assert_eq!(info.owner_id, "UCZzpKlkaLjrhI2rFnMjPdVg");
-        assert!(info.total >= 490, "{}", info.total);
+        assert!(info.total.is_some_and(|total| total >= 490), "{:?}", info.total);
         assert!(info.image_url.is_some());
         let first = &tracks[0];
         assert_eq!(first.name, "Like a Rolling Stone");

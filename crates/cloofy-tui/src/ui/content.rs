@@ -430,7 +430,10 @@ impl<'a> Summary<'a> {
                 ..plain(&a.uri, &a.name, a.artists.join(", "), icons.album, &a.image_url)
             },
             SearchEntry::Playlist(p) => {
-                let meta = format!("By {} · {} songs", p.owner_name, p.total);
+                let meta = match p.total {
+                    Some(total) => format!("By {} · {total} songs", p.owner_name),
+                    None => format!("By {}", p.owner_name),
+                };
                 plain(&p.uri, &p.name, meta, icons.playlist, &p.image_url)
             }
         })

@@ -337,7 +337,7 @@ fn library_item(item: &HomeItem, artist: Option<&str>) -> Option<LibraryItem> {
             owner_id: item.owner_id.clone(),
             owner_name: item.owner_name.clone(),
             collaborative: false,
-            total: 0,
+            total: None,
             image_url,
         }),
         ItemKind::Album => LibraryItem::Album(AlbumInfo {

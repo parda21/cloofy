@@ -76,7 +76,10 @@ async fn main() -> Result<()> {
             }
             println!("## Playlists");
             for playlist in &results.playlists {
-                println!("  {} — {} · {} songs [{}]", playlist.name, playlist.owner_name, playlist.total, playlist.uri);
+                println!(
+                    "  {} — {} · {:?} songs [{}]",
+                    playlist.name, playlist.owner_name, playlist.total, playlist.uri
+                );
             }
         }
         "suggest" => println!("{:#?}", client.suggestions(&rest.join(" ")).await?),
@@ -85,7 +88,7 @@ async fn main() -> Result<()> {
                 "playlist" => {
                     let info = client.playlist_info(&arg()?).await?;
                     println!(
-                        "{} by {} ({}) · {} songs · {:?}",
+                        "{} by {} ({}) · {:?} songs · {:?}",
                         info.name, info.owner_name, info.owner_id, info.total, info.image_url
                     );
                     Source::Playlist(arg()?)
@@ -93,7 +96,7 @@ async fn main() -> Result<()> {
                 "album" => {
                     let info = client.album_info(&arg()?).await?;
                     println!(
-                        "{} by {} ({}) · {} songs · {:?}",
+                        "{} by {} ({}) · {:?} songs · {:?}",
                         info.name,
                         info.artists.join(", "),
                         info.year,

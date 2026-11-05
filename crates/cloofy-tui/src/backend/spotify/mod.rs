@@ -5,9 +5,13 @@ mod player;
 mod queue;
 mod remote;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use cloofy_core::{
     artist::ArtistPage,
     catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User},
@@ -17,7 +21,9 @@ use cloofy_core::{
     lyrics::{Lyrics, LyricsQuery},
     paths::Paths,
 };
-use cloofy_spotify::{artist, catalog, connect, home, lyrics, pathfinder::Pathfinder, session, webapi::WebApi};
+use cloofy_spotify::{
+    artist, catalog, connect, home, library, lyrics, pathfinder::Pathfinder, search, session, webapi::WebApi,
+};
 use futures::{
     StreamExt, future,
     stream::{self, BoxStream},
@@ -45,6 +51,9 @@ const SAVED_CONCURRENCY: usize = 2;
 /// How long lyrics wait for the session, so a track restored at startup still gets Spotify's
 /// synced lyrics instead of going straight to LRCLIB.
 const LYRICS_SESSION_WAIT: Duration = Duration::from_secs(5);
+const SEARCH_SESSION_WAIT: Duration = Duration::from_secs(5);
+/// Longer, since the cached library shows meanwhile.
+const LIBRARY_SESSION_WAIT: Duration = Duration::from_secs(15);
 
 /// Signed in to both the Web API and librespot.
 pub struct Account {
@@ -75,7 +84,7 @@ impl Account {
 pub struct Catalog {
     api: Arc<WebApi>,
     session: Arc<watch::Sender<SessionState>>,
-    pathfinder: Arc<OnceCell<Pathfinder>>,
+    pathfinder: Arc<Mutex<Option<Arc<Pathfinder>>>>,
     pathfinder_hashes: PathBuf,
     /// The user's Spotify ID, to tell their own playlists from followed ones.
     user_id: Arc<OnceCell<String>>,
@@ -108,11 +117,20 @@ impl Catalog {
         }
     }
 
-    /// Spotify's internal API client, created once the session is up.
-    async fn pathfinder(&self) -> Result<&Pathfinder> {
+    /// Recreated after a reconnect, since the old session is shut down.
+    async fn pathfinder(&self) -> Result<Arc<Pathfinder>> {
         let session = self.session().await?;
-        let hashes = self.pathfinder_hashes.clone();
-        Ok(self.pathfinder.get_or_init(|| async move { Pathfinder::new(session, hashes) }).await)
+        let mut current = self.pathfinder.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(pathfinder) = current.as_ref().filter(|p| !p.session_lost()) {
+            return Ok(pathfinder.clone());
+        }
+        let pathfinder = Arc::new(Pathfinder::new(session, self.pathfinder_hashes.clone()));
+        *current = Some(pathfinder.clone());
+        Ok(pathfinder)
+    }
+
+    async fn pathfinder_within(&self, wait: Duration) -> Result<Arc<Pathfinder>> {
+        tokio::time::timeout(wait, self.pathfinder()).await.context("Spotify is still connecting")?
     }
 
     /// The user's ID; asks Spotify itself when `/me` has not answered yet, as happens for a
@@ -129,15 +147,23 @@ impl Catalog {
     }
 
     pub async fn home(&self) -> Result<Home> {
-        home::home(self.pathfinder().await?).await
+        home::home(&*self.pathfinder().await?).await
     }
 
     pub async fn artist(&self, uri: &str) -> Result<ArtistPage> {
-        artist::artist(self.pathfinder().await?, uri).await
+        artist::artist(&*self.pathfinder().await?, uri).await
     }
 
+    /// Playlists come from Spotify's own search, which finds the user's mixes.
     pub async fn search(&self, query: &str) -> Result<SearchResults> {
-        catalog::search(&self.api, query).await
+        let internal = async { search::playlists(&*self.pathfinder_within(SEARCH_SESSION_WAIT).await?, query).await };
+        let (results, internal) = tokio::join!(catalog::search(&self.api, query), internal);
+        let mut results = results?;
+        match internal {
+            Ok(found) => results.playlists = library::with_web_details(found, std::mem::take(&mut results.playlists)).0,
+            Err(err) => tracing::warn!("Spotify's own search failed, showing the Web API's playlists: {err:#}"),
+        }
+        Ok(results)
     }
 
     /// Pages after the first are fetched a few at a time and arrive in order.
@@ -210,8 +236,24 @@ impl Catalog {
             .boxed()
     }
 
+    /// Spotify's own library, which includes mixes, with song counts from the Web API.
     pub async fn playlists(&self) -> Result<Vec<PlaylistInfo>> {
-        catalog::playlists(&self.api).await
+        let internal = async { library::playlists(&*self.pathfinder_within(LIBRARY_SESSION_WAIT).await?).await };
+        match tokio::join!(internal, catalog::playlists(&self.api)) {
+            (Ok(found), Ok(web)) => {
+                let (mut playlists, rest) = library::with_web_details(found, web);
+                playlists.extend(rest);
+                Ok(playlists)
+            }
+            (Ok(found), Err(err)) => {
+                tracing::warn!("Web API playlists failed, showing them without song counts: {err:#}");
+                Ok(found)
+            }
+            (Err(err), web) => {
+                tracing::warn!("Spotify's own library failed, showing the Web API's playlists: {err:#}");
+                web
+            }
+        }
     }
 
     pub async fn liked_count(&self) -> Result<u32> {

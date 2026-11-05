@@ -114,7 +114,7 @@ fn playlist(row: &Value) -> Option<PlaylistInfo> {
         owner_id,
         owner_name,
         collaborative: false,
-        total: total.and_then(|t| parse::leading_number(t)).unwrap_or(0),
+        total: total.and_then(|t| parse::leading_number(t)),
         image_url: parse::image(&row["thumbnail"], IMAGE_SIZE),
     })
 }
@@ -156,7 +156,7 @@ mod tests {
         let featured: Vec<_> = rows(&fixture("search_featured")).iter().filter_map(playlist).collect();
         assert_eq!(featured[0].name, "Presenting Daft Punk");
         assert_eq!(featured[0].owner_name, "YouTube Music");
-        assert!(featured[0].total > 0);
+        assert!(featured[0].total.is_some_and(|total| total > 0));
         assert!(!featured[0].uri.contains(":VL"), "playlist URIs leave out the browse prefix");
 
         let community: Vec<_> = rows(&fixture("search_community")).iter().filter_map(playlist).collect();

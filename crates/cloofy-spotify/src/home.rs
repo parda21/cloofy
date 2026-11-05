@@ -4,11 +4,12 @@ use anyhow::{Context, Result};
 use cloofy_core::home::{Home, HomeItem, ItemKind, Shelf};
 use serde_json::{Value, json};
 
-use crate::pathfinder::{self, Pathfinder};
+use crate::{
+    parse::{image, names, strip_html, text},
+    pathfinder::{self, Pathfinder},
+};
 
 const SECTION_ITEMS: u32 = 20;
-/// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
-const IMAGE_WIDTH: u64 = 300;
 
 pub async fn home(pathfinder: &Pathfinder) -> Result<Home> {
     let variables = json!({
@@ -111,52 +112,9 @@ fn item(data: &Value) -> Option<HomeItem> {
     (!item.uri.is_empty() && !item.title.is_empty()).then_some(item)
 }
 
-/// The source closest to the preferred width.
-fn image(sources: Option<&Value>) -> Option<String> {
-    sources?
-        .as_array()?
-        .iter()
-        .min_by_key(|s| s["width"].as_u64().unwrap_or(IMAGE_WIDTH).abs_diff(IMAGE_WIDTH))
-        .and_then(|s| s["url"].as_str())
-        .map(str::to_owned)
-}
-
-fn names(list: Option<&Value>, pointer: &str) -> String {
-    list.and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.pointer(pointer).and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn text(value: &Value, pointer: &str) -> String {
-    value.pointer(pointer).and_then(Value::as_str).unwrap_or_default().to_owned()
-}
-
-/// Playlist descriptions contain links like `<a href=…>Artist</a>`.
-fn strip_html(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut in_tag = false;
-    for c in text.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out.replace("&amp;", "&").replace("&#x27;", "'").replace("&quot;", "\"")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn strips_links_from_descriptions() {
-        assert_eq!(strip_html(r#"With <a href="spotify:artist:1">Daft Punk</a> &amp; more"#), "With Daft Punk & more");
-    }
 
     #[test]
     fn parses_sections_and_skips_unknown_items() {

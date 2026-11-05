@@ -252,7 +252,7 @@ impl App {
                     owner_id,
                     owner_name: String::new(),
                     collaborative: false,
-                    total: 0,
+                    total: None,
                     image_url: target.image_url,
                 }));
             }

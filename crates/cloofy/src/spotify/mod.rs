@@ -53,7 +53,9 @@ pub async fn doctor(paths: &Paths, config: &Config, mut report: impl FnMut(Secti
     let internal = match session::prepare(paths) {
         Ok(pending) => match pending.connect().await {
             Ok(session) => {
-                let section = doctor::spclient(&session).await;
+                let pathfinder =
+                    cloofy_spotify::pathfinder::Pathfinder::new(session.clone(), paths.pathfinder_hashes());
+                let section = doctor::spclient(&session, &pathfinder).await;
                 session.shutdown();
                 section
             }

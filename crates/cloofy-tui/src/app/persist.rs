@@ -216,7 +216,7 @@ impl App {
                     owner_id,
                     owner_name,
                     collaborative,
-                    total: 0,
+                    total: None,
                     image_url,
                 }));
             }
