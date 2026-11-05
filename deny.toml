@@ -23,10 +23,6 @@ ignore = [
     { id = "RUSTSEC-2026-0195", reason = "quick-xml: needs the librespot fork on 0.41" },
     # fontdue's parser; only for dev snapshots (CLOOFY_SNAPSHOT_DIR), with local fonts.
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, dev snapshots only" },
-    # zbus 6 merges these, but needs a newer Rust than rust-version.
-    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, fixed by zbus 6" },
-    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, fixed by zbus 6" },
-    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, fixed by zbus 6" },
 ]
 
 [bans]

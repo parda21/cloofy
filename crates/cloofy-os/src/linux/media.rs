@@ -16,12 +16,11 @@ use std::{
 
 use tokio::sync::watch;
 use zbus::{
-    Connection, connection,
+    Connection, ObjectPath, OwnedObjectPath, Variant, connection,
     fdo::{self, RequestNameFlags},
     interface,
     names::InterfaceName,
     object_server::SignalEmitter,
-    zvariant::{ObjectPath, OwnedObjectPath, Value},
 };
 
 use super::bus;
@@ -70,12 +69,12 @@ impl Drop for Controls {
 /// when dropped.
 async fn connect(on_command: Callback) -> Option<Connection> {
     let connected = async {
-        let connection = connection::Builder::session()?
-            .serve_at(PATH, Root)?
-            .serve_at(PATH, Player { on_command, shown: Shown::new(Instant::now()) })?
+        let connection = connection::Builder::session()
+            .serve_at(PATH, Root)
+            .serve_at(PATH, Player { on_command, shown: Shown::new(Instant::now()) })
             .build()
             .await?;
-        let flags = RequestNameFlags::DoNotQueue.into();
+        let flags = RequestNameFlags::DO_NOT_QUEUE;
         match connection.request_name_with_flags(NAME, flags).await {
             Ok(_) => {}
             Err(zbus::Error::NameTaken) => {
@@ -220,7 +219,7 @@ impl Player {
     }
 
     #[zbus(property)]
-    fn metadata(&self) -> HashMap<&str, Value<'_>> {
+    fn metadata(&self) -> HashMap<&str, Variant<'_>> {
         self.shown.metadata()
     }
 
@@ -314,7 +313,7 @@ struct Current {
 /// What an update changed, for the signals that tell clients.
 #[derive(Debug, Default, PartialEq)]
 struct Changes {
-    properties: HashMap<&'static str, Value<'static>>,
+    properties: HashMap<&'static str, Variant<'static>>,
     /// The new position, when it jumped.
     seeked: Option<Duration>,
 }
@@ -332,23 +331,23 @@ impl Shown {
         }
     }
 
-    fn metadata(&self) -> HashMap<&'static str, Value<'static>> {
+    fn metadata(&self) -> HashMap<&'static str, Variant<'static>> {
         let Some(Current { track, id, art_url }) = &self.track else { return HashMap::new() };
         let mut metadata = HashMap::from([
-            ("mpris:trackid", Value::from(id.clone())),
-            ("mpris:length", Value::from(micros(track.duration))),
-            ("xesam:title", Value::from(track.title.clone())),
+            ("mpris:trackid", Variant::from(id.clone())),
+            ("mpris:length", Variant::from(micros(track.duration))),
+            ("xesam:title", Variant::from(track.title.clone())),
             // One entry: the names come joined, and some contain commas themselves.
-            ("xesam:artist", Value::from(vec![track.artist.clone()])),
+            ("xesam:artist", Variant::from(vec![track.artist.clone()])),
         ]);
         if !track.album.is_empty() {
-            metadata.insert("xesam:album", Value::from(track.album.clone()));
+            metadata.insert("xesam:album", Variant::from(track.album.clone()));
         }
         if let Some(url) = art_url {
-            metadata.insert("mpris:artUrl", Value::from(url.clone()));
+            metadata.insert("mpris:artUrl", Variant::from(url.clone()));
         }
         if let Some(link) = &track.link {
-            metadata.insert("xesam:url", Value::from(link.clone()));
+            metadata.insert("xesam:url", Variant::from(link.clone()));
         }
         metadata
     }
@@ -384,18 +383,18 @@ impl Shown {
 
         let mut changes = Changes { seeked: seeked.then_some(state.position), ..Changes::default() };
         if self.status() != status {
-            changes.properties.insert("PlaybackStatus", Value::from(self.status()));
+            changes.properties.insert("PlaybackStatus", Variant::from(self.status()));
         }
         let new_metadata = self.metadata();
         if new_metadata != metadata {
-            changes.properties.insert("Metadata", Value::from(new_metadata));
+            changes.properties.insert("Metadata", Variant::from(new_metadata));
         }
         if self.volume != volume {
-            changes.properties.insert("Volume", Value::from(fraction(self.volume)));
+            changes.properties.insert("Volume", Variant::from(fraction(self.volume)));
         }
         if self.track.is_some() != had_track {
             let can = self.track.is_some();
-            changes.properties.extend(CAPABILITIES.map(|name| (name, Value::from(can))));
+            changes.properties.extend(CAPABILITIES.map(|name| (name, Variant::from(can))));
         }
         changes
     }
@@ -597,13 +596,13 @@ mod tests {
         let mut shown = showing(playing("One More Time", 0), start);
         let changes = shown.show(playing("One More Time", 0), Some("file:///run/cover.jpg".into()), start);
         let metadata = shown.metadata();
-        assert_eq!(metadata["mpris:trackid"], Value::from(ObjectPath::from_static_str_unchecked("/cloofy/track/1")));
-        assert_eq!(metadata["mpris:length"], Value::I64(320_000_000));
-        assert_eq!(metadata["xesam:title"], Value::from("One More Time"));
-        assert_eq!(metadata["xesam:artist"], Value::from(vec!["Daft Punk, Romanthony"]));
-        assert_eq!(metadata["xesam:album"], Value::from("Discovery"));
-        assert_eq!(metadata["mpris:artUrl"], Value::from("file:///run/cover.jpg"));
-        assert_eq!(metadata["xesam:url"], Value::from("https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV"));
+        assert_eq!(metadata["mpris:trackid"], Variant::from(ObjectPath::from_static_str_unchecked("/cloofy/track/1")));
+        assert_eq!(metadata["mpris:length"], Variant::I64(320_000_000));
+        assert_eq!(metadata["xesam:title"], Variant::from("One More Time"));
+        assert_eq!(metadata["xesam:artist"], Variant::from(vec!["Daft Punk, Romanthony"]));
+        assert_eq!(metadata["xesam:album"], Variant::from("Discovery"));
+        assert_eq!(metadata["mpris:artUrl"], Variant::from("file:///run/cover.jpg"));
+        assert_eq!(metadata["xesam:url"], Variant::from("https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV"));
         assert_eq!(shown.status(), "Playing");
         // The cover came later: the same track, with new metadata.
         assert_eq!(changes.properties.keys().collect::<Vec<_>>(), [&"Metadata"]);
@@ -629,7 +628,7 @@ mod tests {
         let quieter = State { volume: 16384, ..playing("One More Time", 0) };
         let changes = shown.show(quieter, None, start);
         assert_eq!(changes.properties.keys().collect::<Vec<_>>(), [&"Volume"]);
-        assert_eq!(changes.properties["Volume"], Value::F64(16384.0 / 65535.0));
+        assert_eq!(changes.properties["Volume"], Variant::F64(16384.0 / 65535.0));
     }
 
     #[test]
@@ -649,14 +648,14 @@ mod tests {
         assert_eq!(shown.seek(1_000_000, start), None);
 
         let changes = shown.show(playing("One More Time", 0), None, start);
-        assert_eq!(changes.properties["PlaybackStatus"], Value::from("Playing"));
+        assert_eq!(changes.properties["PlaybackStatus"], Variant::from("Playing"));
         assert!(changes.properties.contains_key("Metadata"));
-        assert!(CAPABILITIES.iter().all(|name| changes.properties[name] == Value::Bool(true)));
+        assert!(CAPABILITIES.iter().all(|name| changes.properties[name] == Variant::Bool(true)));
 
         let changes = shown.show(State::default(), None, start);
-        assert_eq!(changes.properties["PlaybackStatus"], Value::from("Stopped"));
-        assert_eq!(changes.properties["Metadata"], Value::from(HashMap::<&str, Value>::new()));
-        assert!(CAPABILITIES.iter().all(|name| changes.properties[name] == Value::Bool(false)));
+        assert_eq!(changes.properties["PlaybackStatus"], Variant::from("Stopped"));
+        assert_eq!(changes.properties["Metadata"], Variant::from(HashMap::<&str, Variant>::new()));
+        assert!(CAPABILITIES.iter().all(|name| changes.properties[name] == Variant::Bool(false)));
     }
 
     #[test]
@@ -694,7 +693,7 @@ mod tests {
         assert_eq!(changes.seeked, None, "a new track starts where it starts");
         assert_eq!(
             shown.metadata()["mpris:trackid"],
-            Value::from(ObjectPath::from_static_str_unchecked("/cloofy/track/2"))
+            Variant::from(ObjectPath::from_static_str_unchecked("/cloofy/track/2"))
         );
         assert!(!changes.properties.contains_key("CanPlay"), "unchanged");
     }

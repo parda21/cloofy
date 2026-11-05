@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use futures::StreamExt;
-use zbus::{fdo::DBusProxy, names::BusName, proxy, zvariant::OwnedFd};
+use zbus::{OwnedFd, fdo::DBusProxy, names::BusName, proxy};
 
 use super::bus;
 use crate::power::Event;

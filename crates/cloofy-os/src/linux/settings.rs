@@ -12,7 +12,7 @@ use std::{
 };
 
 use futures::StreamExt;
-use zbus::{Proxy, proxy, zvariant::Value};
+use zbus::{Proxy, Variant, proxy};
 
 use super::bus;
 use crate::settings::Settings;
@@ -83,13 +83,13 @@ fn set_power_saver(profile: &str) {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Portal {
-    fn read_one(&self, namespace: &str, key: &str) -> zbus::Result<zbus::zvariant::OwnedValue>;
+    fn read_one(&self, namespace: &str, key: &str) -> zbus::Result<zbus::OwnedVariant>;
 
     /// What `ReadOne` replaced in version 2 of the interface, with the value in another variant.
-    fn read(&self, namespace: &str, key: &str) -> zbus::Result<zbus::zvariant::OwnedValue>;
+    fn read(&self, namespace: &str, key: &str) -> zbus::Result<zbus::OwnedVariant>;
 
     #[zbus(signal)]
-    fn setting_changed(&self, namespace: &str, key: &str, value: Value<'_>) -> zbus::Result<()>;
+    fn setting_changed(&self, namespace: &str, key: &str, value: Variant<'_>) -> zbus::Result<()>;
 }
 
 /// The settings that ask for less motion: the standard one, which portals have since 1.21, and
@@ -133,16 +133,16 @@ struct Motion {
 
 impl Motion {
     /// Takes in a setting; returns whether it was one about motion.
-    fn set(&mut self, namespace: &str, key: &str, value: &Value<'_>) -> bool {
+    fn set(&mut self, namespace: &str, key: &str, value: &Variant<'_>) -> bool {
         match (namespace, key, value) {
             // `Read` wraps the value once more.
-            (_, _, Value::Value(inner)) => self.set(namespace, key, inner),
+            (_, _, Variant::Variant(inner)) => self.set(namespace, key, inner),
             // 1 asks for less motion; unknown values count as no preference.
-            (_, _, Value::U32(preference)) if (namespace, key) == REDUCED_MOTION => {
+            (_, _, Variant::U32(preference)) if (namespace, key) == REDUCED_MOTION => {
                 self.reduced = *preference == 1;
                 true
             }
-            (_, _, Value::Bool(enabled)) if (namespace, key) == ANIMATIONS => {
+            (_, _, Variant::Bool(enabled)) if (namespace, key) == ANIMATIONS => {
                 self.animations_off = !enabled;
                 true
             }
@@ -162,20 +162,20 @@ mod tests {
     #[test]
     fn follows_either_motion_setting() {
         let mut motion = Motion::default();
-        assert!(motion.set("org.freedesktop.appearance", "reduced-motion", &Value::U32(1)));
+        assert!(motion.set("org.freedesktop.appearance", "reduced-motion", &Variant::U32(1)));
         assert!(motion.reduce());
-        motion.set("org.freedesktop.appearance", "reduced-motion", &Value::U32(0));
+        motion.set("org.freedesktop.appearance", "reduced-motion", &Variant::U32(0));
         assert!(!motion.reduce());
-        motion.set("org.gnome.desktop.interface", "enable-animations", &Value::Bool(false));
+        motion.set("org.gnome.desktop.interface", "enable-animations", &Variant::Bool(false));
         assert!(motion.reduce());
-        motion.set("org.gnome.desktop.interface", "enable-animations", &Value::Bool(true));
+        motion.set("org.gnome.desktop.interface", "enable-animations", &Variant::Bool(true));
         assert!(!motion.reduce());
     }
 
     #[test]
     fn reads_values_from_older_portals() {
         let mut motion = Motion::default();
-        let wrapped = Value::Value(Box::new(Value::U32(1)));
+        let wrapped = Variant::Variant(Box::new(Variant::U32(1)));
         assert!(motion.set("org.freedesktop.appearance", "reduced-motion", &wrapped));
         assert!(motion.reduce());
     }
@@ -183,10 +183,10 @@ mod tests {
     #[test]
     fn ignores_other_settings() {
         let mut motion = Motion::default();
-        assert!(!motion.set("org.freedesktop.appearance", "color-scheme", &Value::U32(1)));
-        assert!(!motion.set("org.gnome.desktop.interface", "enable-animations", &Value::U32(0)));
+        assert!(!motion.set("org.freedesktop.appearance", "color-scheme", &Variant::U32(1)));
+        assert!(!motion.set("org.gnome.desktop.interface", "enable-animations", &Variant::U32(0)));
         // Values the standard doesn't know count as no preference.
-        motion.set("org.freedesktop.appearance", "reduced-motion", &Value::U32(7));
+        motion.set("org.freedesktop.appearance", "reduced-motion", &Variant::U32(7));
         assert!(!motion.reduce());
     }
 }

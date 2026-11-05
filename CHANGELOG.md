@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Changed
+
+- **Rust 1.89** or newer builds cloofy from source, for the current D-Bus library on Linux.
+
 ### Fixed
 
 - **Spotify's mixes in your library.** The playlists Spotify makes for you, like Club Mix, Hip Hop Mix, the Daily Mixes and Discover Weekly, show up in your library once you've saved them in Spotify, in the order you picked there. So do the other Spotify playlists you follow. Spotify's Web API leaves them out, so cloofy now lists your library the way Spotify's own apps do.
