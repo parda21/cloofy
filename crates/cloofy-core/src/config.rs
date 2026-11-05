@@ -28,6 +28,9 @@ pub struct Config {
     pub power_saving: Option<String>,
     /// A color name such as `"violet"`; follows the playing cover when missing.
     pub accent: Option<String>,
+    /// `"cloofy"` or `"terminal"`: cloofy's own colors, or the terminal's background and text.
+    /// Omarchy's theme where there is one, cloofy's own elsewhere, when missing.
+    pub colors: Option<String>,
     /// How covers reach the terminal: `"kitty"`, `"sixel"`, `"iterm2"` or `"blocks"`; detected
     /// from the terminal when missing.
     pub images: Option<String>,

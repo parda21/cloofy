@@ -3,7 +3,7 @@ title: Settings
 description: cloofy's Settings page, and every option of config.toml.
 ---
 
-<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file.
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file.
 
 ## config.toml
 
@@ -14,6 +14,7 @@ client_id = "your client id"
 services = ["ytmusic"]     # "spotify", "ytmusic" or both, in the switch's order; every one built in when missing
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
 covers = false             # no cover art, for slower computers; on when missing
+colors = "terminal"        # "cloofy" or "terminal"; Omarchy's theme there, cloofy's own elsewhere, when missing
 accent = "violet"          # "theme", "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
 images = "blocks"          # "kitty", "sixel", "iterm2" or "blocks"; detected from the terminal when missing
 icons = "nerd"             # "nerd" or "text"; detected from the terminal when missing
@@ -23,7 +24,25 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
-The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the [Omarchy](/docs/omarchy/) theme's, and cloofy's green elsewhere.
+The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the one of the colors in use: `theme.toml`'s when it sets one, else the [Omarchy](/docs/omarchy/) theme's with Colors on Auto, and cloofy's green otherwise, also with Terminal.
+
+## Colors
+
+cloofy draws with its own dark colors, and on Omarchy with the [theme's](/docs/omarchy/). Set Colors to **Terminal** and it takes your terminal's background and text instead, with the shades in between mixed from them, so a purple terminal stays purple. Terminals that don't tell their colors keep cloofy's. **cloofy** keeps cloofy's own colors, on Omarchy too.
+
+To pick colors yourself, put any of them in `~/.config/cloofy/theme.toml`. They go over whichever colors the setting gives, and cloofy follows the file as you edit it, without a restart:
+
+```toml
+bg = "#2b0a3d"        # behind everything
+surface = "#33124a"   # the sidebar
+player = "#30104a"    # the player bar
+raised = "#3d1a55"    # cards, menus and buttons
+text = "#f4eefa"
+muted = "#b7a3c4"     # artists, counts and other secondary text
+accent = "#e95420"    # the accent while no cover sets one, and the "Theme" accent
+```
+
+The others are `faint`, `danger`, `unfocused`, `disabled`, `placeholder`, `thumb`, `lyric_near`, `lyric_far` and `highlight`; [Omarchy's template](https://github.com/parda21/cloofy/blob/main/integrations/omarchy/cloofy.toml.tpl) says what each is for.
 
 ## Cover art
 
@@ -46,5 +65,6 @@ On macOS, `credentials = "keychain"` keeps sign-ins in the Keychain instead of f
 | What | Where |
 | --- | --- |
 | Settings | `~/.config/cloofy/config.toml` |
+| Your own colors | `~/.config/cloofy/theme.toml` |
 | Sign-ins (unless in the Keychain) and session | `~/.local/share/cloofy` |
 | Caches and the log | `~/.cache/cloofy` |

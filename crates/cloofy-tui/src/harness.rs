@@ -59,7 +59,7 @@ impl Harness {
         let images = paths.cache.join("images");
         let loader = Loader::new(Vec::new(), service, tx, ImageTerminal::halfblocks(), images, false)
             .with_demo(Some(demo.clone()));
-        let app = App::new(loader, Preferences::default(), Start::Demo(&demo), paths, None, None);
+        let app = App::new(loader, Preferences::default(), Start::Demo(&demo), paths, None, None, None);
         Self::start(app, events, root, Vec::new(), (width, height)).await
     }
 
@@ -85,7 +85,7 @@ impl Harness {
         let images = paths.cache.join("images");
         let loader = Loader::new(started, services.first().copied(), tx, ImageTerminal::halfblocks(), images, false);
         let start = Start::Restore(Box::default());
-        let app = App::new(loader, Preferences::default(), start, paths, None, None);
+        let app = App::new(loader, Preferences::default(), start, paths, None, None, None);
         Self::start(app, events, root, fakes, (120, 36)).await
     }
 

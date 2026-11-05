@@ -86,6 +86,25 @@ pub fn palette(cloofy: Option<&str>, colors: &str) -> Palette {
     }
 }
 
+/// The palette for a terminal's own background and text: the shades mixed by the same template
+/// as a theme's, with cloofy's accent and red.
+pub fn terminal_palette(background: Rgb, foreground: Rgb) -> Palette {
+    let variables = [
+        ("background", background),
+        ("foreground", foreground),
+        ("bright_foreground", foreground),
+        ("accent", Palette::DEFAULT.accent),
+        ("red", Rgb::of(Palette::DEFAULT.danger)),
+    ];
+    let variables = variables.into_iter().map(|(key, color)| (key.to_owned(), color.hex())).collect();
+    read_palette(&render(TEMPLATE, &variables), Palette::DEFAULT)
+}
+
+/// `base` with the colors a `cloofy.toml`-style file such as `theme.toml` names.
+pub fn apply(text: &str, base: Palette) -> Palette {
+    read_palette(text, base)
+}
+
 /// `colors.toml` as the variables templates use, with the fallbacks Omarchy applies for the
 /// ones templates here need, so older themes that name only ANSI colors work too.
 pub fn variables(colors: &str) -> HashMap<String, String> {

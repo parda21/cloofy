@@ -69,13 +69,11 @@ impl Palette {
 
     /// Whether this is a light theme, with dark text on a light background.
     pub fn is_light(&self) -> bool {
-        let Rgb(r, g, b) = Rgb::of(self.bg);
-        // The way Omarchy tells, by the sum of the channels.
-        u16::from(r) + u16::from(g) + u16::from(b) > 382
+        Rgb::of(self.bg).is_light()
     }
 }
 
-/// A lock rather than constants, so the colors can follow the system's theme. Drawing only
+/// A lock rather than constants, so the colors can follow the system's theme or the terminal's. Drawing only
 /// reads it, which costs next to nothing while nobody writes.
 static PALETTE: RwLock<Palette> = RwLock::new(Palette::DEFAULT);
 
@@ -86,7 +84,6 @@ pub fn palette() -> Palette {
 }
 
 /// Draws with `palette` from the next frame on.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Only Omarchy's theme feeds it so far.
 pub fn set_palette(palette: Palette) {
     *PALETTE.write().unwrap_or_else(PoisonError::into_inner) = palette;
 }
@@ -98,6 +95,12 @@ impl Rgb {
     pub fn mix(self, other: Rgb, t: f32) -> Rgb {
         let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
         Rgb(lerp(self.0, other.0), lerp(self.1, other.1), lerp(self.2, other.2))
+    }
+
+    /// Whether dark text reads better on it than light text.
+    pub fn is_light(self) -> bool {
+        // The way Omarchy tells, by the sum of the channels.
+        u16::from(self.0) + u16::from(self.1) + u16::from(self.2) > 382
     }
 
     /// The parts of a palette color, which is always RGB; anything else counts as black.
@@ -161,8 +164,9 @@ impl Accent {
     }
 }
 
-/// Finds the dominant vivid hue of a cover and tunes it to read well on the background.
-pub fn accent_from_image(image: &DynamicImage) -> Rgb {
+/// The dominant vivid color of a cover, if it has one. [`cover_accent`] tunes it to the
+/// background when it is shown, so it follows a change of colors.
+pub fn dominant_color(image: &DynamicImage) -> Option<Rgb> {
     const BUCKETS: usize = 24;
     let mut buckets = [[0f32; 4]; BUCKETS];
     for pixel in image.thumbnail(40, 40).to_rgb8().pixels() {
@@ -183,10 +187,21 @@ pub fn accent_from_image(image: &DynamicImage) -> Rgb {
     }
     let [r, g, b, weight] = buckets.into_iter().max_by(|a, b| a[3].total_cmp(&b[3])).unwrap_or_default();
     if weight < 1.0 {
-        return palette().accent;
+        return None;
     }
-    let (h, s, l) = rgb_to_hsl(r / weight, g / weight, b / weight);
-    let lightness = if palette().is_light() { LIGHT_LIGHTNESS } else { DARK_LIGHTNESS };
+    let channel = |c: f32| (c / weight * 255.0).round() as u8;
+    Some(Rgb(channel(r), channel(g), channel(b)))
+}
+
+/// A cover's dominant color, tuned to read well on the background.
+pub fn cover_accent(color: Rgb) -> Rgb {
+    tune(color, palette().is_light())
+}
+
+fn tune(color: Rgb, light_background: bool) -> Rgb {
+    let Rgb(r, g, b) = color;
+    let (h, s, l) = rgb_to_hsl(f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0);
+    let lightness = if light_background { LIGHT_LIGHTNESS } else { DARK_LIGHTNESS };
     let (r, g, b) = hsl_to_rgb(h, s.clamp(0.55, 0.85), l.clamp(lightness.0, lightness.1));
     Rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
 }
@@ -254,6 +269,21 @@ mod tests {
         accent.jump(target);
         assert!(!accent.is_fading());
         assert_eq!(accent.rgb(), target);
+    }
+
+    #[test]
+    fn a_cover_s_color_is_tuned_to_the_background_it_is_shown_on() {
+        let red = DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([200, 20, 20])));
+        let color = dominant_color(&red).expect("a vivid cover");
+        let lightness = |Rgb(r, g, b): Rgb| (r.max(g).max(b) as f32 + r.min(g).min(b) as f32) / 2.0 / 255.0;
+        let on_dark = tune(color, false);
+        let on_light = tune(color, true);
+        assert!((DARK_LIGHTNESS.0 - 0.01..=DARK_LIGHTNESS.1).contains(&lightness(on_dark)), "{on_dark:?}");
+        assert!((LIGHT_LIGHTNESS.0 - 0.01..=LIGHT_LIGHTNESS.1).contains(&lightness(on_light)), "{on_light:?}");
+        assert!(on_dark.0 > on_dark.1 && on_light.0 > on_light.1, "still red");
+
+        let gray = DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([128, 128, 128])));
+        assert_eq!(dominant_color(&gray), None, "the palette's accent then");
     }
 
     #[test]

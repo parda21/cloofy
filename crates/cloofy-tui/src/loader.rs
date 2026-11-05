@@ -123,7 +123,8 @@ pub enum DataEvent {
     },
     Cover {
         url: String,
-        result: Result<(Picture, Rgb), String>,
+        /// The cover and its dominant color.
+        result: Result<(Picture, Option<Rgb>), String>,
     },
     LargeCover {
         url: String,
@@ -632,7 +633,7 @@ impl Loader {
     /// Downloads cover art, picks the accent color and encodes it for the terminal.
     pub fn cover(&self, url: String, size: Size) {
         self.spawn(move |this| async move {
-            let result = this.load_image(&url, size, |image| theme::accent_from_image(image)).await;
+            let result = this.load_image(&url, size, |image| theme::dominant_color(image)).await;
             this.send(DataEvent::Cover { url, result: result.map_err(|e| format!("{e:#}")) });
         });
     }

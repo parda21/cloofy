@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use super::{App, COVER_SIZE, Focus, ImageSlot};
 use crate::{
     backend,
+    colors::Colors,
     commands::Command,
     preferences::{AccentChoice, Setting},
     theme,
@@ -88,6 +89,12 @@ impl App {
             }
             Setting::Covers => self.drop_covers(),
             Setting::Images => self.set_image_protocol(self.prefs.images),
+            Setting::Colors => {
+                if let Some(colors) = &mut self.colors {
+                    colors.set_choice(self.prefs.colors);
+                }
+                self.poll_colors();
+            }
             Setting::Accent => self.show_accent(),
             Setting::Icons => crate::icons::init(self.prefs.icons.config()),
             Setting::PowerSaving => self.settings = self.prefs.apply(self.system_settings),
@@ -101,9 +108,11 @@ impl App {
         self.save_setting(setting);
     }
 
-    /// Moves the accent to the color the setting, the cover or the palette gives it now.
-    fn show_accent(&mut self) {
-        let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
+    /// Moves the accent to the color the setting, the cover or the palette gives it now. The
+    /// cover's is tuned to the background here, so it follows a change of colors.
+    pub(super) fn show_accent(&mut self) {
+        let cover = self.cover_accent.map(theme::cover_accent);
+        let color = self.prefs.accent.fixed().or(cover).unwrap_or(theme::palette().accent);
         if self.settings.low_power {
             self.accent.jump(color);
         } else {
@@ -111,12 +120,19 @@ impl App {
         }
     }
 
-    /// Draws with the system theme's `palette` from the next frame on. The accent goes along
-    /// where it comes from the palette, and the fixed ones adapt to a light background.
-    #[cfg(target_os = "linux")]
-    pub fn set_palette(&mut self, palette: theme::Palette) {
+    /// Draws with new colors from the next frame on when they changed, by the setting, Omarchy's
+    /// theme or `theme.toml`. The accent goes along where it comes from the palette, and the
+    /// fixed ones adapt to a light background. Returns whether the colors changed.
+    pub fn poll_colors(&mut self) -> bool {
+        let Some(palette) = self.colors.as_mut().and_then(Colors::poll) else { return false };
         theme::set_palette(palette);
         self.show_accent();
+        true
+    }
+
+    /// Whether the terminal told its colors, for the Terminal choice.
+    pub fn knows_terminal_colors(&self) -> bool {
+        self.colors.as_ref().is_some_and(Colors::knows_terminal)
     }
 
     /// Writes `setting` to the config file. The demo keeps changes until it closes.

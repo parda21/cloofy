@@ -7,6 +7,7 @@ mod app;
 mod art;
 mod backend;
 mod clock;
+mod colors;
 mod commands;
 mod datacache;
 pub mod demo;
@@ -18,7 +19,7 @@ mod icons;
 mod loader;
 mod media;
 mod notify;
-#[cfg(target_os = "linux")]
+// Omarchy is Linux only, but its theme template also colors cloofy from the terminal's colors.
 pub mod omarchy;
 mod overlay;
 mod playback;
@@ -230,19 +231,13 @@ async fn run_app(
         Some(demo) => Service::of(&demo.playing.track.uri),
         None => started.first().map(|(service, _)| *service),
     };
+    let colors = colors::Colors::new(prefs.colors, images.colors(), &paths.config);
     let loader = Loader::new(started, service, tx.clone(), images, paths.cache.join("images"), snapshotter.is_some())
         .with_demo(demo.clone());
     loader.set_image_protocol(image_protocol);
     loader.prune_image_cache();
     let update_check = prefs.update_check && demo.is_none();
-    // Omarchy's colors from the first frame on, and the accent the app starts with.
-    #[cfg(target_os = "linux")]
-    let mut system_theme = omarchy::ThemeWatch::new();
-    #[cfg(target_os = "linux")]
-    if let Some(palette) = system_theme.as_mut().and_then(omarchy::ThemeWatch::poll) {
-        theme::set_palette(palette);
-    }
-    let mut app = App::new(loader, prefs, start, paths.clone(), media, notifier);
+    let mut app = App::new(loader, prefs, start, paths.clone(), media, notifier, Some(colors));
     if update_check {
         app.check_for_update(false);
     }
@@ -284,14 +279,7 @@ async fn run_app(
             }
             _ = ticker.tick() => app.on_tick(),
         };
-        #[cfg(target_os = "linux")]
-        let redraw = match system_theme.as_mut().and_then(omarchy::ThemeWatch::poll) {
-            Some(palette) => {
-                app.set_palette(palette);
-                true
-            }
-            None => redraw,
-        };
+        let redraw = app.poll_colors() || redraw;
         app.sync_media();
         app.announce_track();
         if ticker.period() != ticker_period(app.settings.low_power) {

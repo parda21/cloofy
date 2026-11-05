@@ -4,6 +4,11 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Your terminal's colors.** Settings has Colors now. **Terminal** takes your terminal's background and text, with the shades in between mixed from them, so cloofy looks at home in a purple Ptyxis on Ubuntu or any other theme. **Auto** stays as before: Omarchy's theme there, cloofy's own dark colors elsewhere, which **cloofy** keeps everywhere.
+- **Your own colors.** Any of cloofy's colors in `~/.config/cloofy/theme.toml`, such as `bg = "#2b0a3d"`, go over the others. cloofy follows the file as you edit it.
+
 ### Changed
 
 - **Rust 1.90** or newer builds cloofy from source, for the current D-Bus library on Linux and the library that draws Sixel images.
