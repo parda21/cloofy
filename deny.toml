@@ -5,23 +5,6 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-
 all-features = true
 
 [advisories]
-# Each entry is known and can't be fixed here yet. Remove it once it can.
-ignore = [
-    # librespot only verifies Spotify's signature with the public key; the attack needs a private key.
-    { id = "RUSTSEC-2023-0071", reason = "rsa: public-key verify only" },
-    # From hyper-proxy2 in librespot-core, which only runs with a proxy set; cloofy never sets one.
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0346", reason = "rustls 0.22: hyper-proxy2, unused proxy path" },
-    { id = "RUSTSEC-2026-0349", reason = "rustls 0.22: hyper-proxy2, unused proxy path" },
-    # librespot-core pins quick-xml 0.38; it parses Spotify's own XML, not untrusted input.
-    { id = "RUSTSEC-2026-0194", reason = "quick-xml: needs the librespot fork on 0.41" },
-    { id = "RUSTSEC-2026-0195", reason = "quick-xml: needs the librespot fork on 0.41" },
-]
 
 [bans]
 multiple-versions = "allow"
