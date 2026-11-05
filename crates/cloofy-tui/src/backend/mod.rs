@@ -14,6 +14,8 @@
 // with no service built in, nothing below has a variant to hand its arguments to.
 #![cfg_attr(not(all(feature = "spotify", feature = "ytmusic")), allow(unused_variables))]
 
+#[cfg(test)]
+pub mod fake;
 #[cfg(feature = "spotify")]
 pub mod spotify;
 #[cfg(feature = "ytmusic")]
@@ -65,6 +67,8 @@ macro_rules! dispatch {
             $enum::Spotify(ref $inner) => $body,
             #[cfg(feature = "ytmusic")]
             $enum::YouTubeMusic(ref $inner) => $body,
+            #[cfg(test)]
+            $enum::Fake(ref $inner) => $body,
         }
     };
 }
@@ -217,6 +221,9 @@ pub enum Player {
     Spotify(spotify::Controller),
     #[cfg(feature = "ytmusic")]
     YouTubeMusic(ytmusic::Controller),
+    /// Stands in for either service in tests.
+    #[cfg(test)]
+    Fake(fake::Fake),
 }
 
 impl Player {
@@ -226,6 +233,8 @@ impl Player {
             Player::Spotify(_) => Service::Spotify,
             #[cfg(feature = "ytmusic")]
             Player::YouTubeMusic(_) => Service::YouTubeMusic,
+            #[cfg(test)]
+            Player::Fake(ref fake) => fake.service(),
         }
     }
 
@@ -368,6 +377,11 @@ impl Player {
     }
 
     pub fn supports_devices(&self) -> bool {
+        // A fake Spotify has no other devices to poll.
+        #[cfg(test)]
+        if matches!(self, Player::Fake(_)) {
+            return false;
+        }
         supports_devices(self.service())
     }
 }
@@ -429,6 +443,8 @@ pub enum Catalog {
     Spotify(spotify::Catalog),
     #[cfg(feature = "ytmusic")]
     YouTubeMusic(ytmusic::Catalog),
+    #[cfg(test)]
+    Fake(fake::Catalog),
 }
 
 impl Catalog {
@@ -438,6 +454,8 @@ impl Catalog {
             Catalog::Spotify(_) => Service::Spotify,
             #[cfg(feature = "ytmusic")]
             Catalog::YouTubeMusic(_) => Service::YouTubeMusic,
+            #[cfg(test)]
+            Catalog::Fake(ref fake) => fake.service(),
         }
     }
 

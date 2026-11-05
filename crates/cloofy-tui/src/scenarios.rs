@@ -8,6 +8,8 @@ use crossterm::event::KeyCode::{self, Char, Down, Enter, Esc};
 
 use crate::harness::Harness;
 
+mod playback;
+
 const DEBOUNCE: Duration = Duration::from_millis(250);
 
 #[tokio::test]
