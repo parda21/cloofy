@@ -36,6 +36,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 serde.workspace = true
+unicode-width.workspace = true
 
 # Looks up the sample's songs on Spotify.
 [[example]]
