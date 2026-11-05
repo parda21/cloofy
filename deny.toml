@@ -21,8 +21,6 @@ ignore = [
     # librespot-core pins quick-xml 0.38; it parses Spotify's own XML, not untrusted input.
     { id = "RUSTSEC-2026-0194", reason = "quick-xml: needs the librespot fork on 0.41" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml: needs the librespot fork on 0.41" },
-    # fontdue's parser; only for dev snapshots (CLOOFY_SNAPSHOT_DIR), with local fonts.
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, dev snapshots only" },
 ]
 
 [bans]

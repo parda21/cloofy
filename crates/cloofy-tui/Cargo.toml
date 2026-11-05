@@ -23,7 +23,6 @@ librespot = { workspace = true, optional = true }
 anyhow.workspace = true
 base64.workspace = true
 crossterm.workspace = true
-fontdue.workspace = true
 futures.workspace = true
 icy_sixel.workspace = true
 image.workspace = true
@@ -34,10 +33,12 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+skrifa.workspace = true
 tachyonfx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 unicode-width.workspace = true
+zeno.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

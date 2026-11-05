@@ -7,13 +7,14 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use fontdue::{Font, FontSettings};
 use image::{DynamicImage, Rgba, RgbaImage, imageops::FilterType};
 use ratatui::{
     buffer::{Buffer, Cell},
     layout::{Rect, Size},
     style::{Color, Modifier},
 };
+use skrifa::{DrawMemory, GlyphId, PathSink, ScalerFont, font::Font};
+use zeno::{Command, Mask, Placement as GlyphPlacement, Point};
 
 use crate::graphics::{INLINE_CELL, Inline};
 
@@ -24,7 +25,7 @@ const DEFAULT_FG: [u8; 3] = [236, 236, 241];
 const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
 
 /// A rasterized glyph, or `None` if no font has it.
-type Glyph = Option<(fontdue::Metrics, Vec<u8>)>;
+type Glyph = Option<(GlyphPlacement, Vec<u8>)>;
 
 /// An image the app drew, to paste over its cells in full resolution.
 #[derive(Clone)]
@@ -47,12 +48,10 @@ pub struct Placement {
 
 pub struct Snapshotter {
     dir: PathBuf,
-    /// Font size in pixels: `CLOOFY_SNAPSHOT_PX`, else [`PX`].
-    px: f32,
     /// With `CLOOFY_SNAPSHOT_RECORD=<ms>`, a frame is written this often, for recordings.
     record: Option<Duration>,
-    regular: Vec<Font>,
-    bold: Vec<Font>,
+    regular: Vec<ScalerFont>,
+    bold: Vec<ScalerFont>,
     cell_w: u32,
     cell_h: u32,
     ascent: f32,
@@ -75,27 +74,26 @@ impl Snapshotter {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache/cloofy/dev-fonts")))
             .context("no font directory")?;
-        let load = |name: &str| -> Option<Font> {
-            let bytes = std::fs::read(fonts.join(name)).ok()?;
-            Font::from_bytes(bytes, FontSettings::default()).ok()
-        };
+        let load = |name: &str| Font::new(std::fs::read(fonts.join(name)).ok()?, 0);
         let symbols = load("SymbolsNerdFontMono-Regular.ttf");
-        let regular: Vec<Font> = [load("JetBrainsMono-Regular.ttf"), symbols.clone()].into_iter().flatten().collect();
+        let regular: Vec<Font> = [load("JetBrainsMono-Regular.ttf"), symbols].into_iter().flatten().collect();
         let mut bold: Vec<Font> = [load("JetBrainsMono-Bold.ttf")].into_iter().flatten().collect();
         bold.extend(regular.iter().cloned());
-        let primary = regular.first().context("JetBrainsMono-Regular.ttf missing")?;
         let px = std::env::var("CLOOFY_SNAPSHOT_PX").ok().and_then(|px| px.parse().ok()).unwrap_or(PX);
+        let scalers = |fonts: Vec<Font>| fonts.into_iter().map(|font| ScalerFont::unhinted(font, Some(px))).collect();
+        let (regular, bold): (Vec<ScalerFont>, Vec<ScalerFont>) = (scalers(regular), scalers(bold));
+        let primary = regular.first().context("JetBrainsMono-Regular.ttf missing")?;
         let record =
             std::env::var("CLOOFY_SNAPSHOT_RECORD").ok().and_then(|ms| ms.parse().ok()).map(Duration::from_millis);
-        let lines = primary.horizontal_line_metrics(px).context("font without line metrics")?;
+        let lines = primary.metrics().hhea_line().context("font without line metrics")?;
+        let m = primary.font().charmap().map_unicode('M').unwrap_or_default();
         std::fs::create_dir_all(&dir)?;
         Ok(Self {
             dir,
-            px,
             record,
-            cell_w: primary.metrics('M', px).advance_width.ceil() as u32,
-            cell_h: (lines.ascent - lines.descent + lines.line_gap).ceil() as u32,
-            ascent: lines.ascent,
+            cell_w: primary.linear_glyph_metrics().h_advance(m).ceil() as u32,
+            cell_h: (lines.ascender - lines.descender + lines.line_gap).ceil() as u32,
+            ascent: lines.ascender,
             regular,
             bold,
         })
@@ -196,10 +194,10 @@ impl Snapshotter {
         if c != ' ' && !picture && !self.draw_block(image, c, px, py, fg) {
             let bold = cell.modifier.contains(Modifier::BOLD);
             let glyph = glyphs.entry((c, bold)).or_insert_with(|| self.rasterize(c, bold));
-            if let Some((metrics, coverage)) = glyph {
-                let gx = px as i32 + metrics.xmin;
-                let gy = py as i32 + self.ascent.round() as i32 - metrics.height as i32 - metrics.ymin;
-                blit(image, gx, gy, metrics.width, metrics.height, coverage, fg);
+            if let Some((placement, coverage)) = glyph {
+                let gx = px as i32 + placement.left;
+                let gy = py as i32 + self.ascent.round() as i32 + placement.top;
+                blit(image, gx, gy, placement.width as usize, placement.height as usize, coverage, fg);
             }
         }
         if cell.modifier.contains(Modifier::UNDERLINED) {
@@ -210,8 +208,17 @@ impl Snapshotter {
 
     fn rasterize(&self, c: char, bold: bool) -> Glyph {
         let fonts = if bold { &self.bold } else { &self.regular };
-        let font = fonts.iter().find(|f| f.lookup_glyph_index(c) != 0)?;
-        Some(font.rasterize(c, self.px))
+        let (scaler, glyph) = fonts.iter().find_map(|scaler| {
+            let glyph = scaler.font().charmap().map_unicode(c).filter(|glyph| *glyph != GlyphId::NOTDEF)?;
+            Some((scaler, glyph))
+        })?;
+        let mut path = Path::default();
+        scaler.outline(glyph)?.draw(DrawMemory::Scratch, &mut path).ok()?;
+        if path.0.is_empty() {
+            return Some((GlyphPlacement::default(), Vec::new()));
+        }
+        let (coverage, placement) = Mask::new(&path.0).render();
+        Some((placement, coverage))
     }
 
     /// Block elements and lines are drawn exactly, like terminals do, so they tile seamlessly.
@@ -282,6 +289,28 @@ fn fill(image: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32, color: [u8; 3], a
         for px in x..(x + w).min(image.width()) {
             blend(image.get_pixel_mut(px, py), color, alpha);
         }
+    }
+}
+
+/// A glyph outline for zeno, which counts y downwards.
+#[derive(Default)]
+struct Path(Vec<Command>);
+
+impl PathSink for Path {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.0.push(Command::MoveTo(Point::new(x, -y)));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.0.push(Command::LineTo(Point::new(x, -y)));
+    }
+    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+        self.0.push(Command::QuadTo(Point::new(cx0, -cy0), Point::new(x, -y)));
+    }
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+        self.0.push(Command::CurveTo(Point::new(cx0, -cy0), Point::new(cx1, -cy1), Point::new(x, -y)));
+    }
+    fn close(&mut self) {
+        self.0.push(Command::Close);
     }
 }
 

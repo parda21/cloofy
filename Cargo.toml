@@ -32,7 +32,6 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 dispatch2 = "0.3"
 etcetera = "0.11"
 flate2 = "1"
-fontdue = "0.9"
 futures = "0.3"
 iana-time-zone = "0.1"
 # Sixel images; ratatui-image encodes with it too.
@@ -64,6 +63,8 @@ serde_json = "1"
 # SAPISIDHASH, the signature YouTube Music wants with cookie sign-ins.
 sha1 = "0.10"
 sha2 = "0.10"
+# Dev snapshots: skrifa reads the fonts, zeno draws the glyphs.
+skrifa = { version = "0.49", default-features = false, features = ["std"] }
 tachyonfx = "0.25"
 # Release archives only; the default features would also restore extended attributes.
 tar = { version = "0.4", default-features = false }
@@ -74,6 +75,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 url = "2"
+zeno = "0.3"
 # D-Bus on Linux in pure Rust, driven by tokio rather than a runtime of its own.
 zbus = { version = "6", default-features = false, features = ["proxy", "service", "tokio"] }
 
