@@ -206,12 +206,7 @@ fn services(paths: &Paths, named: Option<&str>) -> Result<Vec<Service>> {
 
 /// Logs go to stderr for CLI commands; the TUI owns the screen, so it logs to a file.
 fn init_logging(paths: &Paths, tui: bool) -> Result<()> {
-    // Same syntax as before, such as `info,librespot=debug`, without EnvFilter's regexes.
-    let filter = std::env::var("CLOOFY_LOG")
-        .ok()
-        .and_then(|filter| filter.parse::<Targets>().ok())
-        .unwrap_or_else(|| Targets::new().with_default(tracing::Level::ERROR));
-    let logs = tracing_subscriber::registry().with(filter);
+    let logs = tracing_subscriber::registry().with(log_filter(std::env::var("CLOOFY_LOG").ok().as_deref()));
     if tui {
         std::fs::create_dir_all(&paths.cache)?;
         std::fs::File::create(paths.log_file())?;
@@ -300,11 +295,33 @@ fn link_service(input: &str) -> Option<Service> {
     }
 }
 
+/// What `CLOOFY_LOG` asks for, with the same syntax as before, such as `info,librespot=debug`,
+/// without EnvFilter's regexes; errors only when it's unset or unreadable. Empty directives, as in
+/// a trailing comma, are left out: `Targets` reads one as errors only for everything, so
+/// `info,` logged errors only.
+fn log_filter(spec: Option<&str>) -> Targets {
+    let errors = || Targets::new().with_default(tracing::Level::ERROR);
+    let directives: Vec<&str> = spec.unwrap_or_default().split(',').map(str::trim).filter(|d| !d.is_empty()).collect();
+    if directives.is_empty() { errors() } else { directives.join(",").parse().unwrap_or_else(|_| errors()) }
+}
+
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
 
     use super::*;
+
+    #[test]
+    fn log_filters_leave_out_empty_directives() {
+        use tracing::Level;
+        let on = |spec, target, level| log_filter(spec).would_enable(target, &level);
+        assert!(on(None, "cloofy", Level::ERROR) && !on(None, "cloofy", Level::WARN));
+        assert!(on(Some(""), "cloofy", Level::ERROR), "empty is unset");
+        assert!(on(Some("info,"), "cloofy", Level::INFO), "a trailing comma keeps info");
+        assert!(on(Some(" info , librespot=debug"), "librespot", Level::DEBUG));
+        assert!(!on(Some("info,librespot=debug"), "cloofy", Level::DEBUG));
+        assert!(on(Some("=not a level"), "cloofy", Level::ERROR), "unreadable is unset");
+    }
 
     #[test]
     fn links_go_to_their_service() {

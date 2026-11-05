@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-05
+
+cloofy takes on your terminal's colors or your own, and song notifications reach every terminal on Linux.
+
 ### Added
 
 - **Your terminal's colors.** Settings has Colors now. **Terminal** takes your terminal's background and text, with the shades in between mixed from them, so cloofy looks at home in a purple Ptyxis on Ubuntu or any other theme. **Auto** stays as before: Omarchy's theme there, cloofy's own dark colors elsewhere, which **cloofy** keeps everywhere.
@@ -22,6 +26,7 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Spotify's mixes in your library.** The playlists Spotify makes for you, like Club Mix, Hip Hop Mix, the Daily Mixes and Discover Weekly, show up in your library once you've saved them in Spotify, in the order you picked there. So do the other Spotify playlists you follow. Spotify's Web API leaves them out, so cloofy now lists your library the way Spotify's own apps do.
 - **Spotify's mixes in search.** Searching for "synthwave" or "club mix" finds your Synthwave Mix or Club Mix first, as in Spotify, and shows the song count wherever Spotify gives it.
 - **`cloofy doctor`** checks both.
+- **`CLOOFY_LOG` with a trailing comma,** as in `info,`, logs at that level instead of errors only.
 
 ### Security
 
@@ -141,7 +146,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/parda21/cloofy/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/parda21/cloofy/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/parda21/cloofy/compare/v0.2.0...v0.3.0
