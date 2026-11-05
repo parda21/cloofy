@@ -10,7 +10,8 @@ use crate::{parse, pathfinder::Pathfinder};
 /// As many as the Web API's search returns.
 const LIMIT: u32 = 10;
 
-/// Playlists for `query`, the best match first.
+/// Playlists for `query`, the best match first. Asks for playlists only: the search for all
+/// kinds answers with about seven times as much.
 pub async fn playlists(pathfinder: &Pathfinder, query: &str) -> Result<Vec<PlaylistInfo>> {
     let variables = json!({
         "searchTerm": query,
@@ -18,13 +19,11 @@ pub async fn playlists(pathfinder: &Pathfinder, query: &str) -> Result<Vec<Playl
         "limit": LIMIT,
         "numberOfTopResults": 5,
         "includeAudiobooks": false,
-        "includeArtistHasConcertsField": false,
         "includePreReleases": false,
-        "includeAlbumPreReleases": false,
         "includeAuthors": false,
         "includeEpisodeContentRatingsV2": false,
     });
-    parse(&pathfinder.query("searchDesktop", variables).await?)
+    parse(&pathfinder.query("searchPlaylists", variables).await?)
 }
 
 fn parse(data: &Value) -> Result<Vec<PlaylistInfo>> {

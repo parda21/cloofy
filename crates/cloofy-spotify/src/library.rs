@@ -11,12 +11,16 @@ use serde_json::{Value, json};
 
 use crate::{catalog::PAGE_CONCURRENCY, parse, pathfinder::Pathfinder};
 
-/// Library entries per request.
-const PAGE: u32 = 50;
+/// Library entries per request; most libraries come in one.
+const PAGE: u32 = 500;
 
 pub async fn playlists(pathfinder: &Pathfinder) -> Result<Vec<PlaylistInfo>> {
     let first = page(pathfinder, 0).await?;
-    let offsets: Vec<u32> = (PAGE..first.total).step_by(PAGE as usize).collect();
+    // Steps by what came back, should Spotify send fewer than asked for.
+    let offsets: Vec<u32> = match first.entries {
+        0 => Vec::new(),
+        step => (step..first.total).step_by(step as usize).collect(),
+    };
     let rest: Vec<Page> = stream::iter(offsets)
         .map(|offset| async move { page(pathfinder, offset).await })
         .buffered(PAGE_CONCURRENCY)
@@ -43,6 +47,8 @@ pub fn with_web_details(found: Vec<PlaylistInfo>, web: Vec<PlaylistInfo>) -> (Ve
 struct Page {
     /// Entries in the whole library, folders and unavailable playlists included.
     total: u32,
+    /// Entries on this page, counted the same way.
+    entries: u32,
     playlists: Vec<PlaylistInfo>,
 }
 
@@ -69,14 +75,14 @@ fn parse(data: &Value) -> Result<Page> {
     if library["__typename"] != "LibraryPage" {
         bail!("Spotify did not return the library ({})", library["__typename"]);
     }
-    let playlists = library["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.pointer("/item/data"))
-        .filter_map(parse::playlist)
-        .collect();
-    Ok(Page { total: library["totalCount"].as_u64().unwrap_or_default() as u32, playlists })
+    let entries = library["items"].as_array().map_or(&[][..], Vec::as_slice);
+    let playlists =
+        entries.iter().filter_map(|entry| entry.pointer("/item/data")).filter_map(parse::playlist).collect();
+    Ok(Page {
+        total: library["totalCount"].as_u64().unwrap_or_default() as u32,
+        entries: entries.len() as u32,
+        playlists,
+    })
 }
 
 #[cfg(test)]
@@ -122,7 +128,7 @@ mod tests {
             ]
         } } });
         let page = parse(&data).unwrap();
-        assert_eq!(page.total, 113);
+        assert_eq!((page.total, page.entries), (113, 4));
         let names: Vec<_> = page.playlists.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["Chill Mix", "electronic"]);
         assert_eq!(page.playlists[0].owner_id, "spotify");

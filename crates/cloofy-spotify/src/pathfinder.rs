@@ -24,14 +24,14 @@ const WEB_PLAYER: &str = "https://open.spotify.com/";
 const KNOWN_HASHES: &[(&str, &str)] = &[
     ("home", "5fb7da7a03ee2776c0670856609cb85a189a3cecc36cc160b91cde79063b9cf1"),
     ("libraryV3", "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455"),
-    ("searchDesktop", "eef7cc54888d91bdd6802623477873caa3948ae173a0c34fd86827b267e94c03"),
+    ("searchPlaylists", "d520014e748f9ea44f7707d8df1819867ac1205e8b7f3e28f22fe5fc858921b1"),
 ];
 /// Greetings and shelf titles come back in this language, matching the English UI.
 const ACCEPT_LANGUAGE: &str = "en";
 /// The web player's JavaScript bundles are large; reading them may take a while.
 const BUNDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// The web player's chunks read at the same time; there are over a hundred.
-const CHUNK_CONCURRENCY: usize = 8;
+const CHUNK_CONCURRENCY: usize = 16;
 /// After reading the web player, how long a query it lacked fails without reading it again.
 const REFRESH_PAUSE: Duration = Duration::from_secs(10 * 60);
 const USER_AGENT: &str =
@@ -104,14 +104,14 @@ impl Pathfinder {
             .send()
             .await?;
         let status = response.status();
-        let body: Value = response.json().await.unwrap_or(Value::Null);
+        let mut body: Value = response.json().await.unwrap_or(Value::Null);
         if let Some(message) = body.pointer("/errors/0/message").and_then(Value::as_str) {
             bail!("pathfinder {operation}: {message}");
         }
         if !status.is_success() {
             bail!("pathfinder {operation}: HTTP {status}");
         }
-        body.get("data").cloned().context("pathfinder: response without data")
+        body.get_mut("data").map(Value::take).context("pathfinder: response without data")
     }
 
     /// Reads all persisted-query hashes from the web player and caches them. Does nothing when
