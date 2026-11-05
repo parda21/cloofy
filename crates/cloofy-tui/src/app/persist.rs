@@ -297,7 +297,8 @@ fn write_cache(background: bool, save: impl FnOnce() -> io::Result<()> + Send + 
             tracing::warn!("saving the data cache: {err}");
         }
     };
-    if background {
+    // Tests write at once, so nothing writes into a test's directory after it is gone.
+    if background && !cfg!(test) {
         tokio::task::spawn_blocking(save);
     } else {
         save();

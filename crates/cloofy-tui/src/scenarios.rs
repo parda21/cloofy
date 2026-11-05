@@ -96,39 +96,77 @@ async fn small_windows_get_compact_bars() {
     h.assert_screen("compact");
 }
 
-/// Layout bugs show up at sizes nobody tries: every page, drawn at many sizes, must not panic,
-/// and a frame drawn again without anything happening must come out the same.
-#[tokio::test]
-async fn every_page_draws_at_any_size() {
+/// Layout bugs show up at sizes nobody tries: each page, drawn at many sizes, must not panic,
+/// and a frame drawn again without anything happening must come out the same. A test per page,
+/// so they run side by side.
+async fn draws_at_any_size(keys: &[KeyCode]) {
     const WIDTHS: [u16; 9] = [1, 8, 20, 33, 47, 64, 80, 121, 240];
     const HEIGHTS: [u16; 10] = [1, 3, 6, 9, 10, 14, 16, 24, 30, 70];
-    let pages: [(&str, &[KeyCode]); 9] = [
-        ("home", &[]),
-        ("library", &[Char('3')]),
-        ("search", &[Char('/'), Char('d'), Char('a')]),
-        ("playlist", &[Char('3'), Down, Enter]),
-        ("queue", &[Char('Q')]),
-        ("now playing", &[Char('z')]),
-        ("settings", &[Char(',')]),
-        ("help", &[Char('?')]),
-        ("palette", &[Char(':')]),
-    ];
-    for (name, keys) in pages {
-        let mut h = Harness::demo().await;
-        for key in keys {
-            h.press(*key).await;
+    let mut h = Harness::demo().await;
+    for key in keys {
+        h.press(*key).await;
+    }
+    h.wait(DEBOUNCE).await;
+    for width in WIDTHS {
+        for height in HEIGHTS {
+            h.resize(width, height).await;
+            let before = h.screen();
+            h.redraw();
+            assert_eq!(before, h.screen(), "{width}×{height} changes from frame to frame");
         }
-        h.wait(DEBOUNCE).await;
-        for width in WIDTHS {
-            for height in HEIGHTS {
-                h.resize(width, height).await;
-                let before = h.screen();
-                h.redraw();
-                assert_eq!(before, h.screen(), "{name} at {width}×{height} changes from frame to frame");
-            }
-        }
-        h.resize(120, 36).await;
-        assert!(h.shows("cloofy"), "{name} recovers at full size:\n{}", h.screen());
+    }
+    h.resize(120, 36).await;
+    assert!(h.shows("cloofy"), "back at full size:\n{}", h.screen());
+}
+
+mod any_size {
+    use crossterm::event::KeyCode::{Char, Down, Enter};
+
+    use super::draws_at_any_size;
+
+    #[tokio::test]
+    async fn home() {
+        draws_at_any_size(&[]).await;
+    }
+
+    #[tokio::test]
+    async fn library() {
+        draws_at_any_size(&[Char('3')]).await;
+    }
+
+    #[tokio::test]
+    async fn search() {
+        draws_at_any_size(&[Char('/'), Char('d'), Char('a')]).await;
+    }
+
+    #[tokio::test]
+    async fn playlist() {
+        draws_at_any_size(&[Char('3'), Down, Enter]).await;
+    }
+
+    #[tokio::test]
+    async fn queue() {
+        draws_at_any_size(&[Char('Q')]).await;
+    }
+
+    #[tokio::test]
+    async fn now_playing() {
+        draws_at_any_size(&[Char('z')]).await;
+    }
+
+    #[tokio::test]
+    async fn settings() {
+        draws_at_any_size(&[Char(',')]).await;
+    }
+
+    #[tokio::test]
+    async fn help() {
+        draws_at_any_size(&[Char('?')]).await;
+    }
+
+    #[tokio::test]
+    async fn palette() {
+        draws_at_any_size(&[Char(':')]).await;
     }
 }
 
