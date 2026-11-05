@@ -1,0 +1,37 @@
+name: Nightly
+
+# YouTube Music as it answers today: the tests of cloofy-ytmusic that go online, which ordinary
+# runs leave out. A failure here means InnerTube or YouTube's streams changed, and the parsers or
+# the player need to catch up before people notice.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  youtube-music:
+    name: YouTube Music, live
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          # Cargo.toml patches librespot and ratatui-image with them.
+          submodules: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      # The latest yt-dlp, as people install it, and no JavaScript runtime: streams must resolve
+      # without one.
+      - name: Install yt-dlp
+        run: pipx install yt-dlp && yt-dlp --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: nightly
+      - run: cargo test -p cloofy-ytmusic --locked -- --ignored
