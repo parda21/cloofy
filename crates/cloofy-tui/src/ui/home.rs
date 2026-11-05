@@ -122,7 +122,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if top < view.scroll {
             view.scroll = top;
         } else if bottom > view.scroll + viewport {
-            view.scroll = bottom - viewport;
+            // A shelf taller than the window shows its top, or every frame would flip between both.
+            view.scroll = (bottom - viewport).min(top);
         }
     }
     view.scroll = view.scroll.min(total.saturating_sub(viewport));
