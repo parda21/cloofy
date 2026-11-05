@@ -1,5 +1,4 @@
-//! Search as Spotify's own apps run it. Unlike the Web API's search, it also finds the
-//! playlists Spotify made for the user, like the genre and mood mixes.
+//! Playlist search through the internal API, which also finds the user's mixes.
 
 use anyhow::{Context, Result};
 use cloofy_core::catalog::PlaylistInfo;
@@ -7,11 +6,8 @@ use serde_json::{Value, json};
 
 use crate::{parse, pathfinder::Pathfinder};
 
-/// As many as the Web API's search returns.
 const LIMIT: u32 = 10;
 
-/// Playlists for `query`, the best match first. Asks for playlists only: the search for all
-/// kinds answers with about seven times as much.
 pub async fn playlists(pathfinder: &Pathfinder, query: &str) -> Result<Vec<PlaylistInfo>> {
     let variables = json!({
         "searchTerm": query,

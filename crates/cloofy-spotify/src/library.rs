@@ -1,6 +1,4 @@
-//! The user's playlists as Spotify's own apps list them. Unlike the Web API's list, this one
-//! includes the playlists Spotify made, like mixes, Daily Mixes and Discover Weekly, and keeps
-//! the order picked in Spotify.
+//! The user's playlists as Spotify's apps list them, mixes included.
 
 use std::collections::HashMap;
 
@@ -11,12 +9,11 @@ use serde_json::{Value, json};
 
 use crate::{catalog::PAGE_CONCURRENCY, parse, pathfinder::Pathfinder};
 
-/// Library entries per request; most libraries come in one.
 const PAGE: u32 = 500;
 
 pub async fn playlists(pathfinder: &Pathfinder) -> Result<Vec<PlaylistInfo>> {
     let first = page(pathfinder, 0).await?;
-    // Steps by what came back, should Spotify send fewer than asked for.
+    // Spotify may send fewer than asked for.
     let offsets: Vec<u32> = match first.entries {
         0 => Vec::new(),
         step => (step..first.total).step_by(step as usize).collect(),
@@ -29,8 +26,8 @@ pub async fn playlists(pathfinder: &Pathfinder) -> Result<Vec<PlaylistInfo>> {
     Ok(std::iter::once(first).chain(rest).flat_map(|page| page.playlists).collect())
 }
 
-/// `found` in its order, each with what the Web API tells about the same playlist, like how
-/// many songs it has. Also returns the Web API's playlists that `found` lacks.
+/// Adds the Web API's details, like song counts, to `found`. Also returns the Web API's
+/// playlists that `found` lacks.
 pub fn with_web_details(found: Vec<PlaylistInfo>, web: Vec<PlaylistInfo>) -> (Vec<PlaylistInfo>, Vec<PlaylistInfo>) {
     let positions: HashMap<String, usize> = web.iter().enumerate().map(|(at, p)| (p.uri.clone(), at)).collect();
     let mut web: Vec<Option<PlaylistInfo>> = web.into_iter().map(Some).collect();
@@ -45,9 +42,8 @@ pub fn with_web_details(found: Vec<PlaylistInfo>, web: Vec<PlaylistInfo>) -> (Ve
 }
 
 struct Page {
-    /// Entries in the whole library, folders and unavailable playlists included.
+    /// Folders and unavailable playlists included.
     total: u32,
-    /// Entries on this page, counted the same way.
     entries: u32,
     playlists: Vec<PlaylistInfo>,
 }
@@ -55,34 +51,28 @@ struct Page {
 async fn page(pathfinder: &Pathfinder, offset: u32) -> Result<Page> {
     let variables = json!({
         "filters": ["Playlists"],
-        // The order picked in Spotify.
         "order": null,
         "textFilter": null,
-        // Liked Songs and Your Episodes would come first otherwise.
+        // Leaves out Liked Songs and Your Episodes.
         "features": [],
         "limit": PAGE,
         "offset": offset,
-        // Lists the playlists in folders as well.
         "flatten": true,
         "includeFoldersWhenFlattening": true,
     });
     parse(&pathfinder.query("libraryV3", variables).await?)
 }
 
-/// Folders and playlists that are no longer available are left out.
 fn parse(data: &Value) -> Result<Page> {
     let library = data.pointer("/me/libraryV3").context("Library: unexpected response")?;
     if library["__typename"] != "LibraryPage" {
         bail!("Spotify did not return the library ({})", library["__typename"]);
     }
-    let entries = library["items"].as_array().map_or(&[][..], Vec::as_slice);
+    let entries = library["items"].as_array().context("Library: no entries")?;
+    let total = library["totalCount"].as_u64().context("Library: no count")?;
     let playlists =
         entries.iter().filter_map(|entry| entry.pointer("/item/data")).filter_map(parse::playlist).collect();
-    Ok(Page {
-        total: library["totalCount"].as_u64().unwrap_or_default() as u32,
-        entries: entries.len() as u32,
-        playlists,
-    })
+    Ok(Page { total: total as u32, entries: entries.len() as u32, playlists })
 }
 
 #[cfg(test)]
@@ -139,6 +129,8 @@ mod tests {
     fn says_when_spotify_answers_with_something_else() {
         let data = json!({ "me": { "libraryV3": { "__typename": "LibraryInvalidFilterIdError" } } });
         assert!(parse(&data).is_err());
+        let without_count = json!({ "me": { "libraryV3": { "__typename": "LibraryPage", "items": [] } } });
+        assert!(parse(&without_count).is_err());
     }
 
     #[test]

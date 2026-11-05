@@ -30,9 +30,8 @@ const KNOWN_HASHES: &[(&str, &str)] = &[
 const ACCEPT_LANGUAGE: &str = "en";
 /// The web player's JavaScript bundles are large; reading them may take a while.
 const BUNDLE_TIMEOUT: Duration = Duration::from_secs(60);
-/// The web player's chunks read at the same time; there are over a hundred.
 const CHUNK_CONCURRENCY: usize = 16;
-/// After reading the web player, how long a query it lacked fails without reading it again.
+/// Minimum time between two reads of the web player.
 const REFRESH_PAUSE: Duration = Duration::from_secs(10 * 60);
 const USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36";
@@ -42,8 +41,7 @@ pub struct Pathfinder {
     session: Session,
     cache_path: PathBuf,
     hashes: Mutex<HashMap<String, String>>,
-    /// When the web player was last read. Held while reading it, so queries that need it at
-    /// the same time read it once.
+    /// Also held while reading, so concurrent queries read it once.
     refreshed: Mutex<Option<Instant>>,
 }
 
@@ -63,6 +61,10 @@ impl Pathfinder {
             hashes: Mutex::new(hashes),
             refreshed: Mutex::new(None),
         }
+    }
+
+    pub fn session_lost(&self) -> bool {
+        self.session.is_invalid()
     }
 
     /// Runs a persisted query and returns its `data`. Refreshes the hash once if it is stale.
@@ -114,13 +116,14 @@ impl Pathfinder {
         body.get_mut("data").map(Value::take).context("pathfinder: response without data")
     }
 
-    /// Reads all persisted-query hashes from the web player and caches them. Does nothing when
-    /// it was read moments ago, so a query it lacks doesn't read it again on every call.
+    /// Reads all persisted-query hashes from the web player and caches them.
     async fn refresh_hashes(&self) -> Result<()> {
         let mut refreshed = self.refreshed.lock().await;
         if refreshed.is_some_and(|at| at.elapsed() < REFRESH_PAUSE) {
             return Ok(());
         }
+        // Before reading, so a failed read pauses too.
+        *refreshed = Some(Instant::now());
         let html = self.http.get(WEB_PLAYER).send().await?.text().await?;
         let mut found = HashMap::new();
         let mut chunks = Vec::new();
@@ -129,7 +132,7 @@ impl Pathfinder {
             found.extend(persisted_hashes(&source));
             chunks.extend(chunk_urls(&script, &source));
         }
-        // Search, browse and many other pages come in chunks the web player loads on demand.
+        // Search and most pages live in chunks loaded on demand.
         let mut failed = 0;
         let mut sources = stream::iter(chunks.clone())
             .map(|url| async move { self.script(&url).await })
@@ -148,7 +151,6 @@ impl Pathfinder {
         }
         let _ = write_private(&self.cache_path, &serde_json::to_vec(&found)?);
         self.hashes.lock().await.extend(found);
-        *refreshed = Some(Instant::now());
         Ok(())
     }
 
@@ -172,9 +174,8 @@ fn script_urls(html: &str) -> impl Iterator<Item = String> + '_ {
     })
 }
 
-/// The web player's chunks, from the map in its main bundle that webpack builds their file
-/// names from: `(({1872:"xpui-routes-playlist",…})[e]||e)+"."+({1872:"1072dd2e",…})[e]+".js"`.
-/// Chunks without a name go by their number. They sit next to the bundle that names them.
+/// From webpack's chunk map in the main bundle:
+/// `(({1872:"xpui-routes-playlist"})[e]||e)+"."+({1872:"1072dd2e",934:"07549133"})[e]+".js"`
 fn chunk_urls(script: &str, source: &str) -> Vec<String> {
     let (Some((base, _)), Some((names, hashes))) = (script.rsplit_once('/'), chunk_maps(source)) else {
         return Vec::new();
@@ -183,8 +184,7 @@ fn chunk_urls(script: &str, source: &str) -> Vec<String> {
     map_entries(hashes).map(|(id, hash)| format!("{base}/{}.{hash}.js", names.get(id).unwrap_or(&id))).collect()
 }
 
-/// The names and the hashes of the chunks, the maps on either side of `)+"."+(`. The CSS
-/// chunks have maps of the same shape, ending in ".css" instead.
+/// The name and hash maps around `)+"."+(`, skipping the ones for CSS.
 fn chunk_maps(source: &str) -> Option<(&str, &str)> {
     const JOIN: &str = ")+\".\"+({";
     source.match_indices(JOIN).find_map(|(at, _)| {

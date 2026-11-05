@@ -1,4 +1,4 @@
-//! Pieces the internal API's responses share: texts, covers and playlists.
+//! Helpers for the internal API's responses.
 
 use cloofy_core::catalog::PlaylistInfo;
 use serde_json::Value;
@@ -6,8 +6,7 @@ use serde_json::Value;
 /// Preferred cover width; Spotify offers roughly 64, 300 and 640 px.
 const IMAGE_WIDTH: u64 = 300;
 
-/// A playlist as Home, the library and search describe it. They leave out how many songs it
-/// has, and whether it is collaborative.
+/// The internal API sends no song count.
 pub fn playlist(data: &Value) -> Option<PlaylistInfo> {
     if data.get("__typename")?.as_str()? != "Playlist" {
         return None;
@@ -29,7 +28,7 @@ pub fn playlist(data: &Value) -> Option<PlaylistInfo> {
     })
 }
 
-/// The source closest to the preferred width; one without a width counts as a match.
+/// The source closest to the preferred width.
 pub fn image(sources: Option<&Value>) -> Option<String> {
     sources?
         .as_array()?
@@ -52,7 +51,6 @@ pub fn text(value: &Value, pointer: &str) -> String {
     value.pointer(pointer).and_then(Value::as_str).unwrap_or_default().to_owned()
 }
 
-/// The ID at the end of a URI like `spotify:user:spotify`.
 fn last_part(uri: &str) -> String {
     uri.rsplit(':').next().unwrap_or_default().to_owned()
 }
