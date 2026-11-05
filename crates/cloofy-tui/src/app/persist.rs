@@ -8,12 +8,12 @@ use std::{
 };
 
 use cloofy_core::catalog::{AlbumInfo, PlaylistInfo};
-use tachyonfx::EffectManager;
 
 use super::{App, Focus, LIBRARY_PARTS, LibraryFilter};
 use crate::{
     backend::Service,
     datacache,
+    fx::Effects,
     preferences::Setting,
     state::{self, LastTrack, Page, SavedView, Selection, State},
     views::{HomeView, ListCursor, TrackSource, TrackView, View},
@@ -180,7 +180,7 @@ impl App {
             self.notice(format!("{} isn't set up yet · run `cloofy login {}` in a terminal", down.name(), down.key()));
         }
         // Coming back should look like you never left: no entrance animations.
-        self.effects = EffectManager::default();
+        self.effects = Effects::default();
     }
 
     /// Why `service` couldn't start, said with its name.

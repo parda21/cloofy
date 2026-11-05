@@ -9,6 +9,7 @@ mod backend;
 mod commands;
 mod datacache;
 pub mod demo;
+mod fx;
 mod graphics;
 mod icons;
 mod loader;
