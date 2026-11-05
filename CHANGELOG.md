@@ -10,6 +10,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 - **Spotify's mixes in search.** Searching for "synthwave" or "club mix" finds your Synthwave Mix or Club Mix first, as in Spotify, and shows the song count wherever Spotify gives it.
 - **`cloofy doctor`** checks both.
 
+### Security
+
+- **Certificate checks.** cloofy's TLS libraries are updated to their latest fixes. Certificates from intermediates that have since been distrusted, such as emSign's, are now refused.
+
 ## [0.5.0] - 2026-11-04
 
 YouTube Music joins Spotify, on its own or side by side, and cloofy becomes part of Omarchy.
