@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-05
+
+cloofy takes on your terminal's colors or your own, and song notifications reach every terminal on Linux.
+
 ### Added
 
 - **Your terminal's colors.** Settings has Colors now. **Terminal** takes your terminal's background and text, with the shades in between mixed from them, so cloofy looks at home in a purple Ptyxis on Ubuntu or any other theme. **Auto** stays as before: Omarchy's theme there, cloofy's own dark colors elsewhere, which **cloofy** keeps everywhere.
@@ -142,7 +146,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/parda21/cloofy/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/parda21/cloofy/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/parda21/cloofy/compare/v0.2.0...v0.3.0
