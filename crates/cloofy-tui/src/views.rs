@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range, time::Instant};
+use std::{collections::HashMap, ops::Range};
 
 use cloofy_core::{
     artist::{ArtistPage, TopTrack},
@@ -6,6 +6,7 @@ use cloofy_core::{
     home::{Home, HomeItem},
 };
 
+use crate::clock::Instant;
 use crate::{loader::Fetch, preferences::Setting, queue::Upcoming};
 
 /// Cursor and scroll position of a list.

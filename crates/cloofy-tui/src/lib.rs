@@ -6,6 +6,7 @@
 mod app;
 mod art;
 mod backend;
+mod clock;
 mod commands;
 mod datacache;
 pub mod demo;
@@ -31,7 +32,7 @@ use std::{
     io::{BufWriter, Stdout, Write},
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Result, bail};
@@ -47,6 +48,7 @@ use tokio::{
     time::MissedTickBehavior,
 };
 
+use crate::clock::Instant;
 pub use crate::graphics::ImageProtocol;
 use crate::{
     app::{App, AppEvent},

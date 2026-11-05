@@ -14,8 +14,6 @@ mod topbar;
 mod wordmark;
 mod zen;
 
-use std::time::Instant;
-
 use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
@@ -26,6 +24,7 @@ use ratatui::{
 use ratatui_image::Image;
 use unicode_width::UnicodeWidthStr;
 
+use crate::clock::Instant;
 use crate::{
     app::{App, Focus, Hit, not_animated},
     graphics::INLINE_CELL,

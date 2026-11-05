@@ -1,13 +1,11 @@
 //! Keeps the system's media controls (media keys, Control Center) in step with playback.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
 use cloofy_core::{player::CurrentTrack, service};
 use cloofy_os::media::{Controls, State, Track};
 
+use crate::clock::Instant;
 use crate::playback::NowPlaying;
 
 /// How far the system's own clock may drift from the player before it gets corrected, which

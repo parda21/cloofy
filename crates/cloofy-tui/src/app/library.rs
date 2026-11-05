@@ -1,10 +1,7 @@
 //! "Your Library" in memory: fresh lists from Spotify, and likes, saves and follows shown at
 //! once while Spotify confirms them.
 
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, time::Duration};
 
 use cloofy_core::{
     catalog::{AlbumInfo, ArtistInfo, PlaylistInfo, ShowInfo, Track},
@@ -13,6 +10,7 @@ use cloofy_core::{
 };
 
 use super::{App, NavItem};
+use crate::clock::Instant;
 use crate::{
     backend::{self, Service},
     overlay::{Overlay, PaletteAction},
