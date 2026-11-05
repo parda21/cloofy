@@ -12,6 +12,8 @@ mod datacache;
 pub mod demo;
 mod fx;
 mod graphics;
+#[cfg(test)]
+mod harness;
 mod icons;
 mod loader;
 mod media;
@@ -22,6 +24,8 @@ mod overlay;
 mod playback;
 mod preferences;
 mod queue;
+#[cfg(test)]
+mod scenarios;
 mod snapshot;
 mod state;
 mod theme;

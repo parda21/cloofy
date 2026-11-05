@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -51,6 +51,22 @@ pub struct Fetch(tokio::task::AbortHandle);
 impl Drop for Fetch {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+/// A task in [`Loader::pending`].
+struct Pending(Arc<AtomicUsize>);
+
+impl Pending {
+    fn new(count: &Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::SeqCst);
+        Self(count.clone())
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -214,6 +230,8 @@ pub struct Loader {
     frames_drawn: Arc<AtomicU64>,
     /// The sample `cloofy demo` shows instead of the account's data.
     demo: Option<Arc<Demo>>,
+    /// Tasks started and not yet done, for tests to wait on.
+    pending: Arc<AtomicUsize>,
 }
 
 /// An image to decode: downloaded bytes, or artwork cloofy draws itself.
@@ -254,6 +272,7 @@ impl Loader {
             prefetch_turns: Arc::new(Semaphore::new(2)),
             frames_drawn: Arc::default(),
             demo: None,
+            pending: Arc::default(),
         }
     }
 
@@ -367,7 +386,7 @@ impl Loader {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        tokio::spawn(task(self.clone()));
+        tokio::spawn(self.counted(task(self.clone())));
     }
 
     /// Like [`Self::spawn`], for loads that may become pointless before they finish.
@@ -375,7 +394,22 @@ impl Loader {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        Fetch(tokio::spawn(task(self.clone())).abort_handle())
+        Fetch(tokio::spawn(self.counted(task(self.clone()))).abort_handle())
+    }
+
+    /// Counts `task` as pending until it ends or is dropped.
+    fn counted<F: Future<Output = ()>>(&self, task: F) -> impl Future<Output = ()> + use<F> {
+        let pending = Pending::new(&self.pending);
+        async move {
+            let _pending = pending;
+            task.await;
+        }
+    }
+
+    /// Whether every task started has ended.
+    #[cfg(test)]
+    pub fn is_idle(&self) -> bool {
+        self.pending.load(Ordering::SeqCst) == 0
     }
 
     pub fn me(&self) {
@@ -633,6 +667,8 @@ impl Loader {
         Ok(match url {
             art::LIKED_COVER => ImageSource::Drawn(art::liked_cover),
             art::PLACEHOLDER_COVER => ImageSource::Drawn(art::placeholder_cover),
+            // Tests stay offline: every other cover is the placeholder.
+            _ if cfg!(test) => ImageSource::Drawn(art::placeholder_cover),
             _ => ImageSource::Downloaded(self.download_image(url).await?),
         })
     }
@@ -691,6 +727,9 @@ impl Loader {
 
     /// Cover art is immutable per URL, so it is cached on disk until unused for a while.
     async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
+        if cfg!(test) {
+            anyhow::bail!("Tests stay offline: {url}");
+        }
         let path = self.image_cache.join(cache_name(url));
         if let Ok(bytes) = tokio::fs::read(&path).await {
             return Ok(bytes);

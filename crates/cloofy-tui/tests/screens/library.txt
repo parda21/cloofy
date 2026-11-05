@@ -1,0 +1,36 @@
+
+   ▄▀▀ █ ▄▀▄ ▄▀▄ ▄▀▀ █ █
+   █   █ █ █ █ █ █▀▀  ▀█     ‹     ⌂     ⌕  What do you want to play?                                          ◉  Sam
+    ▀▀ ▀  ▀   ▀  ▀   ▀▀
+
+
+   ≡  Your Library          ⤢      Your Library
+
+   Playlists  Albums  Artists      All  Playlists  Albums  Artists
+
+   ▄▄▄▄  Liked Songs           ┃
+   ▄▀▀▄  Playlist · 20 songs   ┃   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀ ┃
+                               ┃   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀ ┃
+   ▀▄▄▀  Late Night Coding ⡄⡇⡆ │   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀ ┃
+   ▀▀▀▀  Playlist · Sam        │   ▄▄▄▄▀▀▀▀▀▀▄▄▄▄     ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀   ┃
+                               │   ▄▄▄▄▄▀▀▀▀▄▄▄▄▄   ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀  │
+   ▀▄▄▀  Morning Run           │   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄   ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀  │
+   ▀▀▀▀  Playlist · Sam        │   ▄▄▄▄▄▄▄▄▄▄▄▄▄▄    ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀  │
+                               │   Liked Songs      Late Nigh… ⡄⡇⡆   Morning Run      Deep Focus       Sunday Morning │
+   ▀▄▄▀  Deep Focus            │   Playlist · 20…   Playlist · Sam   Playlist · Sam   Playlist · Sam   Playlist · Sam │
+   ▀▀▀▀  Playlist · Sam        │                                                                                      │
+                               │                                                                                      │
+   ▀▄▄▀  Sunday Morning        │    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀ │
+   ▀▀▀▀  Playlist · Sam        │    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀ │
+                               │     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀ │
+   ▀▄▄▀  Synthwave Drive       │     ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀   │
+   ▀▀▀▀  Playlist · Sam        │   ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀    ▀ ▀ ▀▀▄▀▀▀  ▀  │
+                               │   ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀    ▀  ▀ ▀▀▀  ▀ ▀  │
+                               │    ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀     ▀ ▀ ▀  ▀ ▀ ▀  │
+                               │   Synthwave Dri…   Golden Era       Jazz in the B…   Random Access…   Discovery      │
+
+  ▀ ▄▄ ▀   Around the World  ✓   ♫  Playlist · Late Night Coding                                  ⤨   ◂◂   ❚❚   ▸▸   ↻
+  ▀▄▄▀▀▀   Daft Punk · Homework                                                                  ≡   ♪ ━━━━━━━━━━  69%
+   ▀▀▀▀▀   1:21  ━━━━━━━━━━━━━━━━━●─────────────────────────────────────────────────────────────────────────────  7:09
+
+  enter open   < > filter   . actions   esc back   ^K commands   ? help                                      ▣  cloofy
