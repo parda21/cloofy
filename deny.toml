@@ -1,0 +1,37 @@
+# `cargo deny check advisories bans sources`, run in CI.
+
+[graph]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+# Each entry is known and can't be fixed here yet. Remove it once it can.
+ignore = [
+    # librespot only verifies Spotify's signature with the public key; the attack needs a private key.
+    { id = "RUSTSEC-2023-0071", reason = "rsa: public-key verify only" },
+    # From hyper-proxy2 in librespot-core, which only runs with a proxy set; cloofy never sets one.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.22: hyper-proxy2, unused proxy path" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.22: hyper-proxy2, unused proxy path" },
+    # librespot-core pins quick-xml 0.38; it parses Spotify's own XML, not untrusted input.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml: needs the librespot fork on 0.41" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml: needs the librespot fork on 0.41" },
+    # fontdue's parser; only for dev snapshots (CLOOFY_SNAPSHOT_DIR), with local fonts.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, dev snapshots only" },
+    # zbus 6 merges these, but needs a newer Rust than rust-version.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, fixed by zbus 6" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, fixed by zbus 6" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, fixed by zbus 6" },
+]
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

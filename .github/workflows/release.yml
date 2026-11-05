@@ -6,8 +6,9 @@ on:
   # A manual run builds everything without publishing, to try out changes to this workflow.
   workflow_dispatch:
 
+# The builds run every crate's build script, so only the jobs that publish can write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,11 +26,13 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-14 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          persist-credentials: false
           submodules: true
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
       - name: Install audio headers
         if: runner.os == 'Linux'
@@ -96,7 +99,7 @@ jobs:
           cp "cloofy-spotify-$TARGET.tar.gz" "cloofy-$TARGET.tar.gz"
           shasum -a 256 "cloofy-$TARGET.tar.gz" > "cloofy-$TARGET.tar.gz.sha256"
           ls -l cloofy-*.tar.gz*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.target }}
           path: cloofy-*.tar.gz*
@@ -104,11 +107,15 @@ jobs:
 
   publish:
     needs: build
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
@@ -132,11 +139,15 @@ jobs:
   packages:
     name: Homebrew and AUR
     needs: publish
+    permissions:
+      contents: write
     # Package managers get releases, not previews such as v0.4.0-beta.
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - name: Fill in the formulas and PKGBUILDs
         env:
           GH_TOKEN: ${{ github.token }}
