@@ -487,7 +487,8 @@ pub struct App {
     /// Where the palette comes from; `None` in tests, which keep cloofy's own colors.
     colors: Option<Colors>,
     pub accent: Accent,
-    /// The color of the playing cover, for when the accent follows it.
+    /// The dominant color of the playing cover, for when the accent follows it; tuned to the
+    /// background when shown.
     cover_accent: Option<Rgb>,
     pub me: Option<User>,
     pub playlists: Vec<PlaylistInfo>,
@@ -1486,13 +1487,9 @@ impl App {
                         if let Some(old) = self.now.cover.replace(Cover { url, picture }) {
                             self.terminal_out.extend(old.picture.terminal_delete());
                         }
-                        self.cover_accent = Some(accent);
+                        self.cover_accent = accent;
                         if self.prefs.accent == AccentChoice::Cover {
-                            if self.settings.low_power {
-                                self.accent.jump(accent);
-                            } else {
-                                self.accent.set(accent);
-                            }
+                            self.show_accent();
                         }
                     }
                     Err(err) => tracing::warn!("cover {url}: {err}"),

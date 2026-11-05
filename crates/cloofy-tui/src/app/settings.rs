@@ -108,9 +108,11 @@ impl App {
         self.save_setting(setting);
     }
 
-    /// Moves the accent to the color the setting, the cover or the palette gives it now.
-    fn show_accent(&mut self) {
-        let color = self.prefs.accent.fixed().or(self.cover_accent).unwrap_or(theme::palette().accent);
+    /// Moves the accent to the color the setting, the cover or the palette gives it now. The
+    /// cover's is tuned to the background here, so it follows a change of colors.
+    pub(super) fn show_accent(&mut self) {
+        let cover = self.cover_accent.map(theme::cover_accent);
+        let color = self.prefs.accent.fixed().or(cover).unwrap_or(theme::palette().accent);
         if self.settings.low_power {
             self.accent.jump(color);
         } else {

@@ -204,7 +204,8 @@ impl Setting {
 pub enum AccentChoice {
     /// The dominant color of the playing cover.
     Cover,
-    /// The palette's accent, which Omarchy's theme or `theme.toml` sets; cloofy's green elsewhere.
+    /// The accent of the colors in use: `theme.toml`'s or, with Colors on Auto, Omarchy's
+    /// theme's; cloofy's green otherwise.
     Theme,
     Fixed(NamedColor),
 }

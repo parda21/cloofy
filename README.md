@@ -237,7 +237,7 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
-The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the Omarchy theme's or `theme.toml`'s, and cloofy's green elsewhere.
+The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the one of the colors in use: `theme.toml`'s when it sets one, else the Omarchy theme's with Colors on Auto, and cloofy's green otherwise, also with Terminal.
 
 cloofy draws with its own dark colors, or with Omarchy's theme. With Colors set to Terminal, it takes your terminal's background and text instead, with the shades in between. To pick colors yourself, put any of `bg`, `surface`, `player`, `raised`, `text`, `muted`, `faint`, `accent` and the [others](integrations/omarchy/cloofy.toml.tpl) in `~/.config/cloofy/theme.toml`, as `bg = "#2b0a3d"`; they go over whichever colors are set, and cloofy follows the file as you edit it.
 

@@ -24,7 +24,7 @@ update_check = false       # don't look for new releases at start; on when missi
 credentials = "keychain"   # macOS: sign-ins in the Keychain instead of files (only here)
 ```
 
-The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the [Omarchy](/docs/omarchy/) theme's or `theme.toml`'s, and cloofy's green elsewhere.
+The installer writes `services` with what you listen to. One config file serves every build, so a build leaves out the services it doesn't have. The `"theme"` accent is the one of the colors in use: `theme.toml`'s when it sets one, else the [Omarchy](/docs/omarchy/) theme's with Colors on Auto, and cloofy's green otherwise, also with Terminal.
 
 ## Colors
 
