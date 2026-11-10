@@ -2,7 +2,7 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Constraint, Rect},
+    layout::{Constraint, Margin, Rect},
     style::{Style, Stylize},
     text::Line,
     widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap},
@@ -38,11 +38,13 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         .render(popup, buf);
     app.hits.push((popup, Hit::OverlayArea));
 
-    let inner = Rect { x: popup.x + 3, y: popup.y + 2, width: popup.width.saturating_sub(6), height: 3 };
-    Paragraph::new(NOTE).wrap(Wrap { trim: true }).style(Style::new().fg(p.muted)).render(inner, buf);
+    // Inside the border, and on a short terminal only what fits there.
+    let inside = popup.inner(Margin::new(3, 1));
+    let note = Rect { y: popup.y + 2, height: 3, ..inside }.intersection(inside);
+    Paragraph::new(NOTE).wrap(Wrap { trim: true }).style(Style::new().fg(p.muted)).render(note, buf);
 
     let y = popup.y + 6;
-    if y >= popup.bottom().saturating_sub(1) {
+    if y >= inside.bottom() {
         return;
     }
     let labels = [format!(" {STAR_ICON} {STAR} "), format!(" {NO_THANKS} ")];
@@ -57,13 +59,15 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         } else {
             Style::new().fg(p.text).bg(p.unfocused)
         };
-        buf.set_string(button.x, y, label, style);
+        buf.set_stringn(button.x, y, label, button.width.into(), style);
         app.hits.push((button, Hit::OverlayItem(index)));
         x += widths[index] + 3;
     }
     let hint = "enter choose · esc close";
     let hint_x = popup.x + popup.width.saturating_sub(hint.width() as u16) / 2;
-    buf.set_string(hint_x, y + 2, hint, Style::new().fg(p.faint));
+    if y + 2 < inside.bottom() {
+        buf.set_stringn(hint_x, y + 2, hint, inside.right().saturating_sub(hint_x).into(), Style::new().fg(p.faint));
+    }
     if app.overlay_fx_pending {
         app.animate_overlay(popup);
     }

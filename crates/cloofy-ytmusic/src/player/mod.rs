@@ -245,7 +245,7 @@ struct Engine {
     resolving: HashSet<String>,
     /// Songs yt-dlp couldn't resolve, which mpv's hook gets to try.
     unresolvable: HashSet<String>,
-    /// YouTube's bot check stopped yt-dlp, and the interface was told.
+    /// YouTube's bot check stopped yt-dlp since the last start, and the interface was told.
     blocked: bool,
     /// Failed tries to play each song, by URI.
     attempts: HashMap<String, u8>,
@@ -470,6 +470,9 @@ impl Engine {
         // The interface may have shown another player's queue since, so this one's is reported
         // again, even unchanged.
         self.reported = None;
+        // Each start says once that YouTube's bot check stops it, also after the last one's
+        // notice was closed.
+        self.blocked = false;
     }
 
     /// Silences mpv; what was loaded is gone.
@@ -1065,6 +1068,25 @@ mod tests {
         let current = current_track(&track);
         assert_eq!(current.album_uri, None);
         assert_eq!(current.cover_url_large.as_deref(), Some("https://lh3.googleusercontent.com/a=w800-h800-l90-rj"));
+    }
+
+    /// YouTube's bot check is said once per start: not for every song after it, but again when
+    /// the next start runs into it, after its notice may have been closed.
+    #[tokio::test]
+    async fn the_bot_check_is_said_once_per_start() {
+        let (mut engine, (mut events, _)) = idle_engine("bot-check");
+        let mut blocked = async |engine: &mut Engine, video: &str| {
+            engine.job(Job::Resolved { video: video.into(), result: Err(BotCheck.into()) }).await.unwrap();
+            let mut said = false;
+            while let Ok(event) = events.try_recv() {
+                said |= matches!(event, PlayerEvent::Blocked { .. });
+            }
+            said
+        };
+        assert!(blocked(&mut engine, "a").await);
+        assert!(!blocked(&mut engine, "b").await, "not again for the next song");
+        engine.activate();
+        assert!(blocked(&mut engine, "c").await, "again after another start");
     }
 
     type Reports = (UnboundedReceiver<PlayerEvent>, UnboundedReceiver<(u64, MpvEvent)>);

@@ -1468,23 +1468,27 @@ impl App {
                 self.saved.insert(uri, followed);
                 self.loader.check_saved(uris);
             }
-            DataEvent::Home { view, result } => {
+            DataEvent::Home { view, chip, result } => {
                 // A chip's Home is only for its view; the whole Home is what Home opens with.
-                if let Some(home) = result.as_ref().ok().filter(|home| home.chip().is_none()) {
+                if let Some(home) = result.as_ref().ok().filter(|_| chip.is_none()) {
                     self.home_cache = Some(home.clone());
                     self.home_fetched_at = Some(Instant::now());
                     self.data_dirty = true;
                 }
                 let Some(View::Home(v)) = self.view_mut(view) else { return false };
-                if result.as_ref().is_ok_and(|home| !v.wants(home)) {
+                if !v.wants(chip.as_deref()) {
                     return false;
                 }
                 match result {
                     Ok(home) => v.set_home(home),
-                    Err(err) => {
-                        v.loading = false;
-                        v.error = Some(err);
-                    }
+                    // The Home before the chip stays, so the failure is said at the bottom.
+                    Err(err) => match v.chip_failed() {
+                        Some(failed) => self.error(format!("Couldn't load {failed}: {err}")),
+                        None => {
+                            v.loading = false;
+                            v.error = Some(err);
+                        }
+                    },
                 }
             }
             // Loads still under way when cover art was turned off.

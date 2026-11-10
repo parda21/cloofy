@@ -38,6 +38,8 @@ struct State {
     commands: Vec<String>,
     liked: HashSet<String>,
     playing: Option<Playing>,
+    /// Home fails to load from now on.
+    home_down: bool,
 }
 
 struct Playing {
@@ -86,6 +88,11 @@ impl Fake {
     /// The player's connection dropped.
     pub fn lose_connection(&self) {
         let _ = self.0.tx.send(AppEvent::PlayerLost(self.0.service));
+    }
+
+    /// Home fails to load from now on, as when the service doesn't answer.
+    pub fn take_home_down(&self) {
+        self.state().home_down = true;
     }
 
     /// Sends what a real player would report.
@@ -307,6 +314,9 @@ impl Fake {
     /// A shelf of cards, and on YouTube Music chips and Quick picks too. A chip's Home has a
     /// shelf named after it.
     pub async fn home(&self, chip: Option<&str>) -> Result<Home> {
+        if self.state().home_down {
+            bail!("The fake's Home is down");
+        }
         let service = self.0.service;
         let (album, playlist) = (album(service), playlist(service));
         let item = |uri: &str, kind, title: &str| HomeItem {

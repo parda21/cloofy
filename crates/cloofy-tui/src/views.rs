@@ -340,6 +340,9 @@ pub struct HomeView {
     pub chip: Option<usize>,
     /// The chip whose Home is shown or on its way; `None` for the whole Home.
     pub filter: Option<Chip>,
+    /// While a picked chip's Home is on its way, the chip of the Home shown, to go back to
+    /// when it fails.
+    fallback: Option<Option<Chip>>,
     pub shelf: usize,
     pub item: usize,
     /// First visible card or song per shelf.
@@ -399,6 +402,7 @@ impl HomeView {
             error: None,
             chip: None,
             filter,
+            fallback: None,
             shelf: 0,
             item: 0,
             offsets,
@@ -463,17 +467,33 @@ impl HomeView {
                 home.shelves[shelf].items.iter().position(|i| Some(i.uri.as_str()) == card).unwrap_or(self.item);
             self.shelf = shelf;
         }
-        self.filter = home.chip().cloned();
+        self.fallback = None;
         self.home = Some(home);
         self.loading = false;
         self.error = None;
         self.clamp();
     }
 
-    /// Whether `home` is the one this view waits for: the whole Home, or that of its chip.
-    /// One that arrives after another chip was picked is not.
-    pub fn wants(&self, home: &Home) -> bool {
-        home.chip().map(|c| &c.title) == self.filter.as_ref().map(|c| &c.title)
+    /// Whether a Home asked for with chip `chip` is the one this view waits for: the whole
+    /// Home, or that of its chip. One asked for before another chip was picked is not, nor
+    /// is its error.
+    pub fn wants(&self, chip: Option<&str>) -> bool {
+        chip == self.filter.as_ref().map(|c| c.id.as_str())
+    }
+
+    /// The picked chip's Home failed to load: the chips go back to the Home still shown.
+    /// Returns the title of the one that failed, "Home" for the whole Home, or `None` when
+    /// no chip was picked.
+    pub fn chip_failed(&mut self) -> Option<String> {
+        let fallback = self.fallback.take()?;
+        let failed = std::mem::replace(&mut self.filter, fallback);
+        if let Some(home) = &mut self.home {
+            for chip in &mut home.chips {
+                chip.selected = self.filter.as_ref().is_some_and(|f| f.id == chip.id);
+            }
+        }
+        self.loading = false;
+        Some(failed.map_or_else(|| "Home".to_owned(), |chip| chip.title))
     }
 
     /// Narrows Home to chip `index`, or back to the whole Home when that chip is picked
@@ -485,7 +505,9 @@ impl HomeView {
         for (i, c) in home.chips.iter_mut().enumerate() {
             c.selected = picked && i == index;
         }
-        self.filter = picked.then(|| Chip { selected: true, ..chip.clone() });
+        let filter = picked.then(|| Chip { selected: true, ..chip.clone() });
+        let shown = std::mem::replace(&mut self.filter, filter);
+        self.fallback.get_or_insert(shown);
         self.chip = Some(index);
         self.loading = true;
         self.error = None;
@@ -917,18 +939,30 @@ mod tests {
         assert_eq!(view.chip, Some(1));
         assert_eq!(view.pick_chip(1), Some(Some("id-Workout".into())));
         assert!(view.loading && view.chips()[1].selected);
-        let workout =
-            Home { chips: vec![Chip { selected: true, ..chips(&["Workout"])[0].clone() }], ..Home::default() };
-        assert!(view.wants(&workout));
-        assert!(!view.wants(&Home::default()), "the whole Home arrives too late");
+        assert!(view.wants(Some("id-Workout")));
+        assert!(!view.wants(None), "the whole Home arrives too late");
         // Picked again, back to the whole Home.
         assert_eq!(view.pick_chip(1), Some(None));
-        assert!(view.wants(&Home::default()) && !view.wants(&workout));
+        assert!(view.wants(None) && !view.wants(Some("id-Workout")));
         view.move_shelf(1);
         assert_eq!((view.chip, view.shelf, view.item), (None, 0, 0));
         view.move_shelf(-1);
         view.move_shelf(isize::MAX / 2);
         assert_eq!((view.chip, view.shelf), (None, 0), "the end, from the chips");
+    }
+
+    #[test]
+    fn a_chip_that_fails_goes_back_to_the_home_shown() {
+        let home =
+            Home { chips: chips(&["Relax", "Workout"]), shelves: vec![shelf("a", &["1", "2"])], ..Home::default() };
+        let mut view = HomeView::new(1, Some(home.clone()));
+        view.set_home(home);
+        assert_eq!(view.chip_failed(), None, "no chip was picked");
+        view.pick_chip(0);
+        view.pick_chip(1);
+        assert_eq!(view.chip_failed().as_deref(), Some("Workout"));
+        assert!(!view.loading && view.filter.is_none() && view.chips().iter().all(|c| !c.selected));
+        assert!(view.wants(None));
     }
 
     fn next(n: u32, provider: crate::queue::Provider) -> QueueRow {

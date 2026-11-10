@@ -6,7 +6,7 @@ use std::time::Duration;
 use cloofy_core::{player::PlayerEvent, service::Service};
 use crossterm::event::KeyCode::{Char, Down, Enter};
 
-use crate::{backend::fake::SONG, harness::Harness};
+use crate::{backend::fake::SONG, harness::Harness, views::View};
 
 const SPOTIFY: Service = Service::Spotify;
 const YOUTUBE: Service = Service::YouTubeMusic;
@@ -171,6 +171,18 @@ async fn a_chip_narrows_youtube_music_home_down_and_back() {
     assert!(!h.shows("Workout mixes") && h.shows("Quick picks"), "{}", h.screen());
 }
 
+/// A chip whose Home doesn't load left the old Home with the chip picked, and nothing said.
+/// The Home shown stays, its chip too, and the bottom says why.
+#[tokio::test]
+async fn a_chip_that_fails_to_load_says_so() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.fake(YOUTUBE).take_home_down();
+    h.click_on("Workout").await;
+    assert!(h.shows("Couldn't load Workout: The fake's Home is down") && h.shows("Quick picks"), "{}", h.screen());
+    let View::Home(v) = &h.app.view else { panic!("{}", h.screen()) };
+    assert!(v.filter.is_none() && !v.loading && v.chips().iter().all(|c| !c.selected));
+}
+
 /// On the second day of use cloofy asks for a star on GitHub, once, a few seconds in.
 #[tokio::test]
 async fn the_star_on_github_is_asked_for_once() {
@@ -196,6 +208,22 @@ async fn no_thanks_closes_the_star_for_good() {
     h.click_on("No thanks").await;
     assert!(!h.shows("Enjoying cloofy?") && h.app.opened.is_empty());
     assert!(h.app.usage.star_asked);
+}
+
+/// On a short terminal the star's popup leaves out what doesn't fit inside its border, instead
+/// of drawing over the border and the page under it.
+#[tokio::test]
+async fn the_star_keeps_inside_its_border_on_a_short_terminal() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.app.ask_for_star_after(Duration::ZERO);
+    h.wait(Duration::from_millis(100)).await;
+    for height in [9, 7, 5] {
+        h.resize(80, height).await;
+        let screen = h.screen();
+        let bottom = screen.lines().find(|line| line.contains('╰')).unwrap_or_else(|| panic!("{screen}"));
+        let border: String = bottom.chars().skip_while(|&c| c != '╰').take_while(|&c| c != '╯').collect();
+        assert!(border.chars().all(|c| c == '╰' || c == '─'), "{height} rows:\n{screen}");
+    }
 }
 
 /// Issue #27: the expired sign-in went away after a few seconds, before anyone read it or
