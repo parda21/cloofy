@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-10
+
+YouTube Music's Home looks and works as in its own apps, and cloofy asks once for a star.
+
 ### Added
 
 - **Moods on YouTube Music's Home.** Chips like Relax, Workout or Focus above the shelves show the Home of that mood, as on music.youtube.com, and picked again the whole Home. <kbd>↑</kbd> from the first shelf reaches them.
@@ -162,7 +166,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/parda21/cloofy/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/parda21/cloofy/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/parda21/cloofy/compare/v0.3.0...v0.4.0
