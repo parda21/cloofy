@@ -92,6 +92,8 @@ pub enum DataEvent {
     Me(Result<User, String>),
     Home {
         view: u64,
+        /// The chip it was asked for with, `None` for the whole Home.
+        chip: Option<String>,
         result: Result<Home, String>,
     },
     Artist {
@@ -464,13 +466,14 @@ impl Loader {
         });
     }
 
-    pub fn home(&self, view: u64) {
+    /// Home, or the Home of the chip with this ID.
+    pub fn home(&self, view: u64, chip: Option<String>) {
         if let Some(demo) = self.demo() {
-            return self.send_for(DataEvent::Home { view, result: Ok(demo.home.clone()) });
+            return self.send_for(DataEvent::Home { view, chip, result: Ok(demo.home.clone()) });
         }
         self.spawn(move |this| async move {
-            let result = async { this.shown()?.home().await }.await;
-            this.send_for(DataEvent::Home { view, result: result.map_err(|e| format!("{e:#}")) });
+            let result = async { this.shown()?.home(chip.as_deref()).await }.await;
+            this.send_for(DataEvent::Home { view, chip, result: result.map_err(|e| format!("{e:#}")) });
         });
     }
 

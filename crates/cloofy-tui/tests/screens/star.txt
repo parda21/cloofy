@@ -1,0 +1,36 @@
+
+   ▄▀▀ █ ▄▀▄ ▄▀▄ ▄▀▀ █ █
+   █   █ █ █ █ █ █▀▀  ▀█     ‹     ⌂     ⌕  What do you want to play?                                       ◉  Tester
+    ▀▀ ▀  ▀   ▀  ▀   ▀▀
+
+
+   ≡  Your Library          ⤢       Relax   Workout                                                                   ┃
+                                                                                                                      ┃
+   Playlists  Albums               Quick picks                                          ▶ Play all  1–8 of 9   ‹   ›  ┃
+                                                                                                                      ┃
+   ▄▄▄▄  Liked Songs               ▀▄▄▀  YouTube Music Song 1                ▀▄▄▀  YouTube Music Song 5               ┃
+   ▄▀▀▄  Playlist · 3 songs        ▀▀▀▀  YouTube Music Band                  ▀▀▀▀  YouTube Music Band                 ┃
+                                                                                                                      ┃
+   ▀▄▄▀  YouTube Music Mix       ╭ ★ Enjoying cloofy? ────────────────────────────────╮ube Music Mix Song 1           ┃
+   ▀▀▀▀  Playlist · Tester       │                                                    │ube Music Band                 ┃
+                                 │  cloofy is free and made in spare time. If you     │                               ┃
+   ▀▄▄▀  YouTube Music Album     │  like it, a star on GitHub helps other people      │ube Music Mix Song 2           ┃
+   ▀▀▀▀  Album · YouTube Music…  │  find it.                                          │ube Music Band                 ┃
+                                 │                                                    │                               ┃
+                                 │           ★ Star on GitHub     No thanks           │ube Music Mix Song 3           ┃
+                                 │                                                    │ube Music Band                 ┃
+                                 │              enter choose · esc close              │                               ┃
+                                 ╰────────────────────────────────────────────────────╯                               ┃
+                                   MADE FOR YOU                                                                       ┃
+                                   For you                                                                            │
+                                                                                                                      │
+                                    ▀ ▀    ▀ ▀  ▀    ▀ ▀    ▀ ▀  ▀                                                    │
+                                    ▀  ▀ ▀▄▀  ▀ ▀    ▀  ▀ ▀▄▀  ▀ ▀                                                    │
+                                     ▀ ▀  ▄▄▄ ▀ ▀     ▀ ▀  ▄▄▄ ▀ ▀                                                    │
+                                     ▀ ▄▄▄▄▀▀ ▀       ▀ ▄▄▄▄▀▀ ▀                                                      │
+
+           Nothing playing
+    ♪      Pick a song and press ↵
+
+
+  enter play   . actions   / search   ^K commands   ? help

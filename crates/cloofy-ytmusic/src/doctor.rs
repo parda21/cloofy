@@ -31,7 +31,7 @@ pub async fn programs() -> Section {
 pub async fn innertube(client: &YtMusic) -> Section {
     let mut checks = vec![
         timed("Home", Expect::Available, async {
-            let home = client.home().await?;
+            let home = client.home(None).await?;
             Ok(format!("{} shelves", home.shelves.len()))
         })
         .await,

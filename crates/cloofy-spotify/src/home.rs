@@ -37,7 +37,7 @@ fn parse(data: &Value) -> Result<Home> {
         .flatten()
         .filter_map(shelf)
         .collect();
-    Ok(Home { greeting: text(home, "/greeting/transformedLabel"), shelves })
+    Ok(Home { greeting: text(home, "/greeting/transformedLabel"), shelves, ..Home::default() })
 }
 
 fn shelf(section: &Value) -> Option<Shelf> {
@@ -56,6 +56,7 @@ fn shelf(section: &Value) -> Option<Shelf> {
         title: text(section, "/data/title/transformedLabel"),
         shortcuts: section.pointer("/data/__typename").and_then(Value::as_str) == Some("HomeShortsSectionData"),
         items,
+        ..Shelf::default()
     })
 }
 

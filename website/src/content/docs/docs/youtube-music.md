@@ -7,6 +7,14 @@ YouTube Music needs no account. cloofy plays it with [mpv](https://mpv.io) and f
 
 Signed out, Home, search, artist, album and playlist pages, lyrics and song radios work. Signing in adds your library: your playlists, albums, subscribed artists and liked songs, and liking, saving and adding to playlists.
 
+## Home
+
+Home is YouTube Music's own: Quick picks, mixes, new releases and playlists on shelves, with chips for moods like Relax, Workout or Focus above them. A chip shows the Home of that mood, and picked again the whole Home. <kbd>↑</kbd> from the first shelf reaches the chips, and <kbd>←</kbd> <kbd>→</kbd> move along them.
+
+Quick picks show as songs in columns of four, as on music.youtube.com: <kbd>↑</kbd> <kbd>↓</kbd> move within a column, <kbd>←</kbd> <kbd>→</kbd> from column to column. A song plays at once, with its radio after it, and **Play all** plays the shelf in order.
+
+## Playing
+
 Songs follow each other without a gap, and when a playlist or album ends, the radio of its last song follows, as on YouTube Music. The queue, shuffle, repeat, seeking, the volume and the system's media controls work as with Spotify.
 
 ## Signing in

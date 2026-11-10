@@ -119,7 +119,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 index: track_count + index,
                 y,
                 title: shelf.title.clone(),
+                // Artist pages keep every shelf the same height: cards, without a strapline.
+                strapline: String::new(),
                 shortcuts: false,
+                songs: false,
+                play_all: false,
                 total: shelf.items.len(),
                 first,
                 items: shelf.items.iter().skip(first).take(cards).cloned().collect(),

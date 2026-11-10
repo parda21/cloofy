@@ -13,7 +13,7 @@ use anyhow::{Result, bail};
 use cloofy_core::{
     artist::ArtistPage,
     catalog::{AlbumInfo, ArtistInfo, Page, PlaylistInfo, SearchResults, ShowInfo, Track, User},
-    home::{Home, HomeItem, ItemKind, Shelf},
+    home::{Chip, Home, HomeItem, ItemKind, Shelf},
     lyrics::{Lyrics, LyricsQuery},
     player::{CurrentTrack, PlayerEvent, QueueTrack},
     service::Service,
@@ -21,7 +21,7 @@ use cloofy_core::{
 use futures::stream::{self, BoxStream, StreamExt};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::{Found, Player};
+use super::{Found, Player, is_track};
 use crate::{app::AppEvent, clock::Instant, playback::Repeat, views::TrackSource};
 
 #[derive(Clone)]
@@ -38,6 +38,8 @@ struct State {
     commands: Vec<String>,
     liked: HashSet<String>,
     playing: Option<Playing>,
+    /// Home fails to load from now on.
+    home_down: bool,
 }
 
 struct Playing {
@@ -86,6 +88,11 @@ impl Fake {
     /// The player's connection dropped.
     pub fn lose_connection(&self) {
         let _ = self.0.tx.send(AppEvent::PlayerLost(self.0.service));
+    }
+
+    /// Home fails to load from now on, as when the service doesn't answer.
+    pub fn take_home_down(&self) {
+        self.state().home_down = true;
     }
 
     /// Sends what a real player would report.
@@ -304,8 +311,14 @@ impl Fake {
         Ok(User { id: "tester".into(), name: "Tester".into() })
     }
 
-    pub async fn home(&self) -> Result<Home> {
-        let (album, playlist) = (album(self.0.service), playlist(self.0.service));
+    /// A shelf of cards, and on YouTube Music chips and Quick picks too. A chip's Home has a
+    /// shelf named after it.
+    pub async fn home(&self, chip: Option<&str>) -> Result<Home> {
+        if self.state().home_down {
+            bail!("The fake's Home is down");
+        }
+        let service = self.0.service;
+        let (album, playlist) = (album(service), playlist(service));
         let item = |uri: &str, kind, title: &str| HomeItem {
             uri: uri.into(),
             kind,
@@ -320,13 +333,56 @@ impl Fake {
             item(&playlist.uri, ItemKind::Playlist, &playlist.name),
             item(&album.uri, ItemKind::Album, &album.name),
         ];
-        let shelf = Shelf {
-            uri: format!("{}:shelf:1", self.0.service.key()),
-            title: "For you".into(),
-            shortcuts: false,
-            items,
+        let shelf =
+            Shelf { uri: format!("{}:shelf:1", service.key()), title: "For you".into(), items, ..Shelf::default() };
+        let greeting = format!("Hello from {}", service.name());
+        if service != Service::YouTubeMusic {
+            return Ok(Home { greeting, shelves: vec![shelf], ..Home::default() });
+        }
+        let chips: Vec<_> = ["Relax", "Workout"]
+            .into_iter()
+            .map(|title| Chip {
+                title: title.into(),
+                id: format!("chip-{title}"),
+                selected: chip == Some(&*format!("chip-{title}")),
+            })
+            .collect();
+        let songs = all_tracks(service);
+        let picks = Shelf {
+            uri: "ytmusic:shelf:Quick picks".into(),
+            title: "Quick picks".into(),
+            songs: true,
+            play_all: Some(format!(
+                "ytmusic:songs:{}",
+                songs.iter().map(|t| &t.uri["ytmusic:track:".len()..]).collect::<Vec<_>>().join(",")
+            )),
+            items: songs
+                .iter()
+                .map(|t| HomeItem {
+                    uri: format!("ytmusic:playlist:RDAMVM{}", &t.uri["ytmusic:track:".len()..]),
+                    kind: ItemKind::Playlist,
+                    title: t.name.clone(),
+                    subtitle: t.artists.join(", "),
+                    image_url: None,
+                    owner_id: String::new(),
+                    owner_name: String::new(),
+                    context_uri: t.uri.clone(),
+                })
+                .collect(),
+            ..Shelf::default()
         };
-        Ok(Home { greeting: format!("Hello from {}", self.0.service.name()), shelves: vec![shelf] })
+        let mut shelves = vec![picks, Shelf { strapline: "MADE FOR YOU".into(), ..shelf }];
+        if let Some(chip) = chips.iter().find(|c| c.selected) {
+            shelves.insert(
+                0,
+                Shelf {
+                    uri: format!("ytmusic:shelf:{}", chip.title),
+                    title: format!("{} mixes", chip.title),
+                    ..shelves[1].clone()
+                },
+            );
+        }
+        Ok(Home { greeting, chips, shelves })
     }
 
     pub async fn artist(&self, _uri: &str) -> Result<ArtistPage> {
@@ -519,7 +575,12 @@ fn all_tracks(service: Service) -> Vec<Track> {
 }
 
 fn tracks_of(service: Service, context: &str) -> Vec<Track> {
-    if context == album(service).uri {
+    if let Some(ids) = context.strip_prefix("ytmusic:songs:") {
+        let all = all_tracks(service);
+        ids.split(',').filter_map(|id| all.iter().find(|t| t.uri == format!("ytmusic:track:{id}")).cloned()).collect()
+    } else if is_track(context) {
+        all_tracks(service).into_iter().filter(|t| t.uri == context).collect()
+    } else if context == album(service).uri {
         album_tracks(service)
     } else if context == playlist(service).uri {
         playlist_tracks(service)

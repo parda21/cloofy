@@ -5,7 +5,7 @@ use std::{collections::HashMap, io, time::Duration};
 
 use cloofy_core::catalog::{AlbumInfo, PlaylistInfo};
 
-use super::{App, Focus, LIBRARY_PARTS, LibraryFilter};
+use super::{App, Focus, LIBRARY_PARTS, LibraryFilter, STAR_DELAY};
 use crate::clock::Instant;
 use crate::{
     backend::Service,
@@ -127,6 +127,11 @@ impl App {
         if let Some(crossfade) = state.crossfade.filter(|c| *c != self.prefs.crossfade) {
             self.prefs.crossfade = crossfade.min(12);
             self.save_setting(Setting::Crossfade);
+        }
+        self.usage = state.usage.clone();
+        self.usage.start(state::today());
+        if self.usage.wants_star() {
+            self.ask_for_star_after(STAR_DELAY);
         }
         self.restored_volume = state.volume;
         // The player starts at this volume too, so the slider can show it right away.
@@ -277,6 +282,7 @@ impl App {
             last_track,
             volume,
             crossfade: None,
+            usage: self.usage.clone(),
         }
     }
 

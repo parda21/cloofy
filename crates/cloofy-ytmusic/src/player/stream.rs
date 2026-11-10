@@ -17,6 +17,23 @@ const MARGIN: Duration = Duration::from_secs(30 * 60);
 /// …or, where the URL doesn't say, this long after they were made.
 const LIFETIME: Duration = Duration::from_secs(5 * 60 * 60);
 
+/// YouTube asks the connection to prove it isn't a bot. It does so for signed-out requests
+/// from addresses it finds suspicious, datacenters always and homes now and then, and it
+/// passes by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotCheck;
+
+impl std::fmt::Display for BotCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "YouTube asks this connection to prove it isn't a bot, so songs can't play for now. It usually \
+             passes within a few hours; another network helps sooner.",
+        )
+    }
+}
+
+impl std::error::Error for BotCheck {}
+
 /// The page yt-dlp resolves for a song.
 pub(crate) fn watch_url(video: &str) -> String {
     format!("https://music.youtube.com/watch?v={video}")
@@ -57,10 +74,18 @@ pub(crate) async fn resolve(video: &str, cache_dir: Option<PathBuf>) -> Result<S
         Some(url) if output.status.success() => Ok(Stream { url: url.to_owned(), until: valid_until(url) }),
         _ => {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if is_bot_check(&stderr) {
+                return Err(BotCheck.into());
+            }
             let reason = stderr.lines().rfind(|line| !line.trim().is_empty()).unwrap_or("no URL").trim();
             bail!("{}", reason.strip_prefix("ERROR: ").unwrap_or(reason))
         }
     }
+}
+
+/// Whether yt-dlp failed on YouTube's "Sign in to confirm you're not a bot".
+fn is_bot_check(stderr: &str) -> bool {
+    stderr.contains("confirm you’re not a bot") || stderr.contains("confirm you're not a bot")
 }
 
 /// When to stop using a URL, from its `expire` parameter.
@@ -79,6 +104,13 @@ fn valid_until(url: &str) -> Instant {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bot_check_is_told_apart() {
+        let stderr = "ERROR: [youtube] plnfIj7dkJE: Sign in to confirm you’re not a bot. Use --cookies-from-browser";
+        assert!(is_bot_check(stderr));
+        assert!(!is_bot_check("ERROR: [youtube] plnfIj7dkJE: Video unavailable"));
+    }
 
     #[test]
     fn urls_are_good_until_shortly_before_they_expire() {

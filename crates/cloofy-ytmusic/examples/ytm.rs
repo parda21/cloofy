@@ -1,7 +1,7 @@
 //! A command line for trying the YouTube Music backend without the interface:
 //!
 //! ```text
-//! cargo run -p cloofy-ytmusic --example ytm -- home
+//! cargo run -p cloofy-ytmusic --example ytm -- home [chip ID]
 //! cargo run -p cloofy-ytmusic --example ytm -- search daft punk
 //! cargo run -p cloofy-ytmusic --example ytm -- playlist|album|artist|radio|lyrics <uri>
 //! cargo run -p cloofy-ytmusic --example ytm -- suggest|tracks|saved|me|accounts|browsers|doctor …
@@ -53,9 +53,16 @@ async fn main() -> Result<()> {
     let started = Instant::now();
     match command.as_str() {
         "home" => {
-            let home = client.home().await?;
+            let home = client.home(rest.first().map(String::as_str)).await?;
+            for chip in &home.chips {
+                println!("chip {}{} [{}]", chip.title, if chip.selected { " (selected)" } else { "" }, chip.id);
+            }
             for shelf in &home.shelves {
-                println!("\n## {} ({} items)", shelf.title, shelf.items.len());
+                let layout = if shelf.songs { ", songs" } else { "" };
+                println!("\n## {} ({} items{layout}) {}", shelf.title, shelf.items.len(), shelf.strapline);
+                if let Some(all) = &shelf.play_all {
+                    println!("  play all: {all}");
+                }
                 for item in &shelf.items {
                     println!(
                         "  {:?} {} — {} [{}] play={}",

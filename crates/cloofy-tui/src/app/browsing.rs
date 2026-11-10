@@ -296,7 +296,7 @@ impl App {
             self.loader.library();
         }
         if let View::Home(v) = &self.view {
-            self.loader.home(v.id);
+            self.loader.home(v.id, v.filter.as_ref().map(|c| c.id.clone()));
         }
         if !self.demo {
             self.load_cache();

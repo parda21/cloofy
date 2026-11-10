@@ -1,18 +1,19 @@
-//! Home: a greeting, the shortcut grid and shelves of cover cards.
+//! Home: a greeting or chips, the shortcut grid, and shelves of cover cards or of songs.
 
-use cloofy_core::home::{HomeItem, ItemKind, Shelf};
+use cloofy_core::home::{Chip, HomeItem, ItemKind, Shelf};
 use ratatui::{
     Frame,
     layout::{Rect, Size},
     style::{Color, Style},
     text::{Line, Span},
 };
+use unicode_width::UnicodeWidthStr;
 
 use super::{text, wordmark};
 use crate::{
     app::{App, Focus, Hit},
     theme,
-    views::View,
+    views::{self, SONG_ROWS, View},
 };
 
 /// Card cover in cells; cells are about twice as tall as wide, so this is roughly square.
@@ -22,6 +23,15 @@ const CARD_GAP: u16 = 3;
 pub(super) const SHELF_ROWS: u16 = 1 + 1 + 7 + 2 + 2;
 const TILE_COVER: Size = Size { width: 6, height: 3 };
 const TILE_GAP: u16 = 2;
+/// A song's cover in a shelf of songs, as in the sidebar.
+const SONG_COVER: Size = Size { width: 4, height: 2 };
+/// Narrowest column of songs, and the room between columns.
+const SONG_WIDTH: u16 = 30;
+const SONG_GAP: u16 = 3;
+/// Title, gap, the songs two rows each with a row between them, and spacing below.
+const SONGS_ROWS: u16 = 1 + 1 + SONG_ROWS as u16 * 3 - 1 + 2;
+/// The Play all button in a shelf's title row.
+const PLAY_ALL: &str = "Play all";
 
 /// What one shelf needs for drawing, copied out of the view.
 pub(super) struct ShelfLayout {
@@ -30,7 +40,10 @@ pub(super) struct ShelfLayout {
     /// Screen row of the title; may lie above the visible area while scrolling.
     pub y: i32,
     pub title: String,
+    pub strapline: String,
     pub shortcuts: bool,
+    pub songs: bool,
+    pub play_all: bool,
     pub total: usize,
     /// Index of the first visible card.
     pub first: usize,
@@ -42,6 +55,11 @@ pub(super) struct ShelfLayout {
 /// How many cards fit next to each other.
 pub(super) fn visible_cards(width: u16) -> usize {
     ((width + CARD_GAP) / (COVER.width + CARD_GAP)).max(1) as usize
+}
+
+/// How many columns of songs fit next to each other.
+fn song_columns(width: u16) -> usize {
+    ((width + SONG_GAP) / (SONG_WIDTH + SONG_GAP)).max(1) as usize
 }
 
 /// Cover URLs, and whether they are round, of the pages left and right of the `cards` items
@@ -106,7 +124,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
 
-    // Everything scrolls together, greeting included; positions are rows from the top.
+    // Everything scrolls together, greeting or chips included; positions are rows from the top.
     let heights: Vec<u16> = home.shelves.iter().map(|s| shelf_height(s, inner.width)).collect();
     let mut starts = Vec::with_capacity(heights.len());
     let mut total: u16 = 2;
@@ -115,7 +133,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         total += height;
     }
     let viewport = inner.height;
-    if !view.detached && !heights.is_empty() {
+    if view.chip.is_some() && !view.detached {
+        view.scroll = 0;
+    } else if !view.detached && !heights.is_empty() {
         let shelf = view.shelf.min(heights.len() - 1);
         let top = if shelf == 0 { 0 } else { starts[shelf] };
         let bottom = starts[shelf] + heights[shelf].saturating_sub(2);
@@ -129,18 +149,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     view.scroll = view.scroll.min(total.saturating_sub(viewport));
     let scroll = view.scroll;
 
+    let mut chip_hits = Vec::new();
     if scroll == 0 {
-        let greeting = if home.greeting.is_empty() { "Hello".to_owned() } else { home.greeting.clone() };
-        let mut spans = vec![Span::styled(greeting, Style::new().fg(p.text).bold())];
-        if view.loading {
-            spans.push(Span::styled(format!("   {}", text::spinner(frame_no)), p.faint));
+        let spinner = view.loading.then(|| Span::styled(format!("   {}", text::spinner(frame_no)), p.faint));
+        if home.chips.is_empty() {
+            let greeting = if home.greeting.is_empty() { "Hello".to_owned() } else { home.greeting.clone() };
+            let mut spans = vec![Span::styled(greeting, Style::new().fg(p.text).bold())];
+            spans.extend(spinner);
+            frame.buffer_mut().set_line(inner.x, inner.y, &Line::from(spans), inner.width);
+        } else {
+            let cursor = view.chip.filter(|_| focused);
+            let room = inner.width.saturating_sub(if spinner.is_some() { 4 } else { 0 });
+            let (hits, end) =
+                chips(frame, app.accent.color(), app.accent.selection(), inner, room, &home.chips, cursor);
+            chip_hits = hits;
+            if let Some(spinner) = spinner {
+                frame.buffer_mut().set_span(end, inner.y, &spinner, 4);
+            }
         }
-        frame.buffer_mut().set_line(inner.x, inner.y, &Line::from(spans), inner.width);
     }
 
     view.offsets.resize(home.shelves.len(), 0);
     let cards = visible_cards(inner.width);
+    let columns = song_columns(inner.width);
     view.cards = cards;
+    view.columns = columns;
+    let on_shelf = view.chip.is_none();
     let mut layouts = Vec::new();
     // The first page of the shelf below the screen, so scrolling down finds it loaded.
     let mut below = Vec::new();
@@ -149,10 +183,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if y + heights[index] as i32 <= inner.y as i32 {
             continue;
         }
+        let page = if shelf.songs { columns * SONG_ROWS } else { cards };
+        let size = if shelf.songs { SONG_COVER } else { COVER };
         if y >= inner.bottom() as i32 {
             if !shelf.shortcuts {
                 let first = view.offsets[index];
-                below.extend(shelf.items.iter().skip(first).take(cards).map(cover_of));
+                below.extend(shelf.items.iter().skip(first).take(page).map(|item| (cover_of(item), size)));
             }
             break;
         }
@@ -160,33 +196,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             0
         } else {
             let offset = &mut view.offsets[index];
-            if index == view.shelf {
-                follow(offset, view.item, cards);
+            if index == view.shelf && on_shelf {
+                if shelf.songs {
+                    views::follow_songs(offset, view.item, columns);
+                } else {
+                    follow(offset, view.item, cards);
+                }
             }
-            *offset = (*offset).min(shelf.items.len().saturating_sub(cards));
+            let last_page = if shelf.songs {
+                shelf.items.len().div_ceil(SONG_ROWS).saturating_sub(columns) * SONG_ROWS
+            } else {
+                shelf.items.len().saturating_sub(cards)
+            };
+            *offset = (*offset).min(last_page);
             *offset
         };
-        let count = if shelf.shortcuts { shelf.items.len() } else { cards };
+        let count = if shelf.shortcuts { shelf.items.len() } else { page };
         layouts.push(ShelfLayout {
             index,
             y,
             title: shelf.title.clone(),
+            strapline: shelf.strapline.clone(),
             shortcuts: shelf.shortcuts,
+            songs: shelf.songs,
+            play_all: shelf.play_all.is_some(),
             total: shelf.items.len(),
             first,
             items: shelf.items.iter().skip(first).take(count).cloned().collect(),
-            nearby: if shelf.shortcuts { Vec::new() } else { nearby(&shelf.items, first, cards) },
+            nearby: if shelf.shortcuts { Vec::new() } else { nearby(&shelf.items, first, page) },
         });
     }
-    let selected = (view.shelf, view.item);
-    for (url, round) in below {
-        app.prefetch(url.as_deref(), COVER, round);
+    let selected = (view.shelf, view.item, on_shelf);
+    app.hits.extend(chip_hits);
+    for ((url, round), size) in below {
+        app.prefetch(url.as_deref(), size, round);
     }
 
     for layout in layouts {
-        let selected_item = (selected.0 == layout.index).then_some(selected.1);
+        let selected_item = (selected.0 == layout.index && selected.2).then_some(selected.1);
         if layout.shortcuts {
             draw_shortcuts(frame, app, inner, &layout, selected_item, focused);
+        } else if layout.songs {
+            draw_songs(frame, app, inner, &layout, selected_item, focused);
         } else {
             draw_shelf(frame, app, inner, &layout, selected_item, focused);
         }
@@ -202,6 +253,50 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
 }
 
+/// The chips in the top row of `area`, within `room` columns, scrolled so the one under the
+/// cursor shows. Returns where they are, and the column after the last one drawn.
+fn chips(
+    frame: &mut Frame,
+    accent: Color,
+    selection: Color,
+    area: Rect,
+    room: u16,
+    chips: &[Chip],
+    cursor: Option<usize>,
+) -> (Vec<(Rect, Hit)>, u16) {
+    const GAP: u16 = 1;
+    let p = theme::palette();
+    let widths: Vec<u16> = chips.iter().map(|c| c.title.width() as u16 + 2).collect();
+    let right = area.x + room;
+    // Start as far left as possible while the chip under the cursor still fits.
+    let mut start = 0;
+    if let Some(cursor) = cursor.filter(|&c| c < chips.len()) {
+        while start < cursor && widths[start..=cursor].iter().map(|w| w + GAP).sum::<u16>() > room {
+            start += 1;
+        }
+    }
+    let mut hits = Vec::new();
+    let mut x = area.x;
+    let buf = frame.buffer_mut();
+    for (index, chip) in chips.iter().enumerate().skip(start) {
+        let width = widths[index];
+        if x + width > right {
+            break;
+        }
+        let under_cursor = cursor == Some(index);
+        let style = match (chip.selected, under_cursor) {
+            (true, true) => Style::new().fg(p.bg).bg(accent).bold().underlined(),
+            (true, false) => Style::new().fg(p.bg).bg(accent).bold(),
+            (false, true) => Style::new().fg(p.text).bg(selection).bold(),
+            (false, false) => Style::new().fg(p.text).bg(p.raised),
+        };
+        buf.set_string(x, area.y, format!(" {} ", chip.title), style);
+        hits.push((Rect::new(x, area.y, width, 1), Hit::HomeChip(index)));
+        x += width + GAP;
+    }
+    (hits, x)
+}
+
 /// The wordmark with a status line, while Home loads for the first time.
 fn splash(frame: &mut Frame, app: &mut App, area: Rect, message: Span<'static>) {
     let top = area.y + area.height.saturating_sub(wordmark::HEIGHT + 3) / 2;
@@ -212,12 +307,17 @@ fn splash(frame: &mut Frame, app: &mut App, area: Rect, message: Span<'static>) 
 }
 
 fn shelf_height(shelf: &Shelf, width: u16) -> u16 {
+    let strapline = u16::from(!shelf.strapline.is_empty());
     if shelf.shortcuts {
         let columns = shortcut_columns(width);
         let rows = shelf.items.len().div_ceil(columns as usize) as u16;
         rows * (TILE_COVER.height + 1) + 1
+    } else if shelf.songs {
+        // A short shelf of songs is only as tall as its longest column.
+        let rows = shelf.items.len().clamp(1, SONG_ROWS) as u16;
+        strapline + SONGS_ROWS - (SONG_ROWS as u16 - rows) * 3
     } else {
-        SHELF_ROWS
+        strapline + SHELF_ROWS
     }
 }
 
@@ -254,36 +354,9 @@ pub(super) fn draw_shelf(
         app.prefetch(url.as_deref(), COVER, *round);
     }
     let marker = playing_marker(app);
-    if let Some(y) = row(area, layout.y) {
-        let pageable = layout.total > layout.items.len();
-        let title_width = area.width.saturating_sub(if pageable { 28 } else { 2 }) as usize;
-        let buf = frame.buffer_mut();
-        buf.set_string(area.x, y, text::truncate(&layout.title, title_width), Style::new().fg(p.text).bold());
-        if pageable {
-            let last = layout.first + layout.items.len();
-            let pager = format!("{}–{} of {}", layout.first + 1, last, layout.total);
-            let style = if selected.is_some() { Style::new().fg(p.muted) } else { Style::new().fg(p.faint) };
-            let next_x = area.right().saturating_sub(2);
-            let prev_x = next_x.saturating_sub(4);
-            buf.set_string(prev_x.saturating_sub(pager.chars().count() as u16 + 3), y, pager, style);
-            let icons = crate::icons::icons();
-            let arrows = [
-                (prev_x, icons.chevron_left, false, layout.first > 0),
-                (next_x, icons.chevron_right, true, last < layout.total),
-            ];
-            for (x, icon, forward, enabled) in arrows {
-                let arrow = Rect::new(x.saturating_sub(1), y, 3, 1);
-                let color = if enabled { p.text } else { p.disabled };
-                buf.set_style(arrow, Style::new().bg(p.raised));
-                buf.set_string(x, y, icon, Style::new().fg(color));
-                if enabled {
-                    app.hits.push((arrow, Hit::ShelfScroll { shelf: layout.index, forward }));
-                }
-            }
-        }
-    }
+    let top = header(frame, app, area, layout, selected.is_some());
 
-    let cover_y = layout.y + 2;
+    let cover_y = top + 2;
     // A card's box reaches one column past its cover on both sides, the first card's too.
     let padded = Rect { x: area.x.saturating_sub(1), width: area.width + 2, ..area };
     let slots = visible_cards(area.width);
@@ -321,6 +394,127 @@ pub(super) fn draw_shelf(
                 let hit = Hit::CardPlay { shelf: layout.index, item: index };
                 super::play_button(frame.buffer_mut(), app, x + COVER.width, y, hit, true);
             }
+        }
+    }
+}
+
+/// A shelf's strapline and title, with Play all and the arrows that page it where it has
+/// them. Returns the row of the title.
+fn header(frame: &mut Frame, app: &mut App, area: Rect, layout: &ShelfLayout, selected: bool) -> i32 {
+    let p = theme::palette();
+    let mut y = layout.y;
+    if !layout.strapline.is_empty() {
+        if let Some(row) = row(area, y) {
+            let strapline = text::truncate(&layout.strapline, area.width as usize);
+            frame.buffer_mut().set_string(area.x, row, strapline, Style::new().fg(p.muted));
+        }
+        y += 1;
+    }
+    let Some(title_y) = row(area, y) else { return y };
+    let pageable = layout.total > layout.items.len();
+    let play_all_width = if layout.play_all { PLAY_ALL.len() as u16 + 4 } else { 0 };
+    let reserved = if pageable { 28 } else { 2 } + play_all_width;
+    let title_width = area.width.saturating_sub(reserved) as usize;
+    let buf = frame.buffer_mut();
+    buf.set_string(area.x, title_y, text::truncate(&layout.title, title_width), Style::new().fg(p.text).bold());
+    let mut right = area.right();
+    if pageable {
+        let last = layout.first + layout.items.len();
+        let pager = format!("{}–{} of {}", layout.first + 1, last, layout.total);
+        let style = if selected { Style::new().fg(p.muted) } else { Style::new().fg(p.faint) };
+        let next_x = area.right().saturating_sub(2);
+        let prev_x = next_x.saturating_sub(4);
+        right = prev_x.saturating_sub(pager.chars().count() as u16 + 3);
+        buf.set_string(right, title_y, pager, style);
+        let icons = crate::icons::icons();
+        let arrows = [
+            (prev_x, icons.chevron_left, false, layout.first > 0),
+            (next_x, icons.chevron_right, true, last < layout.total),
+        ];
+        for (x, icon, forward, enabled) in arrows {
+            let arrow = Rect::new(x.saturating_sub(1), title_y, 3, 1);
+            let color = if enabled { p.text } else { p.disabled };
+            buf.set_style(arrow, Style::new().bg(p.raised));
+            buf.set_string(x, title_y, icon, Style::new().fg(color));
+            if enabled {
+                app.hits.push((arrow, Hit::ShelfScroll { shelf: layout.index, forward }));
+            }
+        }
+    }
+    if layout.play_all {
+        let width = play_all_width - 1;
+        let x = right.saturating_sub(width + 2);
+        let button = Rect::new(x, title_y, width, 1);
+        let hovered = super::hovered(app, button);
+        let style = if hovered { Style::new().fg(p.bg).bg(p.text) } else { Style::new().fg(p.text).bg(p.raised) };
+        let buf = frame.buffer_mut();
+        buf.set_string(x, title_y, format!(" {} {PLAY_ALL} ", crate::icons::icons().play), style);
+        app.hits.push((button, Hit::ShelfPlay(layout.index)));
+    }
+    y
+}
+
+/// A titled shelf of songs in columns of [`SONG_ROWS`], like YouTube Music's Quick picks:
+/// a small cover, the title and the artists. `selected` is the song under the cursor.
+fn draw_songs(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    layout: &ShelfLayout,
+    selected: Option<usize>,
+    focused: bool,
+) {
+    let p = theme::palette();
+    let accent = app.accent.color();
+    let selection = if focused { app.accent.selection() } else { p.unfocused };
+    for (url, round) in &layout.nearby {
+        app.prefetch(url.as_deref(), SONG_COVER, *round);
+    }
+    let marker = playing_marker(app);
+    let top = header(frame, app, area, layout, selected.is_some());
+    let columns = song_columns(area.width);
+    let width = (area.width.saturating_sub(SONG_GAP * (columns as u16 - 1))) / columns as u16;
+    let padded = Rect { x: area.x.saturating_sub(1), width: area.width + 2, ..area };
+    for (position, item) in layout.items.iter().enumerate() {
+        let (column, line) = ((position / SONG_ROWS) as u16, (position % SONG_ROWS) as i32);
+        let x = area.x + column * (width + SONG_GAP);
+        let y = top + 2 + line * 3;
+        let index = layout.first + position;
+        let is_selected = selected == Some(index);
+        let Some(cell) = clip(padded, x.saturating_sub(1), width + 2, y, SONG_COVER.height) else { continue };
+        if is_selected {
+            frame.buffer_mut().set_style(cell, Style::new().bg(selection));
+        }
+        draw_cover(frame, app, (x, y), area, item, SONG_COVER);
+        let playing = app.now.track.as_ref().is_some_and(|track| track.uri == item.context_uri);
+        let hovered = super::hovered(app, cell);
+        let text_x = x + SONG_COVER.width + 2;
+        let reserved = SONG_COVER.width
+            + 2
+            + if hovered {
+                super::PLAY_BUTTON_WIDTH + 1
+            } else if playing {
+                4
+            } else {
+                0
+            };
+        let room = width.saturating_sub(reserved) as usize;
+        let buf = frame.buffer_mut();
+        if let Some(row) = row(area, y) {
+            let style = card_title_style(accent, playing, is_selected);
+            buf.set_string(text_x, row, text::truncate(&item.title, room), style);
+            if playing && !hovered {
+                buf.set_string(x + width - 3, row, marker, Style::new().fg(accent));
+            }
+        }
+        if let Some(row) = row(area, y + 1) {
+            let room = width.saturating_sub(SONG_COVER.width + 2) as usize;
+            buf.set_string(text_x, row, text::truncate(&item.subtitle, room), Style::new().fg(p.muted));
+        }
+        app.hits.push((cell, Hit::Card { shelf: layout.index, item: index }));
+        if hovered && let Some(row) = row(area, y) {
+            let hit = Hit::CardPlay { shelf: layout.index, item: index };
+            super::play_button(frame.buffer_mut(), app, x + width, row, hit, false);
         }
     }
 }

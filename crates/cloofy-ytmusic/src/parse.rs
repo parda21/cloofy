@@ -17,6 +17,9 @@ pub(crate) const TRACK: &str = "ytmusic:track:";
 pub(crate) const ALBUM: &str = "ytmusic:album:";
 pub(crate) const PLAYLIST: &str = "ytmusic:playlist:";
 pub(crate) const ARTIST: &str = "ytmusic:artist:";
+/// Songs played in a row, by video ID: `ytmusic:songs:<id>,<id>,…`. Home's Quick picks play as
+/// this, since YouTube Music makes their list up rather than keeping it as a playlist.
+pub(crate) const SONGS: &str = "ytmusic:songs:";
 
 /// The text of a `runs` or `simpleText` object.
 pub(crate) fn text(value: &Value) -> String {
@@ -387,16 +390,27 @@ pub(crate) fn home_item(item: &Value) -> Option<HomeItem> {
     if let Some(track) = list_item_track(row)
         && row.get("navigationEndpoint").is_none()
     {
-        return Some(song_item(&track));
+        // A row of songs only: what the row says under the title, e.g. "Artist • Album".
+        let mut item = song_item(&track);
+        let below = below_title(row);
+        if !below.is_empty() {
+            item.subtitle = below;
+        }
+        return Some(item);
     }
     let link = Link::of(row.get("navigationEndpoint")?)?;
     let columns = flex_columns(row);
     let title: String = columns.first()?.iter().filter_map(|r| r["text"].as_str()).collect();
     let byline = Byline::parse(columns.iter().skip(1).copied());
-    let subtitle =
-        columns.iter().skip(1).map(|runs| runs.iter().filter_map(|r| r["text"].as_str()).collect::<String>());
-    let subtitle = subtitle.filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" • ");
+    let subtitle = below_title(row);
     make_item(link, title, &byline, subtitle, &row["thumbnail"])
+}
+
+/// The columns of a list row after its title, as one line: "Artist • Album".
+fn below_title(row: &Value) -> String {
+    let columns = flex_columns(row);
+    let texts = columns.iter().skip(1).map(|runs| runs.iter().filter_map(|r| r["text"].as_str()).collect::<String>());
+    texts.filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" • ")
 }
 
 fn make_item(link: Link, title: String, byline: &Byline, subtitle: String, thumbnail: &Value) -> Option<HomeItem> {

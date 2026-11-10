@@ -58,6 +58,8 @@ use crate::{
 pub const COVER_SIZE: Size = Size { width: 6, height: 3 };
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const STATUS_TTL: Duration = Duration::from_secs(4);
+/// How long after the start cloofy waits before it asks for a star, so the first screen is up.
+const STAR_DELAY: Duration = Duration::from_secs(5);
 const SEEK_STEP_MS: i64 = 5_000;
 /// "Previous" restarts the track once it has played this long, as in Spotify's own clients.
 const RESTART_AFTER_MS: u32 = 3_000;
@@ -283,6 +285,14 @@ pub enum Hit {
         shelf: usize,
         forward: bool,
     },
+    /// The Play all button of a shelf.
+    ShelfPlay(usize),
+    /// The pinned problem in the bottom line, which copies its command…
+    PinnedCopy,
+    /// …and the cross that closes it.
+    PinnedClose,
+    /// A chip above Home's shelves, such as "Relax".
+    HomeChip(usize),
     /// An artist, album or playlist name that leads to its page.
     Link(Link),
     Chip(LibraryFilter),
@@ -384,6 +394,25 @@ pub struct Status {
     pub text: String,
     pub error: bool,
     since: Instant,
+}
+
+/// A problem that stays in the bottom line until it's solved or closed, rather than for a few
+/// seconds: an expired sign-in, or YouTube's bot check.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pinned {
+    pub text: String,
+    /// What to run in a terminal, e.g. `cloofy login ytmusic`; a click copies it.
+    pub command: Option<String>,
+    pub copied: bool,
+    pub cause: Cause,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// The service doesn't accept the sign-in any more: gone once it does again.
+    SignIn,
+    /// Nothing can play: gone once something does.
+    Blocked,
 }
 
 /// A transfer of playback to another device, until that device shows up playing.
@@ -510,6 +539,15 @@ pub struct App {
     /// The last Home feed, shown instantly while a fresh one loads.
     home_cache: Option<Home>,
     home_fetched_at: Option<Instant>,
+    /// On how many days cloofy was used, and whether it asked for a star.
+    pub(crate) usage: crate::state::Usage,
+    /// When to ask for a star on GitHub.
+    star_due: Option<Instant>,
+    /// Links opened in the browser, in tests instead.
+    #[cfg(test)]
+    pub opened: Vec<String>,
+    /// A problem that stays until it's solved or closed.
+    pub pinned: Option<Pinned>,
     /// Library, user or Home changed since the data cache was last written.
     data_dirty: bool,
     last_cache_save: Instant,
@@ -683,6 +721,11 @@ impl App {
             shown_before: false,
             home_cache: None,
             home_fetched_at: None,
+            usage: crate::state::Usage::default(),
+            pinned: None,
+            star_due: None,
+            #[cfg(test)]
+            opened: Vec::new(),
             data_dirty: false,
             last_cache_save: Instant::now(),
             cached_tracks: None,
@@ -1107,7 +1150,7 @@ impl App {
             View::Home(v) if v.error.is_some() => {
                 v.error = None;
                 v.loading = true;
-                self.loader.home(v.id);
+                self.loader.home(v.id, v.filter.as_ref().map(|c| c.id.clone()));
             }
             View::Artist(v) if v.error.is_some() => {
                 v.error = None;
@@ -1166,6 +1209,11 @@ impl App {
             PlayerEvent::Unavailable { refused: false, .. } => {
                 self.notice("A song couldn't load, so it was skipped".into())
             }
+            PlayerEvent::Blocked { reason } => {
+                self.pinned =
+                    Some(Pinned { text: reason.clone(), command: None, copied: false, cause: Cause::Blocked });
+            }
+            PlayerEvent::Playing { .. } => self.unpin(Cause::Blocked),
             _ => {}
         }
         if matches!(event, PlayerEvent::TrackChanged { .. } | PlayerEvent::Playing { .. }) {
@@ -1357,6 +1405,13 @@ impl App {
                     }
                     self.me = Some(user);
                     self.data_dirty = true;
+                    // Signed in again.
+                    if let Some(service) = self.loader.service()
+                        && self.pinned.as_ref().and_then(|p| p.command.as_deref())
+                            == Some(&*format!("cloofy login {}", service.key()))
+                    {
+                        self.unpin(Cause::SignIn);
+                    }
                 }
                 Err(err) => self.error(err),
             },
@@ -1413,19 +1468,27 @@ impl App {
                 self.saved.insert(uri, followed);
                 self.loader.check_saved(uris);
             }
-            DataEvent::Home { view, result } => {
-                if let Ok(home) = &result {
+            DataEvent::Home { view, chip, result } => {
+                // A chip's Home is only for its view; the whole Home is what Home opens with.
+                if let Some(home) = result.as_ref().ok().filter(|_| chip.is_none()) {
                     self.home_cache = Some(home.clone());
                     self.home_fetched_at = Some(Instant::now());
                     self.data_dirty = true;
                 }
                 let Some(View::Home(v)) = self.view_mut(view) else { return false };
+                if !v.wants(chip.as_deref()) {
+                    return false;
+                }
                 match result {
                     Ok(home) => v.set_home(home),
-                    Err(err) => {
-                        v.loading = false;
-                        v.error = Some(err);
-                    }
+                    // The Home before the chip stays, so the failure is said at the bottom.
+                    Err(err) => match v.chip_failed() {
+                        Some(failed) => self.error(format!("Couldn't load {failed}: {err}")),
+                        None => {
+                            v.loading = false;
+                            v.error = Some(err);
+                        }
+                    },
                 }
             }
             // Loads still under way when cover art was turned off.
@@ -1785,6 +1848,8 @@ impl App {
             redraw = true;
         }
 
+        redraw |= self.ask_for_star();
+
         if self.status.as_ref().is_some_and(|s| s.since.elapsed() >= STATUS_TTL) {
             self.status = None;
             redraw = true;
@@ -1915,6 +1980,8 @@ impl App {
                 self.quit = true;
             } else if matches!(self.overlay, Some(Overlay::Help)) {
                 self.overlay = None;
+            } else if matches!(self.overlay, Some(Overlay::Star { .. })) {
+                self.on_star_key(key);
             } else if matches!(self.overlay, Some(Overlay::Menu(_))) {
                 self.on_menu_key(key);
             } else {
@@ -2169,6 +2236,60 @@ impl App {
         self.apply_choice(outcome);
     }
 
+    fn on_star_key(&mut self, key: KeyEvent) {
+        let Some(Overlay::Star { cursor }) = &mut self.overlay else { return };
+        match key.code {
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('h' | 'l') => {
+                *cursor = 1 - *cursor;
+            }
+            KeyCode::Enter => {
+                let star = *cursor == 0;
+                self.answer_star(star);
+            }
+            KeyCode::Char('s') => self.answer_star(true),
+            KeyCode::Esc | KeyCode::Char('n') => self.answer_star(false),
+            _ => {}
+        }
+    }
+
+    /// Asks for a star on GitHub once `delay` has passed and nothing else is in the way.
+    pub(crate) fn ask_for_star_after(&mut self, delay: Duration) {
+        self.star_due = Some(Instant::now() + delay);
+    }
+
+    /// Shows the request for a star, if it is due and the screen is calm. It counts as asked
+    /// the moment it shows: closed in any way, it never comes back.
+    fn ask_for_star(&mut self) -> bool {
+        let calm = self.overlay.is_none() && self.focus != Focus::SearchInput && !self.zen && !self.demo;
+        if !calm || !self.star_due.is_some_and(|due| Instant::now() >= due) {
+            return false;
+        }
+        self.star_due = None;
+        self.usage.star_asked = true;
+        self.save_state();
+        self.overlay = Some(Overlay::Star { cursor: 0 });
+        self.overlay_fx_pending = true;
+        true
+    }
+
+    /// Closes the request for a star, opening cloofy's page on GitHub for one.
+    fn answer_star(&mut self, star: bool) {
+        self.overlay = None;
+        if star {
+            self.open_in_browser(cloofy_core::update::REPO_URL);
+            self.notice("Thank you!".into());
+        }
+    }
+
+    fn open_in_browser(&mut self, url: &str) {
+        #[cfg(not(test))]
+        if let Err(err) = open::that_detached(url) {
+            self.error(format!("Can't open {url}: {err}"));
+        }
+        #[cfg(test)]
+        self.opened.push(url.to_owned());
+    }
+
     fn on_menu_key(&mut self, key: KeyEvent) {
         let Some(Overlay::Menu(menu)) = &mut self.overlay else { return };
         let len = menu.items.len();
@@ -2314,7 +2435,12 @@ impl App {
     /// Pages the shelf under the mouse sideways by one card.
     fn scroll_sideways(&mut self, hit: Option<Hit>, delta: isize) {
         let shelf = match hit {
-            Some(Hit::Card { shelf, .. } | Hit::CardPlay { shelf, .. } | Hit::ShelfScroll { shelf, .. }) => shelf,
+            Some(
+                Hit::Card { shelf, .. }
+                | Hit::CardPlay { shelf, .. }
+                | Hit::ShelfScroll { shelf, .. }
+                | Hit::ShelfPlay(shelf),
+            ) => shelf,
             _ => return,
         };
         match &mut self.view {
@@ -2431,10 +2557,17 @@ impl App {
             Hit::ShelfScroll { shelf, forward } => {
                 let page = |cards: usize| if forward { cards as isize } else { -(cards as isize) };
                 match &mut self.view {
-                    View::Home(v) => v.scroll_shelf(shelf, page(v.cards)),
+                    View::Home(v) => v.scroll_shelf(shelf, page(v.visible(shelf))),
                     View::Artist(v) => v.scroll_shelf(shelf, page(v.cards)),
                     _ => {}
                 }
+            }
+            Hit::ShelfPlay(shelf) => self.play_shelf(shelf),
+            Hit::PinnedCopy => self.on_pinned(false),
+            Hit::PinnedClose => self.on_pinned(true),
+            Hit::HomeChip(index) => {
+                self.focus = Focus::Content;
+                self.pick_chip(index);
             }
             Hit::Link(link) => self.follow_link(link),
             Hit::Hint(action) => match action {
@@ -2479,6 +2612,9 @@ impl App {
             }
             Hit::OverlayItem(position) if matches!(self.overlay, Some(Overlay::Menu(_))) => {
                 self.choose_menu_item(position);
+            }
+            Hit::OverlayItem(position) if matches!(self.overlay, Some(Overlay::Star { .. })) => {
+                self.answer_star(position == 0);
             }
             Hit::OverlayItem(position) => {
                 let outcome = match &self.overlay {
@@ -2526,6 +2662,8 @@ impl App {
                 | Hit::CardPlay { .. }
                 | Hit::RowPlay(_)
                 | Hit::ShelfScroll { .. }
+                | Hit::ShelfPlay(_)
+                | Hit::HomeChip(_)
                 | Hit::PageChip(_)
                 | Hit::Header(_)
                 | Hit::SettingStep { .. },
@@ -3111,7 +3249,7 @@ impl App {
         if self.home_fetched_at.is_some_and(|at| at.elapsed() < HOME_FRESH) {
             view.loading = false;
         } else {
-            self.loader.home(id);
+            self.loader.home(id, None);
         }
         self.push_view(View::Home(view));
         self.focus = Focus::Content;
@@ -3426,8 +3564,16 @@ impl App {
     fn activate(&mut self) {
         match &self.view {
             View::Home(v) => {
+                if let Some(chip) = v.chip {
+                    return self.pick_chip(chip);
+                }
                 if let Some(item) = v.selected().cloned() {
-                    self.open_home_item(item);
+                    // A song plays at once, as in YouTube Music's own apps.
+                    if item.is_song() {
+                        self.play_item(item);
+                    } else {
+                        self.open_home_item(item);
+                    }
                 }
             }
             View::Library(v) => {
@@ -3546,6 +3692,24 @@ impl App {
         };
         self.push_view(View::Artist(view));
         self.focus = Focus::Content;
+    }
+
+    /// Narrows Home to the chip at `index`, or widens it back to the whole Home.
+    fn pick_chip(&mut self, index: usize) {
+        let View::Home(v) = &mut self.view else { return };
+        if let Some(chip) = v.pick_chip(index) {
+            let id = v.id;
+            self.loader.home(id, chip);
+        }
+    }
+
+    /// Plays what a shelf's Play all button plays.
+    fn play_shelf(&mut self, shelf: usize) {
+        let View::Home(v) = &self.view else { return };
+        let Some(context) = v.home.as_ref().and_then(|h| h.shelves.get(shelf)).and_then(|s| s.play_all.clone()) else {
+            return;
+        };
+        self.play(context, None);
     }
 
     fn play_home_item(&mut self) {
@@ -3912,9 +4076,40 @@ impl App {
         self.status = Some(Status { text, error: false, since: Instant::now() });
     }
 
-    fn error(&mut self, text: String) {
+    pub(crate) fn error(&mut self, text: String) {
+        // An expired sign-in stays, with the command that renews it.
+        if let Some(command) = sign_in_command(&text) {
+            self.pinned = Some(Pinned { text, command: Some(command), copied: false, cause: Cause::SignIn });
+            return;
+        }
         self.status = Some(Status { text, error: true, since: Instant::now() });
     }
+
+    /// Closes the pinned problem of `cause`, which went away.
+    fn unpin(&mut self, cause: Cause) {
+        if self.pinned.as_ref().is_some_and(|p| p.cause == cause) {
+            self.pinned = None;
+        }
+    }
+
+    /// Copies the pinned problem's command, or closes it.
+    fn on_pinned(&mut self, close: bool) {
+        if close {
+            self.pinned = None;
+        } else if let Some(pinned) = &mut self.pinned
+            && let Some(command) = &pinned.command
+        {
+            menu::copy_to_clipboard(command);
+            pinned.copied = true;
+        }
+    }
+}
+
+/// The command a message asks to run to sign in again, like `cloofy login ytmusic`.
+fn sign_in_command(text: &str) -> Option<String> {
+    let start = text.find("`cloofy login")? + 1;
+    let end = start + text[start..].find('`')?;
+    Some(text[start..end].to_owned())
 }
 
 /// Images are kept per URL and cell size.

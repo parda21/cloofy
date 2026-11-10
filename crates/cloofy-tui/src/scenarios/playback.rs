@@ -6,7 +6,7 @@ use std::time::Duration;
 use cloofy_core::{player::PlayerEvent, service::Service};
 use crossterm::event::KeyCode::{Char, Down, Enter};
 
-use crate::{backend::fake::SONG, harness::Harness};
+use crate::{backend::fake::SONG, harness::Harness, views::View};
 
 const SPOTIFY: Service = Service::Spotify;
 const YOUTUBE: Service = Service::YouTubeMusic;
@@ -140,4 +140,127 @@ async fn liking_a_song_saves_it() {
         "{:?}",
         h.fake(SPOTIFY).commands()
     );
+}
+
+/// YouTube Music's Home as in its own apps: chips above, Quick picks as songs in columns that
+/// play at once, and a Play all that plays them in order.
+#[tokio::test]
+async fn youtube_music_home_has_chips_and_quick_picks() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    assert!(h.shows(" Relax ") && h.shows("Quick picks") && h.shows("MADE FOR YOU"), "{}", h.screen());
+    h.assert_screen("ytmusic_home");
+
+    // Down the first column, then to the next one: the song plays at once.
+    h.press(Down).await.press(Char('l')).await.press(Enter).await;
+    assert_eq!(h.fake(YOUTUBE).commands(), ["play ytmusic:track:p1-1"]);
+    assert!(h.player_bar().contains("YouTube Music Mix Song 1"), "{}", h.player_bar());
+
+    h.click_on("Play all").await;
+    let commands = h.fake(YOUTUBE).commands();
+    assert!(commands[1].starts_with("play ytmusic:songs:a1-1,a1-2,"), "{commands:?}");
+    assert!(h.player_bar().contains("YouTube Music Song 1"), "{}", h.player_bar());
+}
+
+#[tokio::test]
+async fn a_chip_narrows_youtube_music_home_down_and_back() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.click_on("Workout").await;
+    assert!(h.shows("Workout mixes"), "{}", h.screen());
+    // Up from the first shelf to the chips; Enter on the picked one shows the whole Home again.
+    h.press(Char('k')).await.press(Enter).await;
+    assert!(!h.shows("Workout mixes") && h.shows("Quick picks"), "{}", h.screen());
+}
+
+/// A chip whose Home doesn't load left the old Home with the chip picked, and nothing said.
+/// The Home shown stays, its chip too, and the bottom says why.
+#[tokio::test]
+async fn a_chip_that_fails_to_load_says_so() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.fake(YOUTUBE).take_home_down();
+    h.click_on("Workout").await;
+    assert!(h.shows("Couldn't load Workout: The fake's Home is down") && h.shows("Quick picks"), "{}", h.screen());
+    let View::Home(v) = &h.app.view else { panic!("{}", h.screen()) };
+    assert!(v.filter.is_none() && !v.loading && v.chips().iter().all(|c| !c.selected));
+}
+
+/// On the second day of use cloofy asks for a star on GitHub, once, a few seconds in.
+#[tokio::test]
+async fn the_star_on_github_is_asked_for_once() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.app.ask_for_star_after(Duration::from_secs(5));
+    h.wait(Duration::from_secs(4)).await;
+    assert!(!h.shows("Enjoying cloofy?"), "not right at the start");
+    h.wait(Duration::from_secs(2)).await;
+    assert!(h.shows("Enjoying cloofy?"), "{}", h.screen());
+    assert!(h.app.usage.star_asked, "it counts as asked the moment it shows");
+    h.assert_screen("star");
+
+    h.press(Enter).await;
+    assert!(!h.shows("Enjoying cloofy?"));
+    assert_eq!(h.app.opened, [cloofy_core::update::REPO_URL]);
+}
+
+#[tokio::test]
+async fn no_thanks_closes_the_star_for_good() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.app.ask_for_star_after(Duration::ZERO);
+    h.wait(Duration::from_millis(100)).await;
+    h.click_on("No thanks").await;
+    assert!(!h.shows("Enjoying cloofy?") && h.app.opened.is_empty());
+    assert!(h.app.usage.star_asked);
+}
+
+/// On a short terminal the star's popup leaves out what doesn't fit inside its border, instead
+/// of drawing over the border and the page under it.
+#[tokio::test]
+async fn the_star_keeps_inside_its_border_on_a_short_terminal() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    h.app.ask_for_star_after(Duration::ZERO);
+    h.wait(Duration::from_millis(100)).await;
+    for height in [9, 7, 5] {
+        h.resize(80, height).await;
+        let screen = h.screen();
+        let bottom = screen.lines().find(|line| line.contains('╰')).unwrap_or_else(|| panic!("{screen}"));
+        let border: String = bottom.chars().skip_while(|&c| c != '╰').take_while(|&c| c != '╯').collect();
+        assert!(border.chars().all(|c| c == '╰' || c == '─'), "{height} rows:\n{screen}");
+    }
+}
+
+/// Issue #27: the expired sign-in went away after a few seconds, before anyone read it or
+/// could copy the command. It stays now, under other messages, until closed.
+#[tokio::test]
+async fn an_expired_sign_in_stays_until_closed() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    let expired = "YouTube doesn't accept the saved sign-in any more – run `cloofy login ytmusic` again";
+    h.app.error(expired.into());
+    h.wait(Duration::from_secs(60)).await;
+    assert!(h.shows("run `cloofy login ytmusic` again") && h.shows("click to copy"), "{}", h.screen());
+
+    // A message in between, and the sign-in is back after it.
+    play_album(&mut h, YOUTUBE).await;
+    h.fake(YOUTUBE).send(PlayerEvent::Unavailable { uri: "ytmusic:track:a1-2".into(), refused: false });
+    h.settle().await;
+    assert!(h.shows("A song couldn't load"), "{}", h.screen());
+    h.wait(Duration::from_secs(5)).await;
+    assert!(h.shows("cloofy login ytmusic"), "{}", h.screen());
+
+    h.click_on("click to copy").await;
+    assert!(h.shows("copied"), "{}", h.screen());
+    h.click_on("✕").await;
+    assert!(!h.shows("cloofy login ytmusic"), "{}", h.screen());
+}
+
+/// YouTube's bot check stopped every song without a word: it says so now, until music plays.
+#[tokio::test]
+async fn the_bot_check_says_why_nothing_plays() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    play_album(&mut h, YOUTUBE).await;
+    let reason = "YouTube asks this connection to prove it isn't a bot, so songs can't play for now.";
+    h.fake(YOUTUBE).send(PlayerEvent::Blocked { reason: reason.into() });
+    h.wait(Duration::from_secs(30)).await;
+    assert!(h.shows("prove it isn't a bot"), "{}", h.screen());
+    assert!(!h.shows("click to copy"), "there's no command to run");
+    h.fake(YOUTUBE).send(PlayerEvent::Playing { position_ms: 0 });
+    h.settle().await;
+    assert!(!h.shows("prove it isn't a bot"), "{}", h.screen());
 }

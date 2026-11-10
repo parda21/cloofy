@@ -98,9 +98,10 @@ impl YtMusic {
 
     /// The Home feed's shelves, as music.youtube.com shows them. Home items have no kind for
     /// songs, so a song is its radio: a playlist (`ytmusic:playlist:RDAMVM<id>`) to open, whose
-    /// `context_uri` is the song itself (`ytmusic:track:<id>`) to play.
-    pub async fn home(&self) -> Result<Home> {
-        home::home(&self.inner.api).await
+    /// `context_uri` is the song itself (`ytmusic:track:<id>`) to play. With a chip's ID, the
+    /// Home of that chip.
+    pub async fn home(&self, chip: Option<&str>) -> Result<Home> {
+        home::home(&self.inner.api, chip).await
     }
 
     /// Songs, albums, artists and playlists for `query`.

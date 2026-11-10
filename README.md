@@ -31,6 +31,7 @@ cloofy plays Spotify and YouTube Music in the terminal, one of them or both side
 - **Plays on its own.** Spotify plays through librespot, and cloofy is a Spotify Connect device. It controls your other devices too, and follows them live. YouTube Music plays through mpv, which cloofy starts and stops itself, with no gap between songs.
 - **Spotify, YouTube Music or both.** Install one, or both side by side: <kbd>S</kbd> or the switch in the top bar shows the other's Home, library and pages, as you left them.
 - **YouTube Music without an account.** Home, search, every page, lyrics and song radios work signed out. Sign in with your browser for your library and likes.
+- **YouTube Music's Home, as in its apps.** Moods like Relax or Workout narrow it down, and Quick picks show as songs that play at once, or all in a row.
 - **Home and the DJ.** Your shelves and mixes, and on Spotify Made For You and the DJ with its voice between tracks. Ask the DJ for something, as in Spotify's apps, or let it pick something different. Crossfade if you like.
 - **Your library.** Playlists, albums, artists, and on Spotify podcasts, in a sidebar or as a full page with covers.
 - **Every page.** Playlists, albums and artist pages with popular tracks and releases, plus search with artwork.

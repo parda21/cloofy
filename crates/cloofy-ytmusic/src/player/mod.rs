@@ -32,11 +32,11 @@ use tokio::{
 use self::{
     mpv::{Events, Mpv, MpvEvent},
     queue::Queue,
-    stream::Stream,
+    stream::{BotCheck, Stream},
 };
 use crate::{
     Source, YtMusic, pages,
-    parse::{self, ALBUM, ARTIST, PLAYLIST, TRACK},
+    parse::{self, ALBUM, ARTIST, PLAYLIST, SONGS, TRACK},
 };
 
 /// "Previous" restarts the song once it has played this long, as Spotify's apps do.
@@ -245,6 +245,8 @@ struct Engine {
     resolving: HashSet<String>,
     /// Songs yt-dlp couldn't resolve, which mpv's hook gets to try.
     unresolvable: HashSet<String>,
+    /// YouTube's bot check stopped yt-dlp since the last start, and the interface was told.
+    blocked: bool,
     /// Failed tries to play each song, by URI.
     attempts: HashMap<String, u8>,
     skipped_in_a_row: u32,
@@ -302,6 +304,7 @@ impl Engine {
             streams: HashMap::new(),
             resolving: HashSet::new(),
             unresolvable: HashSet::new(),
+            blocked: false,
             attempts: HashMap::new(),
             skipped_in_a_row: 0,
             generation: 0,
@@ -467,6 +470,9 @@ impl Engine {
         // The interface may have shown another player's queue since, so this one's is reported
         // again, even unchanged.
         self.reported = None;
+        // Each start says once that YouTube's bot check stops it, also after the last one's
+        // notice was closed.
+        self.blocked = false;
     }
 
     /// Silences mpv; what was loaded is gone.
@@ -851,11 +857,17 @@ impl Engine {
                 self.resolving.remove(&video);
                 match result {
                     Ok(stream) => {
+                        self.blocked = false;
                         self.streams.insert(video.clone(), stream);
                     }
                     Err(err) => {
                         tracing::warn!("yt-dlp can't resolve {video}: {err:#}");
                         self.unresolvable.insert(video.clone());
+                        // Said once: every song after it would run into the same check.
+                        if err.downcast_ref::<BotCheck>().is_some() && !self.blocked {
+                            self.blocked = true;
+                            self.emit(PlayerEvent::Blocked { reason: err.to_string() });
+                        }
                     }
                 }
                 let current = self.queue.current().map(|t| video_id(&t.uri) == video).unwrap_or(false);
@@ -975,6 +987,12 @@ fn load_context(client: YtMusic, jobs: UnboundedSender<Job>, generation: u64, co
             let track =
                 track.and_then(|t| if t.is_empty() { Err(anyhow!("This song isn't available")) } else { Ok(t) });
             return send(track, true);
+        } else if let Some(videos) = context.strip_prefix(SONGS) {
+            let uris: Vec<_> = videos.split(',').filter(|v| !v.is_empty()).map(|v| format!("{TRACK}{v}")).collect();
+            let tracks = client.tracks_by_uri(&uris).await;
+            let tracks =
+                tracks.and_then(|t| if t.is_empty() { Err(anyhow!("These songs aren't available")) } else { Ok(t) });
+            return send(tracks, true);
         } else if context.starts_with(ALBUM) {
             Source::Album(context.clone())
         } else if context.starts_with(PLAYLIST) {
@@ -1050,6 +1068,25 @@ mod tests {
         let current = current_track(&track);
         assert_eq!(current.album_uri, None);
         assert_eq!(current.cover_url_large.as_deref(), Some("https://lh3.googleusercontent.com/a=w800-h800-l90-rj"));
+    }
+
+    /// YouTube's bot check is said once per start: not for every song after it, but again when
+    /// the next start runs into it, after its notice may have been closed.
+    #[tokio::test]
+    async fn the_bot_check_is_said_once_per_start() {
+        let (mut engine, (mut events, _)) = idle_engine("bot-check");
+        let mut blocked = async |engine: &mut Engine, video: &str| {
+            engine.job(Job::Resolved { video: video.into(), result: Err(BotCheck.into()) }).await.unwrap();
+            let mut said = false;
+            while let Ok(event) = events.try_recv() {
+                said |= matches!(event, PlayerEvent::Blocked { .. });
+            }
+            said
+        };
+        assert!(blocked(&mut engine, "a").await);
+        assert!(!blocked(&mut engine, "b").await, "not again for the next song");
+        engine.activate();
+        assert!(blocked(&mut engine, "c").await, "again after another start");
     }
 
     type Reports = (UnboundedReceiver<PlayerEvent>, UnboundedReceiver<(u64, MpvEvent)>);
