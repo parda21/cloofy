@@ -329,13 +329,14 @@ async fn main() -> Result<()> {
         title: String::new(),
         shortcuts: true,
         items: plan.home.shortcuts.iter().map(|r| item(r)).collect::<Result<_>>()?,
+        ..Shelf::default()
     }];
     for (index, shelf) in plan.home.shelves.iter().enumerate() {
         shelves.push(Shelf {
             uri: format!("spotify:section:demo{index}"),
             title: shelf.title.clone(),
-            shortcuts: false,
             items: shelf.items.iter().map(|r| item(r)).collect::<Result<_>>()?,
+            ..Shelf::default()
         });
     }
 
@@ -346,7 +347,7 @@ async fn main() -> Result<()> {
         artists,
         shows: Vec::new(),
         liked,
-        home: Home { greeting: plan.home.greeting.clone(), shelves },
+        home: Home { greeting: plan.home.greeting.clone(), shelves, ..Home::default() },
         tracks,
         artist_pages,
         searches,

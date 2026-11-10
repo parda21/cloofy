@@ -21,7 +21,8 @@ It checks what each service can reach, one line per check: for Spotify your app,
 
 - **Songs don't start.** YouTube changes its challenges now and then, and an older yt-dlp gets no streams at all. Update yt-dlp (2025.11.12 or newer) and make sure deno is installed; `cloofy doctor` checks both.
 - **The wrong account.** Run `cloofy login ytmusic --force` and pick the right one. See [Signing in](/docs/youtube-music/#signing-in).
-- **The sign-in has expired.** When YouTube no longer takes the sign-in, for example after you signed out of Google in the browser, cloofy says so. Run `cloofy login ytmusic` again.
+- **YouTube asks to prove you're not a bot.** Now and then YouTube wants a connection to prove it isn't a bot before it hands out streams, and no song plays. cloofy says so at the bottom until music plays again. It usually passes within a few hours; another network, like your phone's hotspot, helps sooner.
+- **The sign-in has expired.** When YouTube no longer takes the sign-in, for example after you signed out of Google in the browser, cloofy says so at the bottom until you close it. A click copies `cloofy login ytmusic`; run it in a terminal.
 - **yt-dlp can't decrypt the browser's cookies.** On Linux, yt-dlp needs Python's secretstorage to read the keyring of Chromium-based browsers: install `python-secretstorage` (Arch) or `python3-secretstorage` (Debian, Ubuntu, Fedora).
 
 ## No sound

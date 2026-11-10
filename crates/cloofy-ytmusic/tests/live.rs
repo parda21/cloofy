@@ -72,7 +72,7 @@ async fn a_song_has_a_radio_and_lyrics() {
 #[ignore = "online"]
 async fn home_and_suggestions_answer_signed_out() {
     let client = client("home");
-    let home = client.home().await.unwrap();
+    let home = client.home(None).await.unwrap();
     assert!(home.shelves.iter().any(|shelf| !shelf.items.is_empty()), "{home:?}");
     let suggestions = client.suggestions("daft p").await.unwrap();
     assert!(!suggestions.is_empty());

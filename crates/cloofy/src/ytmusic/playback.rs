@@ -61,6 +61,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
                         clock.resume(position_ms);
                     }
                     // Nothing left to play, or nothing would.
+                    PlayerEvent::Blocked { reason } => println!("\r\x1b[2K  ✕  {reason}"),
                     PlayerEvent::Stopped if played => break Ok(()),
                     PlayerEvent::Stopped => break Err(anyhow!("YouTube Music can't play {input}")),
                     _ => {}

@@ -554,6 +554,7 @@ dependencies = [
  "libc",
  "librespot",
  "nucleo-matcher",
+ "open",
  "ratatui",
  "ratatui-image",
  "reqwest",

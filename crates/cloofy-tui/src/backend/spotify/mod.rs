@@ -146,7 +146,7 @@ impl Catalog {
         Ok(user)
     }
 
-    pub async fn home(&self) -> Result<Home> {
+    pub async fn home(&self, _chip: Option<&str>) -> Result<Home> {
         home::home(&*self.pathfinder().await?).await
     }
 

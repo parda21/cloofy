@@ -5,7 +5,7 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, Focus, HintAction, Hit},
+    app::{App, Focus, HintAction, Hit, Pinned},
     commands::Command,
     icons::icons,
     theme,
@@ -40,6 +40,9 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         buf.set_string(area.x + 2, area.y, text, Style::new().fg(color));
         return;
     }
+    if let Some(pinned) = app.pinned.clone() {
+        return draw_pinned(buf, app, Rect { width, ..area }, &pinned);
+    }
 
     let mut x = area.x + 2;
     // Without the commands for what the service lacks, like DJ.
@@ -58,6 +61,30 @@ pub fn draw(buf: &mut Buffer, app: &mut App, area: Rect) {
         }
         x += len + 3;
     }
+}
+
+/// A problem that stays until it's solved: its text, a button that copies the command that
+/// solves it, and a cross that closes it.
+fn draw_pinned(buf: &mut Buffer, app: &mut App, area: Rect, pinned: &Pinned) {
+    let p = theme::palette();
+    let close = "  ✕".to_owned();
+    let copy = match (&pinned.command, pinned.copied) {
+        (None, _) => String::new(),
+        (Some(_), false) => "  click to copy".to_owned(),
+        (Some(_), true) => "  copied".to_owned(),
+    };
+    let room = (area.width as usize).saturating_sub(2 + copy.width() + close.width());
+    let text = crate::ui::text::truncate(&pinned.text, room);
+    let x = area.x + 2;
+    buf.set_string(x, area.y, &text, Style::new().fg(p.danger));
+    let copy_x = x + text.width() as u16;
+    buf.set_string(copy_x, area.y, &copy, Style::new().fg(if pinned.copied { app.accent.color() } else { p.muted }));
+    if pinned.command.is_some() {
+        app.hits.push((Rect::new(x, area.y, text.width() as u16 + copy.width() as u16, 1), Hit::PinnedCopy));
+    }
+    let close_x = copy_x + copy.width() as u16;
+    buf.set_string(close_x, area.y, &close, Style::new().fg(p.muted));
+    app.hits.push((Rect::new(close_x + 1, area.y, close.width() as u16, 1), Hit::PinnedClose));
 }
 
 fn hints(app: &App) -> &'static [Hint] {
@@ -101,6 +128,24 @@ fn hints(app: &App) -> &'static [Hint] {
             (".", "actions", Some(Run(Menu))),
             ("S", "switch service", Some(Run(SwitchService))),
             ("esc", "back", Some(Back)),
+            ("^K", "commands", Some(Run(Palette))),
+            ("?", "help", Some(Run(Help))),
+        ],
+        (Focus::Content, View::Home(v)) if v.chip.is_some() => &[
+            ("enter", "pick", Some(Activate)),
+            ("← →", "chips", Some(Key(KeyCode::Right))),
+            ("↓", "shelves", Some(Key(KeyCode::Down))),
+            ("S", "switch service", Some(Run(SwitchService))),
+            ("/", "search", Some(Run(Search))),
+            ("^K", "commands", Some(Run(Palette))),
+            ("?", "help", Some(Run(Help))),
+        ],
+        // A song plays at once.
+        (Focus::Content, View::Home(v)) if v.selected().is_some_and(|item| item.is_song()) => &[
+            ("enter", "play", Some(Activate)),
+            (".", "actions", Some(Run(Menu))),
+            ("S", "switch service", Some(Run(SwitchService))),
+            ("/", "search", Some(Run(Search))),
             ("^K", "commands", Some(Run(Palette))),
             ("?", "help", Some(Run(Help))),
         ],

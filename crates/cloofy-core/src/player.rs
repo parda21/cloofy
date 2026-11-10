@@ -66,6 +66,11 @@ pub enum PlayerEvent {
         uri: String,
         refused: bool,
     },
+    /// Nothing can play until something outside cloofy changes, such as YouTube asking the
+    /// connection to prove it isn't a bot. Said once, until music plays again.
+    Blocked {
+        reason: String,
+    },
 }
 
 /// A track that plays later, as the player listed it.

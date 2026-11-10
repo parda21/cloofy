@@ -21,6 +21,42 @@ pub struct State {
     pub volume: Option<u16>,
     /// Only in files from before settings moved to `config.toml`.
     pub crossfade: Option<u64>,
+    pub usage: Usage,
+}
+
+/// Days of use after which cloofy asks for a star on GitHub, once.
+pub const STAR_AFTER_DAYS: u32 = 2;
+
+/// On how many days cloofy was used, to ask for a star on GitHub once it's clearly in use.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Usage {
+    /// Days cloofy was started on.
+    pub days: u32,
+    /// The last of them, in days since 1970 (UTC).
+    pub last_day: u64,
+    /// The star was asked for. Whatever the answer, it isn't asked again.
+    pub star_asked: bool,
+}
+
+impl Usage {
+    /// Counts a start on `today`; several starts on one day are one day of use.
+    pub fn start(&mut self, today: u64) {
+        if today != self.last_day {
+            self.days += 1;
+            self.last_day = today;
+        }
+    }
+
+    /// Whether to ask for a star now.
+    pub fn wants_star(&self) -> bool {
+        !self.star_asked && self.days >= STAR_AFTER_DAYS
+    }
+}
+
+/// Today, in days since 1970 (UTC).
+pub fn today() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() / 86_400)
 }
 
 /// Where a service's pages were left: the open one, and the sidebar.
@@ -125,6 +161,27 @@ pub fn save(path: &Path, state: &State) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_star_is_asked_for_on_the_second_day_of_use_once() {
+        let mut usage = Usage::default();
+        for _ in 0..3 {
+            usage.start(100);
+        }
+        assert_eq!(usage.days, 1, "several starts on one day count once");
+        assert!(!usage.wants_star(), "not on the day cloofy is tried");
+        usage.start(103);
+        assert!(usage.wants_star());
+        usage.star_asked = true;
+        usage.start(111);
+        assert!(!usage.wants_star());
+    }
+
+    #[test]
+    fn a_file_from_before_the_star_counts_from_zero() {
+        let state: State = serde_json::from_str(r#"{"view":{"kind":"home"},"volume":3}"#).unwrap();
+        assert_eq!(state.usage, Usage::default());
+    }
 
     #[test]
     fn a_file_from_before_youtube_music_holds_the_page_of_its_one_service() {

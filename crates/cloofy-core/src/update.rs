@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use crate::paths::Paths;
 
 const REPO: &str = "parda21/cloofy";
+/// cloofy's page on GitHub.
+pub const REPO_URL: &str = "https://github.com/parda21/cloofy";
 const USER_AGENT: &str = concat!("cloofy/", env!("CARGO_PKG_VERSION"));
 /// GitHub answers 60 requests an hour without an account; a look every few hours is plenty.
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);

@@ -9,6 +9,7 @@ mod picker;
 mod player_bar;
 mod settings;
 mod sidebar;
+mod star;
 mod text;
 mod topbar;
 mod wordmark;
@@ -96,6 +97,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match &app.overlay {
         Some(Overlay::Help) => help::draw(frame.buffer_mut(), app, area),
         Some(Overlay::Menu(_)) => menu::draw(frame.buffer_mut(), app, area),
+        Some(Overlay::Star { .. }) => star::draw(frame.buffer_mut(), app, area),
         Some(_) => picker::draw(frame, app, area),
         None => {}
     }

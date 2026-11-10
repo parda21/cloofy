@@ -464,12 +464,13 @@ impl Loader {
         });
     }
 
-    pub fn home(&self, view: u64) {
+    /// Home, or the Home of the chip with this ID.
+    pub fn home(&self, view: u64, chip: Option<String>) {
         if let Some(demo) = self.demo() {
             return self.send_for(DataEvent::Home { view, result: Ok(demo.home.clone()) });
         }
         self.spawn(move |this| async move {
-            let result = async { this.shown()?.home().await }.await;
+            let result = async { this.shown()?.home(chip.as_deref()).await }.await;
             this.send_for(DataEvent::Home { view, result: result.map_err(|e| format!("{e:#}")) });
         });
     }

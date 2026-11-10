@@ -32,11 +32,11 @@ use tokio::{
 use self::{
     mpv::{Events, Mpv, MpvEvent},
     queue::Queue,
-    stream::Stream,
+    stream::{BotCheck, Stream},
 };
 use crate::{
     Source, YtMusic, pages,
-    parse::{self, ALBUM, ARTIST, PLAYLIST, TRACK},
+    parse::{self, ALBUM, ARTIST, PLAYLIST, SONGS, TRACK},
 };
 
 /// "Previous" restarts the song once it has played this long, as Spotify's apps do.
@@ -245,6 +245,8 @@ struct Engine {
     resolving: HashSet<String>,
     /// Songs yt-dlp couldn't resolve, which mpv's hook gets to try.
     unresolvable: HashSet<String>,
+    /// YouTube's bot check stopped yt-dlp, and the interface was told.
+    blocked: bool,
     /// Failed tries to play each song, by URI.
     attempts: HashMap<String, u8>,
     skipped_in_a_row: u32,
@@ -302,6 +304,7 @@ impl Engine {
             streams: HashMap::new(),
             resolving: HashSet::new(),
             unresolvable: HashSet::new(),
+            blocked: false,
             attempts: HashMap::new(),
             skipped_in_a_row: 0,
             generation: 0,
@@ -851,11 +854,17 @@ impl Engine {
                 self.resolving.remove(&video);
                 match result {
                     Ok(stream) => {
+                        self.blocked = false;
                         self.streams.insert(video.clone(), stream);
                     }
                     Err(err) => {
                         tracing::warn!("yt-dlp can't resolve {video}: {err:#}");
                         self.unresolvable.insert(video.clone());
+                        // Said once: every song after it would run into the same check.
+                        if err.downcast_ref::<BotCheck>().is_some() && !self.blocked {
+                            self.blocked = true;
+                            self.emit(PlayerEvent::Blocked { reason: err.to_string() });
+                        }
                     }
                 }
                 let current = self.queue.current().map(|t| video_id(&t.uri) == video).unwrap_or(false);
@@ -975,6 +984,12 @@ fn load_context(client: YtMusic, jobs: UnboundedSender<Job>, generation: u64, co
             let track =
                 track.and_then(|t| if t.is_empty() { Err(anyhow!("This song isn't available")) } else { Ok(t) });
             return send(track, true);
+        } else if let Some(videos) = context.strip_prefix(SONGS) {
+            let uris: Vec<_> = videos.split(',').filter(|v| !v.is_empty()).map(|v| format!("{TRACK}{v}")).collect();
+            let tracks = client.tracks_by_uri(&uris).await;
+            let tracks =
+                tracks.and_then(|t| if t.is_empty() { Err(anyhow!("These songs aren't available")) } else { Ok(t) });
+            return send(tracks, true);
         } else if context.starts_with(ALBUM) {
             Source::Album(context.clone())
         } else if context.starts_with(PLAYLIST) {

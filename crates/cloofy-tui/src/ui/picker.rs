@@ -41,13 +41,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         Overlay::Palette(picker) => (picker.query.clone(), rows(picker)),
         Overlay::AddToPlaylist { picker, .. } | Overlay::Devices { picker, .. } => (picker.query.clone(), rows(picker)),
         Overlay::Dj { picker, .. } => (picker.query.clone(), rows(picker)),
-        Overlay::Help | Overlay::Menu(_) => return,
+        Overlay::Help | Overlay::Menu(_) | Overlay::Star { .. } => return,
     };
     let cursor = match overlay {
         Overlay::Palette(picker) => &mut picker.cursor,
         Overlay::AddToPlaylist { picker, .. } | Overlay::Devices { picker, .. } => &mut picker.cursor,
         Overlay::Dj { picker, .. } => &mut picker.cursor,
-        Overlay::Help | Overlay::Menu(_) => return,
+        Overlay::Help | Overlay::Menu(_) | Overlay::Star { .. } => return,
     };
     // Pickers with covers use two-line rows: name and detail next to a thumbnail. Windows too
     // short for even one of them get plain rows.

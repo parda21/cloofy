@@ -29,8 +29,8 @@ fn parse(data: &Value) -> Result<ArtistPage> {
     let shelf = |title: &str, items: Vec<HomeItem>| Shelf {
         uri: String::new(),
         title: title.to_owned(),
-        shortcuts: false,
         items,
+        ..Shelf::default()
     };
     let shelves = [
         shelf("Popular releases", releases(&discography["popularReleasesAlbums"], false)),

@@ -474,8 +474,9 @@ impl Catalog {
         dispatch!(self, Catalog, catalog => catalog.me().await)
     }
 
-    pub async fn home(&self) -> Result<Home> {
-        dispatch!(self, Catalog, catalog => catalog.home().await)
+    /// Home, or the Home of the chip with this ID, for services with chips.
+    pub async fn home(&self, chip: Option<&str>) -> Result<Home> {
+        dispatch!(self, Catalog, catalog => catalog.home(chip).await)
     }
 
     pub async fn artist(&self, uri: &str) -> Result<ArtistPage> {

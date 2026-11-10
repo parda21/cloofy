@@ -128,6 +128,10 @@ impl App {
     }
 
     fn home_target(&self, item: &HomeItem) -> ContextTarget {
+        // A song shown as its radio is the song, as in YouTube Music's own menus.
+        if item.is_song() {
+            return target(&item.context_uri, &item.title, TargetKind::Track, item.image_url.clone());
+        }
         let kind = match item.kind {
             ItemKind::Playlist => TargetKind::Playlist,
             ItemKind::Album => TargetKind::Album,
@@ -383,7 +387,11 @@ fn menu_items(target: &ContextTarget, saved: bool) -> Vec<(MenuAction, String)> 
 }
 
 /// OSC 52: the terminal puts the text on the clipboard, which also works over SSH.
-fn copy_to_clipboard(text: &str) {
+pub(super) fn copy_to_clipboard(text: &str) {
+    // Tests have no terminal to tell.
+    if cfg!(test) {
+        return;
+    }
     let mut stdout = std::io::stdout();
     let _ = write!(stdout, "\x1b]52;c;{}\x07", STANDARD.encode(text));
     let _ = stdout.flush();

@@ -25,6 +25,10 @@ pub enum Overlay {
         suggestions: Vec<String>,
         loading: bool,
     },
+    /// Asks for a star on GitHub, once; `cursor` is on the star (0) or on no thanks (1).
+    Star {
+        cursor: usize,
+    },
 }
 
 /// A row of the DJ panel.
@@ -109,7 +113,7 @@ impl Overlay {
             Overlay::Palette(_) => Some("Command or playlist…"),
             Overlay::AddToPlaylist { .. } => Some("Add to which playlist?"),
             Overlay::Devices { .. } => Some("Transfer playback to…"),
-            Overlay::Menu(_) => None,
+            Overlay::Menu(_) | Overlay::Star { .. } => None,
             Overlay::Dj { .. } => Some("What should your DJ play?"),
         }
     }

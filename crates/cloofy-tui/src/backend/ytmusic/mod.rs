@@ -153,8 +153,8 @@ impl Catalog {
         self.client.me().await?.context("Not signed in to YouTube Music")
     }
 
-    pub async fn home(&self) -> Result<Home> {
-        self.client.home().await
+    pub async fn home(&self, chip: Option<&str>) -> Result<Home> {
+        self.client.home(chip).await
     }
 
     pub async fn artist(&self, uri: &str) -> Result<ArtistPage> {

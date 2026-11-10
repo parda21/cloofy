@@ -4,6 +4,22 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Moods on YouTube Music's Home.** Chips like Relax, Workout or Focus above the shelves show the Home of that mood, as on music.youtube.com, and picked again the whole Home. <kbd>↑</kbd> from the first shelf reaches them.
+- **Quick picks as songs.** Quick picks and Trending songs show as songs in columns of four, with a small cover and the artists under the title. <kbd>↑</kbd> <kbd>↓</kbd> move within a column, <kbd>←</kbd> <kbd>→</kbd> from column to column. **Play all** plays the whole shelf in order.
+- **The line above a shelf,** like "THE BEST HITS FOR INSTANT MORNING ENERGY.", where YouTube Music has one.
+- **A star on GitHub.** On the second day you use cloofy, it asks once whether you'd give it a star on GitHub. Whatever you answer, it doesn't ask again.
+
+### Changed
+
+- **Songs on YouTube Music's Home play at once,** with their radio after them, as in YouTube Music's own apps, instead of opening the radio as a page. Their menu is a song's: add to queue, like, add to playlist.
+
+### Fixed
+
+- **An expired YouTube Music sign-in** stays at the bottom until you close it, instead of for a few seconds, and a click copies `cloofy login ytmusic` ([#27](https://github.com/parda21/cloofy/issues/27)).
+- **YouTube's bot check.** When YouTube asks your connection to prove it isn't a bot, no song plays. cloofy said nothing and skipped song after song; now it says why at the bottom until music plays again, and so do `cloofy doctor` and `cloofy play`.
+
 ## [0.5.1] - 2026-11-05
 
 cloofy takes on your terminal's colors or your own, and song notifications reach every terminal on Linux.
