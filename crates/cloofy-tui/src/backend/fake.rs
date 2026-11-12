@@ -40,6 +40,8 @@ struct State {
     playing: Option<Playing>,
     /// Home fails to load from now on.
     home_down: bool,
+    /// Whether loudness is evened out.
+    normalize: bool,
 }
 
 struct Playing {
@@ -268,8 +270,11 @@ impl Fake {
         Ok(())
     }
 
+    /// Recorded when it changes something: a player hears the setting whenever it starts.
     pub fn set_normalize(&self, normalize: bool) {
-        self.record(format!("normalize {normalize}"));
+        if std::mem::replace(&mut self.state().normalize, normalize) != normalize {
+            self.record(format!("normalize {normalize}"));
+        }
     }
 
     pub fn shuffle(&self, on: bool) -> Result<()> {

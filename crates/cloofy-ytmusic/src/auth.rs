@@ -281,10 +281,12 @@ pub(crate) async fn renew(api: &InnerTube, paths: &Paths) -> Result<User> {
     Ok(user)
 }
 
-/// Whether `user` is the account the sign-in was made for. One from before cloofy kept the
-/// account passes: the browser's account at the same place is the best there is to go by.
+/// Whether `user` is the account the sign-in was made for, by an ID that is the account's
+/// alone: its channel or its handle. A name is not, as two accounts may share one, and with
+/// nothing kept to compare there is nothing to go by; the user signs in again then.
 fn same_account(origin: &Origin, user: &User) -> bool {
-    origin.user.as_ref().is_none_or(|id| *id == user.id)
+    let unique = |id: &str| id.starts_with("UC") || id.starts_with('@');
+    origin.user.as_deref().is_some_and(|id| unique(id) && id == user.id)
 }
 
 /// The cookies of youtube.com in the browser of `spec`, and what yt-dlp printed to stderr.
@@ -468,7 +470,12 @@ mod tests {
         let kept = Origin { browser: Some("firefox".into()), user: Some("UCabc".into()) };
         assert!(same_account(&kept, &user("UCabc")));
         assert!(!same_account(&kept, &user("UCother")), "the browser signed in to another account");
-        assert!(same_account(&Origin::default(), &user("UCother")), "nothing kept to compare with");
+        assert!(!same_account(&Origin::default(), &user("UCabc")), "nothing kept to compare with");
+        let handle = Origin { user: Some("@someone".into()), ..kept.clone() };
+        assert!(same_account(&handle, &user("@someone")));
+        // Without a channel or a handle the ID is the name, which two accounts may share.
+        let named = Origin { user: Some("Someone".into()), ..kept };
+        assert!(!same_account(&named, &user("Someone")));
     }
 
     #[test]

@@ -141,6 +141,16 @@ impl YtMusic {
         }
     }
 
+    /// Hands on what a request for the library answered. When YouTube turned the sign-in down,
+    /// as it may after days in one run, the next request asks about it again, and reads the
+    /// cookies from the browser again if that wasn't done in this run yet.
+    async fn noting<T>(&self, result: Result<T>) -> Result<T> {
+        if result.as_ref().is_err_and(innertube::refused) {
+            self.inner.session.lock().await.asked = false;
+        }
+        result
+    }
+
     /// Which of the browser's accounts the sign-in acts as, with its address; `None` when
     /// signed out, or when YouTube no longer lists it.
     pub async fn account(&self) -> Result<Option<Account>> {
@@ -189,23 +199,23 @@ impl YtMusic {
     /// The playlists in the library, without Liked Music.
     pub async fn library_playlists(&self) -> Result<Vec<PlaylistInfo>> {
         self.checked().await;
-        library::playlists(&self.inner.api, &self.inner.library).await
+        self.noting(library::playlists(&self.inner.api, &self.inner.library).await).await
     }
 
     pub async fn saved_albums(&self) -> Result<Vec<AlbumInfo>> {
         self.checked().await;
-        library::albums(&self.inner.api, &self.inner.library).await
+        self.noting(library::albums(&self.inner.api, &self.inner.library).await).await
     }
 
     /// The artists the user subscribed to.
     pub async fn followed_artists(&self) -> Result<Vec<ArtistInfo>> {
         self.checked().await;
-        library::artists(&self.inner.api, &self.inner.library).await
+        self.noting(library::artists(&self.inner.api, &self.inner.library).await).await
     }
 
     pub async fn liked_count(&self) -> Result<u32> {
         self.checked().await;
-        library::liked_count(&self.inner.api).await
+        self.noting(library::liked_count(&self.inner.api).await).await
     }
 
     /// Songs by URI, with their details, in the given order; unknown ones are left out.
@@ -227,19 +237,19 @@ impl YtMusic {
     /// artists. Signed out, nothing is.
     pub async fn check_saved(&self, uris: &[String]) -> Result<Vec<(String, bool)>> {
         self.checked().await;
-        library::check_saved(&self.inner.api, &self.inner.library, uris).await
+        self.noting(library::check_saved(&self.inner.api, &self.inner.library, uris).await).await
     }
 
     /// Likes or unlikes a song, saves or removes an album or playlist, subscribes to or
     /// unsubscribes from an artist.
     pub async fn set_saved(&self, uri: &str, saved: bool) -> Result<()> {
         self.checked().await;
-        library::set_saved(&self.inner.api, &self.inner.library, uri, saved).await
+        self.noting(library::set_saved(&self.inner.api, &self.inner.library, uri, saved).await).await
     }
 
     pub async fn add_to_playlist(&self, playlist_uri: &str, uris: &[String]) -> Result<()> {
         self.checked().await;
-        library::add_to_playlist(&self.inner.api, playlist_uri, uris).await
+        self.noting(library::add_to_playlist(&self.inner.api, playlist_uri, uris).await).await
     }
 
     /// A raw InnerTube call, for diagnostics and the `ytm` example.

@@ -16,7 +16,7 @@ use futures::{StreamExt, stream};
 use serde_json::{Value, json};
 
 use crate::{
-    innertube::InnerTube,
+    innertube::{self, InnerTube},
     pages::{self, LIKED},
     parse::{self, ALBUM, ARTIST, PLAYLIST, TRACK, find, find_all, list, str_at, text},
 };
@@ -76,8 +76,12 @@ pub(crate) async fn me(api: &InnerTube) -> Result<User> {
 /// Whose sign-in it is; `None` when YouTube answers but no longer takes the cookies, which is
 /// not the same as an answer that didn't arrive.
 pub(crate) async fn asked(api: &InnerTube) -> Result<Option<User>> {
-    let page = api.call("account/account_menu", json!({})).await?;
-    Ok(parse_me(&page))
+    match api.call("account/account_menu", json!({})).await {
+        Ok(page) => Ok(parse_me(&page)),
+        // YouTube says no either way: with a page that names no account, or with a status.
+        Err(err) if innertube::refused(&err) => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 fn parse_me(page: &Value) -> Option<User> {

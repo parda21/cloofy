@@ -461,7 +461,10 @@ impl HomeView {
     /// Takes the shelves titled as one of `hidden` out of the Home shown.
     pub fn hide_shelves(&mut self, hidden: &[String]) {
         if let Some(home) = self.home.clone() {
+            // A chip's Home may still be on its way: what it falls back to and the wait stay.
+            let (fallback, loading) = (self.fallback.clone(), self.loading);
             self.set_home(home.without_shelves(hidden));
+            (self.fallback, self.loading) = (fallback, loading);
         }
     }
 

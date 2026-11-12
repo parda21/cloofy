@@ -80,6 +80,19 @@ impl Browsing {
         std::iter::once(&mut self.view).chain(self.history.iter_mut())
     }
 
+    /// Shows this service's Home as it was loaded, on its pages that show the whole Home: for
+    /// when no shelf is hidden any more.
+    pub(super) fn show_whole_home(&mut self) {
+        let Some(home) = self.home_cache.clone() else { return };
+        for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()) {
+            if let View::Home(shown) = view
+                && shown.is_whole()
+            {
+                shown.set_home(home.clone());
+            }
+        }
+    }
+
     /// Where its pages were left, for the next start.
     fn page(&self) -> Page {
         super::persist::page(&self.view, &self.history, self.focus, &self.nav, self.library_filter)

@@ -17,7 +17,8 @@ use crate::{
     style,
 };
 
-/// The entry, which opens cloofy in the desktop's own terminal.
+/// The entry, which opens cloofy in the desktop's own terminal. The packages install it as it
+/// is, next to a cloofy on everyone's `PATH`.
 const ENTRY: &str = include_str!("../../../integrations/linux/cloofy.desktop");
 pub const ICON: &str = include_str!("../../../integrations/omarchy/cloofy.svg");
 /// Marks the desktop entry as the one `install` wrote.
@@ -49,6 +50,30 @@ pub fn is_ours(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|entry| entry.lines().any(|line| line.trim() == MARK))
 }
 
+/// The entry for the user's own folder. It starts this cloofy by its path: the desktop looks
+/// programs up on the session's `PATH`, which `~/.local/bin` or another folder cloofy was
+/// installed to may not be on, even where the shell's has it.
+fn entry_for(binary: Option<&Path>) -> String {
+    let Some(binary) = binary.and_then(Path::to_str) else { return ENTRY.to_owned() };
+    ENTRY.replacen("Exec=cloofy\n", &format!("Exec={}\n", exec_argument(binary)), 1)
+}
+
+/// `argument` as the `Exec` key of a desktop entry takes it: in quotes where it has characters
+/// the key reserves, those that mean something inside quotes escaped, then every backslash
+/// once more, as in any string of an entry, and `%` doubled, which starts a field code.
+fn exec_argument(argument: &str) -> String {
+    const RESERVED: &str = " \t\n\"'\\><~|&;$*?#()`";
+    let mut quoted = String::new();
+    for c in argument.chars() {
+        if matches!(c, '"' | '`' | '$' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    let argument = if argument.contains(|c| RESERVED.contains(c)) { format!("\"{quoted}\"") } else { quoted };
+    argument.replace('\\', "\\\\").replace('%', "%%")
+}
+
 struct Launcher {
     home: PathBuf,
 }
@@ -75,7 +100,7 @@ impl Launcher {
         if fs::symlink_metadata(&icon).is_err() {
             write_if_changed(&icon, ICON)?;
         }
-        write_if_changed(&entry, ENTRY)?;
+        write_if_changed(&entry, &entry_for(env::current_exe().ok().as_deref()))?;
         self.refresh();
         Ok("cloofy is in the app menu")
     }
@@ -128,6 +153,19 @@ mod tests {
         assert_eq!(key(ENTRY, "Icon"), Some("cloofy"));
         assert_eq!(key(ENTRY, "Categories"), Some("AudioVideo;Audio;Player;"));
         assert!(ENTRY.lines().any(|line| line == MARK));
+    }
+
+    /// The desktop's `PATH` may lack the folder cloofy is in, so the user's entry names it.
+    #[test]
+    fn the_user_s_entry_starts_this_cloofy_by_its_path() {
+        let entry = entry_for(Some(Path::new("/home/someone/.local/bin/cloofy")));
+        assert_eq!(key(&entry, "Exec"), Some("/home/someone/.local/bin/cloofy"));
+        assert!(entry.lines().any(|line| line == MARK) && key(&entry, "Terminal") == Some("true"));
+        assert_eq!(entry_for(None), ENTRY, "by its name where the path is unknown");
+
+        assert_eq!(exec_argument("/opt/my apps/cloofy"), "\"/opt/my apps/cloofy\"");
+        assert_eq!(exec_argument("/opt/100%/cloofy"), "/opt/100%%/cloofy");
+        assert_eq!(exec_argument("/opt/a$b/cloofy"), "\"/opt/a\\\\$b/cloofy\"");
     }
 
     #[test]

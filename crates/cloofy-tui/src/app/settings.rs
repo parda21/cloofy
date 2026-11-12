@@ -147,7 +147,9 @@ impl App {
             self.prefs.hidden_shelves.push(title.clone());
         }
         let hidden = self.prefs.hidden_shelves.clone();
-        for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()) {
+        // The other services' pages too: a title may be on more than one Home.
+        let parked = self.parked.values_mut().flat_map(super::browsing::Browsing::views_mut);
+        for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()).chain(parked) {
             if let View::Home(home) = view {
                 home.hide_shelves(&hidden);
             }
@@ -159,6 +161,9 @@ impl App {
     /// With no shelf hidden any more: Home shows what it was loaded with. A chip's Home has
     /// them back the next time it loads.
     fn show_hidden_shelves(&mut self) {
+        for parked in self.parked.values_mut() {
+            parked.show_whole_home();
+        }
         let Some(home) = self.home_cache.clone() else { return };
         for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()) {
             if let View::Home(shown) = view

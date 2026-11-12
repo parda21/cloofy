@@ -1031,9 +1031,8 @@ impl App {
         let service = player.service();
         self.player_errors.remove(&service);
         player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
-        if self.prefs.normalize {
-            player.set_normalize(true);
-        }
+        // As the setting is now: it may have changed since the player was started with it.
+        player.set_normalize(self.prefs.normalize);
         self.players.insert(service, player);
         // Until something plays, the player of the service shown is the one that would.
         if self.active.is_none() || (self.now.track.is_none() && self.loader.service() == Some(service)) {
