@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-12
+
+What you asked for: every song at the same loudness, shelves you can hide, cloofy in the app menu on Linux, and a YouTube Music sign-in that lasts.
+
 ### Added
 
 - **Normalize volume.** A new setting under Playback plays every song at about the same loudness, on Spotify with the loudness Spotify measured for each track, on YouTube Music with mpv's loudness filter, at the level Spotify and YouTube aim for. It applies at once, to the song that plays ([#32](https://github.com/parda21/cloofy/issues/32)).
@@ -176,7 +180,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/parda21/cloofy/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/parda21/cloofy/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/parda21/cloofy/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0
