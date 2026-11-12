@@ -4,7 +4,10 @@
 use std::time::Duration;
 
 use cloofy_core::{player::PlayerEvent, service::Service};
-use crossterm::event::KeyCode::{Char, Down, Enter};
+use crossterm::event::{
+    KeyCode,
+    KeyCode::{Char, Down, Enter},
+};
 
 use crate::{backend::fake::SONG, harness::Harness, views::View};
 
@@ -263,4 +266,42 @@ async fn the_bot_check_says_why_nothing_plays() {
     h.fake(YOUTUBE).send(PlayerEvent::Playing { position_ms: 0 });
     h.settle().await;
     assert!(!h.shows("prove it isn't a bot"), "{}", h.screen());
+}
+
+/// Normalize volume (#32) reaches every player at once, and the players that start later.
+#[tokio::test]
+async fn normalizing_the_volume_reaches_every_player() {
+    let mut h = Harness::fakes(&[SPOTIFY, YOUTUBE]).await;
+    h.press(Char(',')).await.click_on("Normalize volume").await;
+    assert!(h.shows("Play every song at about the same loudness."), "{}", h.screen());
+    h.press(Enter).await;
+    for service in [SPOTIFY, YOUTUBE] {
+        assert_eq!(h.fake(service).commands(), ["normalize true"], "{}", service.name());
+    }
+    h.press(Enter).await;
+    assert_eq!(h.fake(SPOTIFY).commands(), ["normalize true", "normalize false"]);
+}
+
+/// A shelf hidden from its menu (#31) is gone from Home until Settings shows them all again.
+#[tokio::test]
+async fn a_hidden_shelf_stays_away_until_settings_brings_it_back() {
+    let mut h = Harness::fakes(&[YOUTUBE]).await;
+    // The notice names the shelf, so its Play all tells whether the shelf itself is there.
+    assert!(h.shows("Play all") && h.shows("For you"), "{}", h.screen());
+    h.press(Char('.')).await.click_on("Hide this shelf").await;
+    assert!(!h.shows("Play all") && !h.shows("YouTube Music Song 4") && h.shows("For you"), "{}", h.screen());
+    assert!(h.shows("Hid “Quick picks” · Settings brings it back"), "{}", h.screen());
+
+    // Home loaded again leaves it out too.
+    h.press(Char('S')).await.press(Char('S')).await;
+    h.wait(Duration::from_secs(600)).await.press(Char('1')).await;
+    assert!(!h.shows("Play all"), "{}", h.screen());
+
+    h.press(Char(',')).await.click_on("Hidden shelves").await;
+    assert!(h.shows("1 hidden"), "{}", h.screen());
+    h.press(Enter).await;
+    assert!(!h.shows("1 hidden"), "{}", h.screen());
+    // Back on Home the shelf is there again, above the one that stayed selected.
+    h.press(KeyCode::Esc).await;
+    assert!(h.shows("YouTube Music Song 4") && h.shows("For you"), "{}", h.screen());
 }

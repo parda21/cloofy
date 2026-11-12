@@ -15,6 +15,10 @@ const CROSSFADE_STEPS: [u64; 5] = [0, 3, 6, 9, 12];
 pub struct Preferences {
     /// Seconds consecutive tracks overlap.
     pub crossfade: u64,
+    /// Every song at about the same loudness.
+    pub normalize: bool,
+    /// Titles of the shelves Home leaves out.
+    pub hidden_shelves: Vec<String>,
     pub covers: bool,
     pub images: ImageProtocol,
     pub colors: ColorChoice,
@@ -35,6 +39,8 @@ impl Preferences {
     pub fn from_config(config: &Config) -> Self {
         Self {
             crossfade: config.crossfade.unwrap_or(0).min(12),
+            normalize: config.normalize_volume == Some(true),
+            hidden_shelves: config.hidden_shelves.clone().unwrap_or_default(),
             covers: config.covers != Some(false),
             images: config.images.as_deref().and_then(ImageProtocol::parse).unwrap_or_default(),
             colors: match config.colors.as_deref() {
@@ -74,6 +80,9 @@ impl Preferences {
         match setting {
             Setting::Crossfade if self.crossfade == 0 => "Off".to_owned(),
             Setting::Crossfade => format!("{} s", self.crossfade),
+            Setting::Normalize => on_off(self.normalize),
+            Setting::HiddenShelves if self.hidden_shelves.is_empty() => "None".to_owned(),
+            Setting::HiddenShelves => format!("{} hidden", self.hidden_shelves.len()),
             Setting::Covers => on_off(self.covers),
             Setting::Images => self.images.label().to_owned(),
             Setting::Colors => self.colors.label().to_owned(),
@@ -88,10 +97,12 @@ impl Preferences {
     /// For settings that are switched rather than chosen: whether it's on.
     pub fn switch(&self, setting: Setting) -> Option<bool> {
         match setting {
+            Setting::Normalize => Some(self.normalize),
             Setting::Covers => Some(self.covers),
             Setting::Notifications => Some(self.notifications),
             Setting::UpdateCheck => Some(self.update_check),
             Setting::Crossfade
+            | Setting::HiddenShelves
             | Setting::Images
             | Setting::Colors
             | Setting::Accent
@@ -104,6 +115,9 @@ impl Preferences {
     pub fn step(&mut self, setting: Setting, forward: bool) {
         match setting {
             Setting::Crossfade => self.crossfade = cycle(&CROSSFADE_STEPS, &self.crossfade, forward),
+            Setting::Normalize => self.normalize = !self.normalize,
+            // Its one choice: every shelf shown again.
+            Setting::HiddenShelves => self.hidden_shelves.clear(),
             Setting::Covers => self.covers = !self.covers,
             Setting::Images => self.images = cycle(&ImageProtocol::ALL, &self.images, forward),
             Setting::Colors => self.colors = cycle(&ColorChoice::ALL, &self.colors, forward),
@@ -121,6 +135,12 @@ impl Preferences {
         let off = |on: bool| (!on).then(|| Value::from(false));
         match setting {
             Setting::Crossfade => ("crossfade", (self.crossfade > 0).then(|| Value::from(self.crossfade as i64))),
+            Setting::Normalize => ("normalize_volume", self.normalize.then(|| Value::from(true))),
+            Setting::HiddenShelves => (
+                "hidden_shelves",
+                (!self.hidden_shelves.is_empty())
+                    .then(|| self.hidden_shelves.iter().map(String::as_str).collect::<Value>()),
+            ),
             Setting::Covers => ("covers", off(self.covers)),
             Setting::Images => (
                 "images",
@@ -147,6 +167,8 @@ fn cycle<T: Clone + PartialEq>(items: &[T], current: &T, forward: bool) -> T {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
     Crossfade,
+    Normalize,
+    HiddenShelves,
     Covers,
     Images,
     Colors,
@@ -158,8 +180,9 @@ pub enum Setting {
 }
 
 /// The Settings page: section titles with their settings, in order.
-pub const SECTIONS: [(&str, &[Setting]); 4] = [
-    ("Playback", &[Setting::Crossfade]),
+pub const SECTIONS: [(&str, &[Setting]); 5] = [
+    ("Playback", &[Setting::Crossfade, Setting::Normalize]),
+    ("Home", &[Setting::HiddenShelves]),
     ("Display", &[Setting::Covers, Setting::Images, Setting::Colors, Setting::Accent, Setting::Icons]),
     ("Power", &[Setting::PowerSaving]),
     ("Notifications and updates", &[Setting::Notifications, Setting::UpdateCheck]),
@@ -174,6 +197,8 @@ impl Setting {
     pub fn label(self) -> &'static str {
         match self {
             Setting::Crossfade => "Crossfade",
+            Setting::Normalize => "Normalize volume",
+            Setting::HiddenShelves => "Hidden shelves",
             Setting::Covers => "Cover art",
             Setting::Images => "Cover images",
             Setting::Colors => "Colors",
@@ -188,6 +213,8 @@ impl Setting {
     pub fn description(self) -> &'static str {
         match self {
             Setting::Crossfade => "Let songs fade into each other.",
+            Setting::Normalize => "Play every song at about the same loudness.",
+            Setting::HiddenShelves => "Shelves you hid from Home with its menu. Enter shows them all again.",
             Setting::Covers => "Turn off to save memory and processor time on slower computers.",
             Setting::Images => "How covers reach the terminal. Blocks work in every terminal.",
             Setting::Colors => "Auto follows Omarchy's theme; Terminal takes the terminal's background and text.",
@@ -404,6 +431,7 @@ mod tests {
         assert!(Setting::all().all(|setting| preferences.entry(setting).1.is_none()));
         assert!(preferences.covers && preferences.notifications && preferences.update_check);
         assert_eq!(preferences.crossfade, 0);
+        assert!(!preferences.normalize);
     }
 
     #[test]

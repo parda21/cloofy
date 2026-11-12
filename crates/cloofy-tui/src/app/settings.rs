@@ -82,6 +82,12 @@ impl App {
                     player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
                 }
             }
+            Setting::Normalize => {
+                for player in self.players.values() {
+                    player.set_normalize(self.prefs.normalize);
+                }
+            }
+            Setting::HiddenShelves => self.show_hidden_shelves(),
             Setting::Covers if self.prefs.covers => {
                 if let Some(url) = self.now.track.as_ref().and_then(|t| t.cover_url.clone()) {
                     self.load_cover(url);
@@ -133,6 +139,39 @@ impl App {
     /// Whether the terminal told its colors, for the Terminal choice.
     pub fn knows_terminal_colors(&self) -> bool {
         self.colors.as_ref().is_some_and(Colors::knows_terminal)
+    }
+
+    /// Leaves the shelf titled `title` out of Home from now on, here and after a restart.
+    pub(super) fn hide_shelf(&mut self, title: String) {
+        if !self.prefs.hidden_shelves.iter().any(|hidden| hidden.eq_ignore_ascii_case(&title)) {
+            self.prefs.hidden_shelves.push(title.clone());
+        }
+        let hidden = self.prefs.hidden_shelves.clone();
+        // The other services' pages too: a title may be on more than one Home.
+        let parked = self.parked.values_mut().flat_map(super::browsing::Browsing::views_mut);
+        for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()).chain(parked) {
+            if let View::Home(home) = view {
+                home.hide_shelves(&hidden);
+            }
+        }
+        self.save_setting(Setting::HiddenShelves);
+        self.notice(format!("Hid “{title}” · Settings brings it back"));
+    }
+
+    /// With no shelf hidden any more: Home shows what it was loaded with. A chip's Home has
+    /// them back the next time it loads.
+    fn show_hidden_shelves(&mut self) {
+        for parked in self.parked.values_mut() {
+            parked.show_whole_home();
+        }
+        let Some(home) = self.home_cache.clone() else { return };
+        for view in std::iter::once(&mut self.view).chain(self.history.iter_mut()) {
+            if let View::Home(shown) = view
+                && shown.is_whole()
+            {
+                shown.set_home(home.clone());
+            }
+        }
     }
 
     /// Writes `setting` to the config file. The demo keeps changes until it closes.

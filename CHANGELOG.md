@@ -4,6 +4,20 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-12
+
+What you asked for: every song at the same loudness, shelves you can hide, cloofy in the app menu on Linux, and a YouTube Music sign-in that lasts.
+
+### Added
+
+- **Normalize volume.** A new setting under Playback plays every song at about the same loudness, on Spotify with the loudness Spotify measured for each track, on YouTube Music with mpv's loudness filter, at the level Spotify and YouTube aim for. It applies at once, to the song that plays, and to `cloofy play` and `cloofy connect` ([#32](https://github.com/parda21/cloofy/issues/32)).
+- **Hide a shelf on Home.** The menu of anything on a shelf (<kbd>.</kbd> or a right-click) has **Hide this shelf**, on both services; the shelf stays away after a restart. **Hidden shelves** on the Settings page shows them all again ([#31](https://github.com/parda21/cloofy/issues/31)).
+- **cloofy in the app menu on Linux.** The installer and the Arch packages add a desktop entry and cloofy's icon, so GNOME, KDE Plasma, rofi or Walker find it; it opens in the desktop's terminal. The installer's entry starts cloofy by its path, so it works where the desktop doesn't look in `~/.local/bin`. `cloofy launcher install` and `cloofy launcher remove` do the same by hand, and `--uninstall` takes it out again. On Omarchy the launcher stays the one of `cloofy omarchy install` ([#30](https://github.com/parda21/cloofy/issues/30)).
+
+### Fixed
+
+- **Signed out of YouTube Music after a day or two.** A browser that goes on using its sign-in gets new cookies for it, and the ones cloofy copied stop working. When YouTube no longer takes them, cloofy now reads them from the same browser again, once per start, and keeps them only if they are still the same account's, told by its channel or handle; otherwise it asks you to sign in as before. Sign-ins made with 0.5.2 or older, and pasted ones, don't say which browser they came from: run `cloofy login ytmusic --force` once ([#26](https://github.com/parda21/cloofy/issues/26)).
+
 ## [0.5.2] - 2026-11-10
 
 YouTube Music's Home looks and works as in its own apps, and cloofy asks once for a star.
@@ -166,7 +180,8 @@ The first release.
 - **Session restore.** The page, the selection and the last track come back after a restart.
 - **Installer.** It sets everything up step by step.
 
-[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/parda21/cloofy/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/parda21/cloofy/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/parda21/cloofy/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/parda21/cloofy/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/parda21/cloofy/compare/v0.4.0...v0.5.0

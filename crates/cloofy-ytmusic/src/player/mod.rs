@@ -67,6 +67,7 @@ enum Command {
     Previous,
     Seek(u32),
     Volume(u16),
+    Normalize(bool),
     Shuffle(bool),
     Repeat { context: bool, track: bool },
     ClearQueue,
@@ -97,7 +98,7 @@ impl Player {
         mpv_args: Vec<String>,
     ) -> Result<Player> {
         let (mpv_tx, mpv_rx) = mpsc::unbounded_channel();
-        let mpv = Mpv::spawn(&with_volume(&mpv_args, volume), mpv_tx.clone()).await?;
+        let mpv = Mpv::spawn(&mpv_options(&mpv_args, volume, false), mpv_tx.clone()).await?;
         let (commands, commands_rx) = mpsc::unbounded_channel();
         let (jobs, jobs_rx) = mpsc::unbounded_channel();
         let engine = Engine {
@@ -154,6 +155,11 @@ impl Player {
         self.send(Command::Volume(volume))
     }
 
+    /// Plays every song at about the same loudness, from now on.
+    pub fn set_normalize(&self, on: bool) -> Result<()> {
+        self.send(Command::Normalize(on))
+    }
+
     pub fn shuffle(&self, on: bool) -> Result<()> {
         self.send(Command::Shuffle(on))
     }
@@ -187,9 +193,20 @@ impl Player {
     }
 }
 
-fn with_volume(args: &[String], volume: u16) -> Vec<String> {
+/// mpv's filter that evens out loudness: EBU R 128 to -14 LUFS, what Spotify and YouTube aim
+/// for, with peaks kept under full scale. It measures loudness the way ears do, where a filter
+/// that goes by peaks leaves a loud master louder than a quiet one.
+const NORMALIZE_FILTER: &str = "@normalize:lavfi=[loudnorm=I=-14:TP=-1.5:LRA=11]";
+/// The filter's name, for taking it out again.
+const NORMALIZE_LABEL: &str = "@normalize";
+
+/// `args` with what mpv starts at: the volume, and the loudness filter when it's on.
+fn mpv_options(args: &[String], volume: u16, normalize: bool) -> Vec<String> {
     let mut args = args.to_vec();
     args.push(format!("--volume={}", mpv_volume(volume)));
+    if normalize {
+        args.push(format!("--af={NORMALIZE_FILTER}"));
+    }
     args
 }
 
@@ -274,6 +291,8 @@ struct Engine {
     /// A seek mpv took, to this position, and when.
     seeking: Option<(u32, Instant)>,
     volume: u16,
+    /// Whether mpv evens out loudness.
+    normalize: bool,
     active: bool,
     autoplay: Autoplay,
     /// When the song before ended, to log the gap to the next one.
@@ -321,6 +340,7 @@ impl Engine {
             duration_ms: None,
             seeking: None,
             volume,
+            normalize: false,
             active: false,
             autoplay: Autoplay::default(),
             ended_at: None,
@@ -383,6 +403,19 @@ impl Engine {
                 self.emit(PlayerEvent::VolumeChanged { volume });
                 Ok(())
             }
+            Command::Normalize(on) => {
+                let changed = std::mem::replace(&mut self.normalize, on) != on;
+                // An mpv started later gets the filter from the start.
+                if let Some(mpv) = self.mpv.as_mut().filter(|_| changed) {
+                    let filter = if on {
+                        json!(["af", "add", NORMALIZE_FILTER])
+                    } else {
+                        json!(["af", "remove", NORMALIZE_LABEL])
+                    };
+                    mpv.command(filter).await?;
+                }
+                Ok(())
+            }
             Command::Shuffle(on) => {
                 self.queue.set_shuffle(on);
                 if let Some(starting) = self.starting.as_mut() {
@@ -424,7 +457,8 @@ impl Engine {
     /// mpv, started again should it have gone away.
     async fn mpv(&mut self) -> Result<&mut Mpv> {
         if self.mpv.is_none() {
-            let mpv = Mpv::spawn(&with_volume(&self.mpv_args, self.volume), self.mpv_events.clone()).await?;
+            let options = mpv_options(&self.mpv_args, self.volume, self.normalize);
+            let mpv = Mpv::spawn(&options, self.mpv_events.clone()).await?;
             self.mpv = Some(mpv);
         }
         Ok(self.mpv.as_mut().expect("just started"))
@@ -1201,6 +1235,26 @@ mod tests {
         let mpv = engine.mpv.as_mut().expect("the mpv that started is kept");
         assert_eq!(mpv.instance, instance);
         assert!(mpv.get("mpv-version").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn normalizing_reaches_the_mpv_that_runs_and_the_one_after() {
+        let Some((mut engine, _events)) = engine("normalize").await else { return };
+        async fn filters(engine: &mut Engine) -> Vec<String> {
+            let filters = engine.mpv().await.unwrap().get("af").await.unwrap();
+            filters.as_array().unwrap().iter().map(|filter| filter["label"].as_str().unwrap_or("").to_owned()).collect()
+        }
+        assert!(filters(&mut engine).await.is_empty());
+        engine.command(Command::Normalize(true)).await.unwrap();
+        assert_eq!(filters(&mut engine).await, ["normalize"]);
+        // Asked twice, mpv still has it once.
+        engine.command(Command::Normalize(true)).await.unwrap();
+        assert_eq!(filters(&mut engine).await, ["normalize"]);
+        // mpv went away; the one started in its place evens out loudness from the start.
+        engine.mpv = None;
+        assert_eq!(filters(&mut engine).await, ["normalize"]);
+        engine.command(Command::Normalize(false)).await.unwrap();
+        assert!(filters(&mut engine).await.is_empty());
     }
 
     #[tokio::test]

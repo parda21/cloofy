@@ -92,7 +92,14 @@ jobs:
           for variant in spotify ytmusic full; do
             archive="cloofy-$variant-$TARGET.tar.gz"
             cp LICENSE README.md "dist/$variant/"
-            tar -czf "$archive" -C "dist/$variant" cloofy LICENSE README.md
+            files="cloofy LICENSE README.md"
+            # The app menu's entry and its icon, which the Linux packages install.
+            if [ "$RUNNER_OS" = Linux ]; then
+              cp integrations/linux/cloofy.desktop integrations/omarchy/cloofy.svg "dist/$variant/"
+              files="$files cloofy.desktop cloofy.svg"
+            fi
+            # shellcheck disable=SC2086
+            tar -czf "$archive" -C "dist/$variant" $files
             shasum -a 256 "$archive" > "$archive.sha256"
           done
           # cloofy 0.4 and older update themselves from this name, and play Spotify.

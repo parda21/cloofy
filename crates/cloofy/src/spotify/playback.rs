@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use cloofy_core::{paths::Paths, player::PlayerEvent};
+use cloofy_core::{config::Config, paths::Paths, player::PlayerEvent};
 use cloofy_os::media::Command;
 use cloofy_player::{DEFAULT_VOLUME, Engine, events};
 use cloofy_spotify::session;
@@ -21,12 +21,17 @@ use crate::{
 
 const DEVICE_NAME: &str = "cloofy";
 
+/// Whether Settings has Normalize volume on, which goes for these commands too.
+fn normalize(paths: &Paths) -> bool {
+    Config::load(paths).is_ok_and(|config| config.normalize_volume == Some(true))
+}
+
 /// Plays standalone: cloofy activates itself as the playing device and loads the context.
 pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let uri = parse_uri(input)?;
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
-    let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO, normalize(paths))?;
     let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;
@@ -94,7 +99,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
 pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
-    let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO, normalize(paths))?;
     let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, name.clone(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;

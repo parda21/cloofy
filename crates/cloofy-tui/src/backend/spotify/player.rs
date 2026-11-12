@@ -165,6 +165,10 @@ impl Controller {
         self.engine.player.set_crossfade(crossfade);
     }
 
+    pub fn set_normalize(&self, normalize: bool) {
+        self.engine.player.set_normalisation(normalize);
+    }
+
     /// cloofy's Spotify Connect device ID.
     pub fn device_id(&self) -> String {
         self.session.device_id().to_owned()
@@ -196,6 +200,7 @@ impl Controller {
 pub fn spawn(
     paths: Paths,
     crossfade: Duration,
+    normalize: bool,
     volume: u16,
     retry_now: Arc<Notify>,
     tx: UnboundedSender<AppEvent>,
@@ -211,7 +216,7 @@ pub fn spawn(
     tokio::spawn(async move {
         let started = async {
             let pending = session::prepare(&paths)?;
-            let (engine, lost_outputs) = Engine::new(&pending.session, crossfade)?;
+            let (engine, lost_outputs) = Engine::new(&pending.session, crossfade, normalize)?;
             forward_events(&engine, lost_outputs, &tx, &state);
             anyhow::Ok((pending, Arc::new(engine)))
         };

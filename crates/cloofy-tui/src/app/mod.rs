@@ -1031,6 +1031,8 @@ impl App {
         let service = player.service();
         self.player_errors.remove(&service);
         player.set_crossfade(Duration::from_secs(self.prefs.crossfade));
+        // As the setting is now: it may have changed since the player was started with it.
+        player.set_normalize(self.prefs.normalize);
         self.players.insert(service, player);
         // Until something plays, the player of the service shown is the one that would.
         if self.active.is_none() || (self.now.track.is_none() && self.loader.service() == Some(service)) {
@@ -1475,12 +1477,13 @@ impl App {
                     self.home_fetched_at = Some(Instant::now());
                     self.data_dirty = true;
                 }
+                let hidden = self.prefs.hidden_shelves.clone();
                 let Some(View::Home(v)) = self.view_mut(view) else { return false };
                 if !v.wants(chip.as_deref()) {
                     return false;
                 }
                 match result {
-                    Ok(home) => v.set_home(home),
+                    Ok(home) => v.set_home(home.without_shelves(&hidden)),
                     // The Home before the chip stays, so the failure is said at the bottom.
                     Err(err) => match v.chip_failed() {
                         Some(failed) => self.error(format!("Couldn't load {failed}: {err}")),
@@ -3245,7 +3248,8 @@ impl App {
 
     fn open_home(&mut self) {
         let id = self.next_id();
-        let mut view = HomeView::new(id, self.home_cache.clone());
+        let cached = self.home_cache.clone().map(|home| home.without_shelves(&self.prefs.hidden_shelves));
+        let mut view = HomeView::new(id, cached);
         if self.home_fetched_at.is_some_and(|at| at.elapsed() < HOME_FRESH) {
             view.loading = false;
         } else {

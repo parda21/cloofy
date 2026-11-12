@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use cloofy_core::{paths::Paths, player::PlayerEvent};
+use cloofy_core::{config::Config, paths::Paths, player::PlayerEvent};
 use cloofy_os::media::Command;
 use cloofy_ytmusic::{Player, YtMusic, playable};
 use tokio::sync::mpsc;
@@ -22,6 +22,10 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let playable = playable(input)?;
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let player = Player::spawn(YtMusic::new(paths)?, paths, VOLUME, events_tx).await?;
+    // As Settings has it.
+    if Config::load(paths).is_ok_and(|config| config.normalize_volume == Some(true)) {
+        player.set_normalize(true)?;
+    }
     if shuffle {
         player.play_shuffled(playable.context)?;
     } else {

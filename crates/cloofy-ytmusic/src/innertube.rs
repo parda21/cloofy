@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
 use crate::{
-    account::Identity,
+    account::{Identity, Origin},
     cookies::{self, Jar},
 };
 
@@ -55,7 +55,11 @@ pub(crate) struct InnerTube {
 
 struct Auth {
     jar: Jar,
+    /// Counts the times the cookies were replaced as a whole. A response to a request sent
+    /// with the cookies before says nothing about the new ones.
+    generation: u64,
     identity: Identity,
+    origin: Origin,
     /// Where the cookies are kept; `None` for a sign-in that isn't kept, or no longer is.
     store: Option<Stored>,
     dirty: bool,
@@ -72,8 +76,8 @@ impl InnerTube {
     pub fn new(store: Secret) -> Result<Self> {
         let auth = store.read()?.and_then(|bytes| {
             let text = String::from_utf8_lossy(&bytes);
-            let (jar, identity) = (Jar::parse(&text), Identity::parse(&text));
-            signed_in(&jar).then(|| Auth::new(jar, identity, Some(Stored { secret: store, bytes })))
+            let (jar, identity, origin) = (Jar::parse(&text), Identity::parse(&text), Origin::parse(&text));
+            signed_in(&jar).then(|| Auth::new(jar, identity, origin, Some(Stored { secret: store, bytes })))
         });
         Self::with_auth(auth)
     }
@@ -81,7 +85,7 @@ impl InnerTube {
     /// Signed in with cookies that aren't kept, to try them before they are. They act as the
     /// browser's first account until `set_identity` picks another.
     pub fn unsaved(jar: Jar) -> Result<Self> {
-        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, Identity::default(), None)))
+        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, Identity::default(), Origin::default(), None)))
     }
 
     fn with_auth(auth: Option<Auth>) -> Result<Self> {
@@ -105,6 +109,35 @@ impl InnerTube {
             auth.identity = identity;
         }
         // The visitor YouTube gave the account before isn't this one's.
+        *self.visitor.lock().unwrap() = None;
+    }
+
+    /// Which cookies requests go out with now, see [`Auth::generation`].
+    fn generation(&self) -> u64 {
+        self.auth.lock().unwrap().as_ref().map_or(0, |auth| auth.generation)
+    }
+
+    /// Where the sign-in came from; `None` signed out.
+    pub fn origin(&self) -> Option<Origin> {
+        self.auth.lock().unwrap().as_ref().map(|auth| auth.origin.clone())
+    }
+
+    /// Keeps where the sign-in came from with the cookies.
+    pub fn set_origin(&self, origin: Origin) {
+        if let Some(auth) = self.auth.lock().unwrap().as_mut() {
+            auth.dirty |= auth.origin != origin;
+            auth.origin = origin;
+        }
+    }
+
+    /// Goes on with the cookies of `jar`, read again from where the sign-in came from, and
+    /// keeps them right away. The account and where it came from stay.
+    pub fn renew(&self, jar: Jar) {
+        if let Some(auth) = self.auth.lock().unwrap().as_mut() {
+            auth.jar = jar;
+            auth.generation += 1;
+            auth.save();
+        }
         *self.visitor.lock().unwrap() = None;
     }
 
@@ -166,6 +199,7 @@ impl InnerTube {
         }
         let url = format!("{API}{endpoint}?prettyPrint=false");
         let mut request = self.http.post(url).json(&payload).header("Referer", format!("{ORIGIN}/"));
+        let generation = self.generation();
         for (name, value) in self.headers(kind, identity.as_ref()) {
             request = request.header(name, value);
         }
@@ -174,7 +208,7 @@ impl InnerTube {
             Failure::Retry(err)
         })?;
         let status = response.status();
-        self.keep_cookies(response.headers());
+        self.keep_cookies(response.headers(), generation);
         let bytes = response.bytes().await.map_err(|err| Failure::Retry(err.into()))?;
         let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if !status.is_success() {
@@ -264,9 +298,10 @@ impl InnerTube {
     }
 
     /// Keeps the cookies YouTube refreshes, as the browser would, so the sign-in stays valid.
-    fn keep_cookies(&self, headers: &HeaderMap) {
+    fn keep_cookies(&self, headers: &HeaderMap, generation: u64) {
         let mut auth = self.auth.lock().unwrap();
-        let Some(auth) = auth.as_mut() else { return };
+        // An answer to cookies that were replaced meanwhile would put old values over new ones.
+        let Some(auth) = auth.as_mut().filter(|auth| auth.generation == generation) else { return };
         for value in headers.get_all(reqwest::header::SET_COOKIE) {
             if let Ok(value) = value.to_str() {
                 auth.dirty |= auth.jar.update(HOST, value);
@@ -285,7 +320,6 @@ impl InnerTube {
     }
 
     /// The cookies as they are now, with what YouTube refreshed; `None` signed out.
-    #[cfg(test)]
     pub fn jar(&self) -> Option<Jar> {
         self.auth.lock().unwrap().as_ref().map(|auth| auth.jar.clone())
     }
@@ -298,13 +332,14 @@ impl InnerTube {
 }
 
 impl Auth {
-    fn new(jar: Jar, identity: Identity, store: Option<Stored>) -> Self {
-        Self { jar, identity, store, dirty: false, saved: Instant::now() }
+    fn new(jar: Jar, identity: Identity, origin: Origin, store: Option<Stored>) -> Self {
+        Self { jar, generation: 0, identity, origin, store, dirty: false, saved: Instant::now() }
     }
 
-    /// The `cookies.txt` it is kept as, with the account in comments at the end.
+    /// The `cookies.txt` it is kept as, with the account and where the sign-in came from in
+    /// comments at the end.
     fn text(&self) -> String {
-        self.jar.to_text() + &self.identity.notes()
+        self.jar.to_text() + &self.identity.notes() + &self.origin.notes()
     }
 
     /// Writes the cookies back, unless the sign-in was replaced or removed since this client
@@ -324,12 +359,17 @@ impl Auth {
             }
             Err(err) => {
                 tracing::warn!("reading YouTube Music cookies: {err:#}");
+                // Still to be written, the next time cookies are kept.
+                self.dirty = true;
                 return;
             }
         }
         match store.secret.write(&text) {
             Ok(()) => store.bytes = text,
-            Err(err) => tracing::warn!("saving YouTube Music cookies: {err:#}"),
+            Err(err) => {
+                tracing::warn!("saving YouTube Music cookies: {err:#}");
+                self.dirty = true;
+            }
         }
     }
 }
@@ -355,6 +395,11 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+/// Whether YouTube turned the sign-in down with this error, rather than the request.
+pub(crate) fn refused(err: &anyhow::Error) -> bool {
+    matches!(status(err), Some(StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN))
+}
 
 /// The status YouTube answered with, if the error is YouTube's.
 pub(crate) fn status(err: &anyhow::Error) -> Option<StatusCode> {
@@ -489,6 +534,22 @@ mod tests {
         assert_eq!(Jar::parse(&kept).get("SAPISID"), Some("a"));
     }
 
+    /// A request sent before the cookies were read from the browser again may be answered
+    /// after: what it refreshes belongs to the old cookies.
+    #[test]
+    fn an_answer_to_the_cookies_before_leaves_the_renewed_ones_alone() {
+        let api = InnerTube::unsaved(Jar::from_header("SAPISID=old; LOGIN_INFO=x")).unwrap();
+        let sent_with = api.generation();
+        api.renew(Jar::from_header("SAPISID=new; LOGIN_INFO=x"));
+        let mut headers = HeaderMap::new();
+        let cookie = "SAPISID=stale; Domain=.youtube.com; Path=/; Secure";
+        headers.insert(reqwest::header::SET_COOKIE, cookie.parse().unwrap());
+        api.keep_cookies(&headers, sent_with);
+        assert_eq!(api.jar().unwrap().get("SAPISID"), Some("new"));
+        api.keep_cookies(&headers, api.generation());
+        assert_eq!(api.jar().unwrap().get("SAPISID"), Some("stale"), "one to the new cookies counts");
+    }
+
     #[test]
     fn refreshed_cookies_never_undo_a_sign_out_or_another_sign_in() {
         let dir = std::env::temp_dir().join(format!("cloofy-ytm-keep-{}", std::process::id()));
@@ -502,7 +563,7 @@ mod tests {
             let mut headers = HeaderMap::new();
             let cookie = format!("SIDCC={value}; Domain=.youtube.com; Path=/; Secure");
             headers.insert(reqwest::header::SET_COOKIE, cookie.parse().unwrap());
-            api.keep_cookies(&headers);
+            api.keep_cookies(&headers, api.generation());
             api.flush();
             api
         };

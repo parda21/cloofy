@@ -17,9 +17,10 @@ use tokio::process::Command;
 
 use crate::{
     YtMusic,
-    account::{self, Account},
+    account::{self, Account, Origin},
     cookies::Jar,
-    innertube, library,
+    innertube::{self, InnerTube},
+    library,
 };
 
 /// A browser yt-dlp can read cookies from.
@@ -192,8 +193,11 @@ pub struct SignIn {
 }
 
 impl SignIn {
-    fn new(jar: Jar) -> Result<Self> {
-        Ok(Self { client: YtMusic::unsaved(jar)? })
+    /// `browser` is where the cookies were read, as yt-dlp names it; `None` for pasted ones.
+    fn new(jar: Jar, browser: Option<String>) -> Result<Self> {
+        let client = YtMusic::unsaved(jar)?;
+        client.api().set_origin(Origin { browser, user: None });
+        Ok(Self { client })
     }
 
     /// The accounts it can act as: each Google account signed in to the browser, in Google's
@@ -207,9 +211,13 @@ impl SignIn {
         self.client.api().set_identity(account.identity.clone());
     }
 
-    /// Asks YouTube Music whose sign-in it is; fails when it turns the cookies down.
+    /// Asks YouTube Music whose sign-in it is; fails when it turns the cookies down. The
+    /// account is kept with the sign-in, for when cloofy reads the browser's cookies again.
     pub async fn check(&self) -> Result<User> {
-        library::me(self.client.api()).await
+        let api = self.client.api();
+        let user = library::me(api).await?;
+        api.set_origin(Origin { user: Some(user.id.clone()), ..api.origin().unwrap_or_default() });
+        Ok(user)
     }
 
     /// Keeps it in place of the sign-in before, with the account chosen and the cookies
@@ -241,7 +249,7 @@ pub async fn from_browser(paths: &Paths, browser: &mut Browser) -> Result<Option
         browser.spec = spec;
     }
     if signed_in(&jar) {
-        return SignIn::new(jar).map(Some);
+        return SignIn::new(jar, Some(browser.spec.clone())).map(Some);
     }
     // Cookies it couldn't decrypt may be the sign-in.
     if undecrypted(&stderr) {
@@ -251,6 +259,34 @@ pub async fn from_browser(paths: &Paths, browser: &mut Browser) -> Result<Option
         bail!("No YouTube cookies found in {}{}", browser.name, reason(&stderr));
     }
     Ok(None)
+}
+
+/// Reads the cookies again from the browser the sign-in of `api` came from, for when YouTube
+/// stopped taking the ones kept: a browser that goes on using its sign-in gets new cookies for
+/// it, and the copy cloofy took goes stale within days. They replace the kept ones only when
+/// YouTube takes them and they sign in the same account as before. Fails otherwise, and for a
+/// sign-in that didn't come from a browser.
+pub(crate) async fn renew(api: &InnerTube, paths: &Paths) -> Result<User> {
+    let origin = api.origin().context("Not signed in")?;
+    let spec = origin.browser.as_deref().context("The sign-in didn't come from a browser")?;
+    let (jar, stderr) = export(paths, spec).await?;
+    innertube::check_jar(&jar).with_context(|| format!("The browser isn't signed in to YouTube{}", reason(&stderr)))?;
+    let trial = InnerTube::unsaved(jar)?;
+    trial.set_identity(api.identity().unwrap_or_default());
+    let user = library::me(&trial).await?;
+    if !same_account(&origin, &user) {
+        bail!("The browser is signed in to another account now");
+    }
+    api.renew(trial.jar().context("Not signed in")?);
+    Ok(user)
+}
+
+/// Whether `user` is the account the sign-in was made for, by an ID that is the account's
+/// alone: its channel or its handle. A name is not, as two accounts may share one, and with
+/// nothing kept to compare there is nothing to go by; the user signs in again then.
+fn same_account(origin: &Origin, user: &User) -> bool {
+    let unique = |id: &str| id.starts_with("UC") || id.starts_with('@');
+    origin.user.as_deref().is_some_and(|id| unique(id) && id == user.id)
 }
 
 /// The cookies of youtube.com in the browser of `spec`, and what yt-dlp printed to stderr.
@@ -316,7 +352,7 @@ fn reason(stderr: &str) -> String {
 pub fn from_cookie_header(header: &str) -> Result<SignIn> {
     let jar = Jar::from_header(header);
     innertube::check_jar(&jar)?;
-    SignIn::new(jar)
+    SignIn::new(jar, None)
 }
 
 /// Forgets the cookies; YouTube Music is signed out on the next start.
@@ -388,6 +424,58 @@ mod tests {
         assert_eq!(client.api().identity(), Some(brand));
         assert_eq!(client.api().jar().unwrap().get("SAPISID"), Some("abc"));
         fs::remove_dir_all(paths.data.parent().unwrap()).unwrap();
+    }
+
+    /// Issue #26: a browser that goes on using its sign-in makes the cookies cloofy copied go
+    /// stale. The sign-in keeps where it came from and whose it is, to read it there again.
+    #[test]
+    fn where_the_sign_in_came_from_is_kept_with_it() {
+        let paths = paths("origin");
+        let jar = Jar::from_header("SAPISID=abc; LOGIN_INFO=def");
+        let sign_in = SignIn::new(jar, Some("firefox:/home/x/.zen".into())).unwrap();
+        // As `check` does once YouTube named the account.
+        let api = sign_in.client.api();
+        api.set_origin(Origin { user: Some("UCabc".into()), ..api.origin().unwrap() });
+        sign_in.save(&paths).unwrap();
+
+        let client = crate::YtMusic::new(&paths).unwrap();
+        let origin = Origin { browser: Some("firefox:/home/x/.zen".into()), user: Some("UCabc".into()) };
+        assert_eq!(client.api().origin(), Some(origin));
+        assert_eq!(client.api().jar().unwrap().get("SAPISID"), Some("abc"), "the notes aren't cookies");
+
+        // New cookies from the browser go on as the same account, from the same browser.
+        let brand = Identity { index: 1, page_id: None };
+        client.api().set_identity(brand.clone());
+        client.api().renew(Jar::from_header("SAPISID=new; LOGIN_INFO=def"));
+        let again = crate::YtMusic::new(&paths).unwrap();
+        assert_eq!(again.api().jar().unwrap().get("SAPISID"), Some("new"), "kept right away");
+        assert_eq!(again.api().identity(), Some(brand));
+        assert_eq!(again.api().origin(), client.api().origin());
+        fs::remove_dir_all(paths.data.parent().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_pasted_sign_in_has_no_browser_to_read_again() {
+        let paths = paths("pasted");
+        let sign_in = from_cookie_header("SAPISID=abc; LOGIN_INFO=def").unwrap();
+        assert_eq!(sign_in.client.api().origin(), Some(Origin::default()));
+        // Fails before yt-dlp or YouTube are asked anything.
+        let err = renew(sign_in.client.api(), &paths).await.unwrap_err();
+        assert!(format!("{err:#}").contains("didn't come from a browser"), "{err:#}");
+    }
+
+    #[test]
+    fn cookies_read_again_must_be_the_same_account_s() {
+        let user = |id: &str| User { id: id.into(), name: "Someone".into() };
+        let kept = Origin { browser: Some("firefox".into()), user: Some("UCabc".into()) };
+        assert!(same_account(&kept, &user("UCabc")));
+        assert!(!same_account(&kept, &user("UCother")), "the browser signed in to another account");
+        assert!(!same_account(&Origin::default(), &user("UCabc")), "nothing kept to compare with");
+        let handle = Origin { user: Some("@someone".into()), ..kept.clone() };
+        assert!(same_account(&handle, &user("@someone")));
+        // Without a channel or a handle the ID is the name, which two accounts may share.
+        let named = Origin { user: Some("Someone".into()), ..kept };
+        assert!(!same_account(&named, &user("Someone")));
     }
 
     #[test]
