@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
 use crate::{
-    account::Identity,
+    account::{Identity, Origin},
     cookies::{self, Jar},
 };
 
@@ -56,6 +56,7 @@ pub(crate) struct InnerTube {
 struct Auth {
     jar: Jar,
     identity: Identity,
+    origin: Origin,
     /// Where the cookies are kept; `None` for a sign-in that isn't kept, or no longer is.
     store: Option<Stored>,
     dirty: bool,
@@ -72,8 +73,8 @@ impl InnerTube {
     pub fn new(store: Secret) -> Result<Self> {
         let auth = store.read()?.and_then(|bytes| {
             let text = String::from_utf8_lossy(&bytes);
-            let (jar, identity) = (Jar::parse(&text), Identity::parse(&text));
-            signed_in(&jar).then(|| Auth::new(jar, identity, Some(Stored { secret: store, bytes })))
+            let (jar, identity, origin) = (Jar::parse(&text), Identity::parse(&text), Origin::parse(&text));
+            signed_in(&jar).then(|| Auth::new(jar, identity, origin, Some(Stored { secret: store, bytes })))
         });
         Self::with_auth(auth)
     }
@@ -81,7 +82,7 @@ impl InnerTube {
     /// Signed in with cookies that aren't kept, to try them before they are. They act as the
     /// browser's first account until `set_identity` picks another.
     pub fn unsaved(jar: Jar) -> Result<Self> {
-        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, Identity::default(), None)))
+        Self::with_auth(signed_in(&jar).then(|| Auth::new(jar, Identity::default(), Origin::default(), None)))
     }
 
     fn with_auth(auth: Option<Auth>) -> Result<Self> {
@@ -105,6 +106,29 @@ impl InnerTube {
             auth.identity = identity;
         }
         // The visitor YouTube gave the account before isn't this one's.
+        *self.visitor.lock().unwrap() = None;
+    }
+
+    /// Where the sign-in came from; `None` signed out.
+    pub fn origin(&self) -> Option<Origin> {
+        self.auth.lock().unwrap().as_ref().map(|auth| auth.origin.clone())
+    }
+
+    /// Keeps where the sign-in came from with the cookies.
+    pub fn set_origin(&self, origin: Origin) {
+        if let Some(auth) = self.auth.lock().unwrap().as_mut() {
+            auth.dirty |= auth.origin != origin;
+            auth.origin = origin;
+        }
+    }
+
+    /// Goes on with the cookies of `jar`, read again from where the sign-in came from, and
+    /// keeps them right away. The account and where it came from stay.
+    pub fn renew(&self, jar: Jar) {
+        if let Some(auth) = self.auth.lock().unwrap().as_mut() {
+            auth.jar = jar;
+            auth.save();
+        }
         *self.visitor.lock().unwrap() = None;
     }
 
@@ -285,7 +309,6 @@ impl InnerTube {
     }
 
     /// The cookies as they are now, with what YouTube refreshed; `None` signed out.
-    #[cfg(test)]
     pub fn jar(&self) -> Option<Jar> {
         self.auth.lock().unwrap().as_ref().map(|auth| auth.jar.clone())
     }
@@ -298,13 +321,14 @@ impl InnerTube {
 }
 
 impl Auth {
-    fn new(jar: Jar, identity: Identity, store: Option<Stored>) -> Self {
-        Self { jar, identity, store, dirty: false, saved: Instant::now() }
+    fn new(jar: Jar, identity: Identity, origin: Origin, store: Option<Stored>) -> Self {
+        Self { jar, identity, origin, store, dirty: false, saved: Instant::now() }
     }
 
-    /// The `cookies.txt` it is kept as, with the account in comments at the end.
+    /// The `cookies.txt` it is kept as, with the account and where the sign-in came from in
+    /// comments at the end.
     fn text(&self) -> String {
-        self.jar.to_text() + &self.identity.notes()
+        self.jar.to_text() + &self.identity.notes() + &self.origin.notes()
     }
 
     /// Writes the cookies back, unless the sign-in was replaced or removed since this client

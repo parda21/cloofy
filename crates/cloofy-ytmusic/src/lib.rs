@@ -59,23 +59,39 @@ struct Inner {
     api: InnerTube,
     http: reqwest::Client,
     library: Library,
+    /// Where the sign-in is kept, for reading it from the browser again; `None` for one that
+    /// isn't kept.
+    paths: Option<Paths>,
+    /// Held while YouTube is asked whether it still takes the sign-in, so that requests for
+    /// the library wait for the answer, and for new cookies if it says no.
+    session: tokio::sync::Mutex<Session>,
+}
+
+/// What this run knows about the sign-in.
+#[derive(Default)]
+struct Session {
+    /// YouTube answered whether it takes the sign-in.
+    asked: bool,
+    /// The cookies were read from the browser again, or cloofy tried to.
+    renewed: bool,
 }
 
 impl YtMusic {
     /// Signs in with the cookies saved by `cloofy login ytmusic`, if any; signed out otherwise.
     pub fn new(paths: &Paths) -> Result<Self> {
-        Self::with_api(InnerTube::new(paths.ytmusic_cookies())?)
+        Self::with_api(InnerTube::new(paths.ytmusic_cookies())?, Some(paths.clone()))
     }
 
     /// Signed in with cookies that aren't kept, to try a sign-in before it replaces the one
     /// before.
     pub(crate) fn unsaved(jar: cookies::Jar) -> Result<Self> {
-        Self::with_api(InnerTube::unsaved(jar)?)
+        Self::with_api(InnerTube::unsaved(jar)?, None)
     }
 
-    fn with_api(api: InnerTube) -> Result<Self> {
+    fn with_api(api: InnerTube, paths: Option<Paths>) -> Result<Self> {
         let http = cloofy_core::http::client(concat!("cloofy/", env!("CARGO_PKG_VERSION"))).build()?;
-        Ok(Self { inner: Arc::new(Inner { api, http, library: Library::default() }) })
+        let session = tokio::sync::Mutex::default();
+        Ok(Self { inner: Arc::new(Inner { api, http, library: Library::default(), paths, session }) })
     }
 
     pub fn signed_in(&self) -> bool {
@@ -87,7 +103,42 @@ impl YtMusic {
         if !self.signed_in() {
             return Ok(None);
         }
-        library::me(&self.inner.api).await.map(Some)
+        let mut session = self.inner.session.lock().await;
+        self.ask(&mut session).await.map(Some)
+    }
+
+    /// Asks YouTube whose sign-in it is. When it no longer takes the cookies, cloofy reads
+    /// them again from the browser they came from, once per run.
+    async fn ask(&self, session: &mut Session) -> Result<User> {
+        let api = &self.inner.api;
+        let user = library::asked(api).await?;
+        session.asked = true;
+        if let Some(user) = user {
+            return Ok(user);
+        }
+        let refused = "YouTube doesn't accept the saved sign-in any more – run `cloofy login ytmusic` again";
+        let Some(paths) = self.inner.paths.as_ref().filter(|_| !session.renewed) else { anyhow::bail!(refused) };
+        session.renewed = true;
+        match auth::renew(api, paths).await {
+            Ok(user) => {
+                tracing::info!("YouTube Music: read the sign-in from the browser again");
+                Ok(user)
+            }
+            Err(err) => {
+                tracing::info!("YouTube Music: couldn't read the sign-in from the browser again: {err:#}");
+                anyhow::bail!(refused)
+            }
+        }
+    }
+
+    /// Makes sure YouTube was asked about the sign-in before the first request for the
+    /// library, which would fail with cookies it no longer takes. What the request then says
+    /// stays its own business.
+    async fn checked(&self) {
+        let mut session = self.inner.session.lock().await;
+        if !session.asked && self.signed_in() {
+            let _ = self.ask(&mut session).await;
+        }
     }
 
     /// Which of the browser's accounts the sign-in acts as, with its address; `None` when
@@ -137,19 +188,23 @@ impl YtMusic {
 
     /// The playlists in the library, without Liked Music.
     pub async fn library_playlists(&self) -> Result<Vec<PlaylistInfo>> {
+        self.checked().await;
         library::playlists(&self.inner.api, &self.inner.library).await
     }
 
     pub async fn saved_albums(&self) -> Result<Vec<AlbumInfo>> {
+        self.checked().await;
         library::albums(&self.inner.api, &self.inner.library).await
     }
 
     /// The artists the user subscribed to.
     pub async fn followed_artists(&self) -> Result<Vec<ArtistInfo>> {
+        self.checked().await;
         library::artists(&self.inner.api, &self.inner.library).await
     }
 
     pub async fn liked_count(&self) -> Result<u32> {
+        self.checked().await;
         library::liked_count(&self.inner.api).await
     }
 
@@ -171,16 +226,19 @@ impl YtMusic {
     /// Whether each URI is in the library: liked songs, saved albums and playlists, subscribed
     /// artists. Signed out, nothing is.
     pub async fn check_saved(&self, uris: &[String]) -> Result<Vec<(String, bool)>> {
+        self.checked().await;
         library::check_saved(&self.inner.api, &self.inner.library, uris).await
     }
 
     /// Likes or unlikes a song, saves or removes an album or playlist, subscribes to or
     /// unsubscribes from an artist.
     pub async fn set_saved(&self, uri: &str, saved: bool) -> Result<()> {
+        self.checked().await;
         library::set_saved(&self.inner.api, &self.inner.library, uri, saved).await
     }
 
     pub async fn add_to_playlist(&self, playlist_uri: &str, uris: &[String]) -> Result<()> {
+        self.checked().await;
         library::add_to_playlist(&self.inner.api, playlist_uri, uris).await
     }
 

@@ -17,6 +17,8 @@ const MAX_ACCOUNTS: u32 = 10;
 /// The comments in the sign-in's `cookies.txt` that say which account it acts as.
 const INDEX_NOTE: &str = "# cloofy-authuser: ";
 const PAGE_NOTE: &str = "# cloofy-pageid: ";
+const BROWSER_NOTE: &str = "# cloofy-browser: ";
+const USER_NOTE: &str = "# cloofy-user: ";
 
 /// The account requests act as.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -49,6 +51,36 @@ impl Identity {
             notes.push_str(&format!("{PAGE_NOTE}{page}\n"));
         }
         notes
+    }
+}
+
+/// Where a sign-in came from, kept with it so that cloofy can read it from there again when
+/// YouTube stops taking the cookies: a browser that goes on using its sign-in gets new cookies
+/// for it, and the ones cloofy copied stop working after a day or two.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Origin {
+    /// The browser as yt-dlp's `--cookies-from-browser` takes it; `None` for a pasted header.
+    pub browser: Option<String>,
+    /// YouTube's ID of the account signed in as. Cookies read again are only kept when they
+    /// are this account's: the browser may have signed in to another one since.
+    pub user: Option<String>,
+}
+
+impl Origin {
+    /// Reads it from the sign-in's `cookies.txt`; empty where the file says nothing, as files
+    /// from before cloofy 0.5.3 do.
+    pub(crate) fn parse(text: &str) -> Self {
+        let note = |prefix: &str| {
+            let lines = text.lines().map(|line| line.trim_end_matches('\r'));
+            lines.filter_map(|line| line.strip_prefix(prefix)).map(str::trim).rfind(|value| !value.is_empty())
+        };
+        Self { browser: note(BROWSER_NOTE).map(str::to_owned), user: note(USER_NOTE).map(str::to_owned) }
+    }
+
+    /// The lines that keep it in a `cookies.txt`, as comments other readers skip.
+    pub(crate) fn notes(&self) -> String {
+        let note = |prefix: &str, value: &Option<String>| value.as_ref().map(|value| format!("{prefix}{value}\n"));
+        [note(BROWSER_NOTE, &self.browser), note(USER_NOTE, &self.user)].into_iter().flatten().collect()
     }
 }
 
@@ -165,6 +197,17 @@ fn parse(page: &Value, index: u32) -> Vec<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn where_a_sign_in_came_from_survives_its_file() {
+        let origin = Origin { browser: Some("brave+gnomekeyring".into()), user: Some("UCabc".into()) };
+        let text = format!("# Netscape HTTP Cookie File\n{}{}", Identity::default().notes(), origin.notes());
+        assert_eq!(Origin::parse(&text), origin);
+        assert_eq!(Identity::parse(&text), Identity::default(), "next to the account's own notes");
+        // A file from before 0.5.3, and a pasted header's.
+        assert_eq!(Origin::parse("# cloofy-authuser: 1\n"), Origin::default());
+        assert_eq!(Origin::default().notes(), "");
+    }
 
     fn fixture() -> Value {
         serde_json::from_str(include_str!("../tests/fixtures/accounts_list.json")).unwrap()

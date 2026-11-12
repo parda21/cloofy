@@ -70,8 +70,14 @@ fn require_sign_in(api: &InnerTube) -> Result<()> {
 }
 
 pub(crate) async fn me(api: &InnerTube) -> Result<User> {
+    asked(api).await?.context("YouTube doesn't accept the saved sign-in any more – run `cloofy login ytmusic` again")
+}
+
+/// Whose sign-in it is; `None` when YouTube answers but no longer takes the cookies, which is
+/// not the same as an answer that didn't arrive.
+pub(crate) async fn asked(api: &InnerTube) -> Result<Option<User>> {
     let page = api.call("account/account_menu", json!({})).await?;
-    parse_me(&page).context("YouTube doesn't accept the saved sign-in any more – run `cloofy login ytmusic` again")
+    Ok(parse_me(&page))
 }
 
 fn parse_me(page: &Value) -> Option<User> {
