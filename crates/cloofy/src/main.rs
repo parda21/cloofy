@@ -191,6 +191,7 @@ async fn run() -> Result<()> {
         Some(Command::DjSample { dir }) => spotify::dj_sample(&paths, &dir).await,
         #[cfg(target_os = "linux")]
         Some(Command::Launcher { action }) => launcher::run(action),
+        #[cfg(target_os = "linux")]
         Some(Command::Omarchy { action }) => omarchy::run(action),
         None => update::restart_if_asked(cloofy_tui::run(&paths).await?),
     }
