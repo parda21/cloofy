@@ -74,6 +74,7 @@ pub enum MenuAction {
     GoToAlbum,
     GoToArtist,
     CopyLink,
+    HideShelf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +105,8 @@ pub struct ContextTarget {
     pub liked_songs: bool,
     /// The queue entry a track of the queue page stands for: playing it skips ahead to it.
     pub upcoming: Option<crate::queue::Upcoming>,
+    /// The title of the Home shelf it is on, which the menu can hide.
+    pub shelf: Option<String>,
 }
 
 impl Overlay {

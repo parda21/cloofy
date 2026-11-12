@@ -87,7 +87,7 @@ The demo opens the full interface with a sample library: real albums and artists
 curl -fsSL https://cloofy.app/install.sh | bash
 ```
 
-The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's [bar widget, theme, menu entries and launcher](#omarchy). Run it again to switch; cloofy offers new releases itself, see [updates](#updates).
+The installer first asks what you listen to: Spotify, YouTube Music, or both. Each comes as a build of its own, so a YouTube Music install carries no Spotify code, and the other way around. Then it checks your system, puts the latest release in `~/.local/bin`, and walks you through the [setup](#setup). For Spotify that's your Spotify app, its client ID and signing in. For YouTube Music it's mpv, yt-dlp and deno, which it offers to install with your package manager, and an optional sign-in. On [Omarchy](https://omarchy.org) it also offers cloofy's [bar widget, theme, menu entries and launcher](#omarchy). On other Linux desktops it adds cloofy with its icon to the app menu. Run it again to switch; cloofy offers new releases itself, see [updates](#updates).
 
 Package managers have the same three builds:
 
@@ -115,7 +115,7 @@ Homebrew's and Arch's YouTube Music packages bring mpv, yt-dlp and deno along; w
 
 - `bash -s -- --service ytmusic` installs YouTube Music without asking about it: `spotify`, `ytmusic` or `both`.
 - `bash -s -- --yes` installs without asking anything: the services you have, or Spotify the first time.
-- `bash -s -- --uninstall` removes cloofy, and its Omarchy setup.
+- `bash -s -- --uninstall` removes cloofy, its entry in the app menu and its Omarchy setup.
 
 On platforms without a prebuilt binary, the installer builds cloofy with cargo, with only the services you picked. To do that yourself (Rust 1.90 or newer), name them as features; without any, you get both:
 
@@ -221,12 +221,14 @@ Installed with Homebrew, mise, a system package or Nix, cloofy leaves its update
 
 ## Settings
 
-<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, volume normalization, the shelves hidden from Home, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file. You still can; it's read at start:
 
 ```toml
 client_id = "your client id"
 services = ["ytmusic"]     # "spotify", "ytmusic" or both, in the switch's order; every one built in when missing
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
+normalize_volume = true    # every song at about the same loudness; off when missing
+hidden_shelves = ["Covers and remixes"]  # shelves Home leaves out, by title
 covers = false             # no cover art, for slower computers; on when missing
 colors = "terminal"        # "cloofy" or "terminal"; Omarchy's theme there, cloofy's own elsewhere, when missing
 accent = "violet"          # "theme", "green", "violet", "pink", "blue" or "orange"; follows the cover when missing
@@ -301,7 +303,7 @@ YouTube protects its audio streams with challenges that only a JavaScript runtim
 <details>
 <summary><b>Is signing in to YouTube Music with my browser's cookies safe?</b></summary>
 
-`cloofy login ytmusic` has yt-dlp export the browser's cookies into a private folder, keeps only youtube.com's, and deletes the export right away. They stay in `~/.local/share/cloofy/ytmusic/cookies.txt`, which only you can read, or in the macOS Keychain with `credentials = "keychain"`. cloofy sends them only to music.youtube.com, with its own requests there; streams, covers and lyrics from LRCLIB load without them. They are a signed-in session like the browser's, so treat the file like a password. `cloofy logout ytmusic` deletes it.
+`cloofy login ytmusic` has yt-dlp export the browser's cookies into a private folder, keeps only youtube.com's, and deletes the export right away. They stay in `~/.local/share/cloofy/ytmusic/cookies.txt`, which only you can read, or in the macOS Keychain with `credentials = "keychain"`. cloofy sends them only to music.youtube.com, with its own requests there; streams, covers and lyrics from LRCLIB load without them. They are a signed-in session like the browser's, so treat the file like a password. `cloofy logout ytmusic` deletes it. A browser that goes on using its sign-in gets new cookies for it, so after a day or two YouTube may stop taking cloofy's copy: cloofy then reads them from the same browser again, the same way, and keeps them only when they still sign in the same account.
 </details>
 
 <details>

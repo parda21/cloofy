@@ -14,6 +14,10 @@ pub struct Config {
     pub client_id: Option<String>,
     /// Seconds consecutive tracks overlap (0–12); off when missing.
     pub crossfade: Option<u64>,
+    /// Plays every song at about the same loudness; off when missing.
+    pub normalize_volume: Option<bool>,
+    /// Titles of the shelves Home leaves out, such as `["Covers and remixes"]`.
+    pub hidden_shelves: Option<Vec<String>>,
     /// `"nerd"` or `"text"`; detected from the terminal when missing.
     pub icons: Option<String>,
     /// `"keychain"` keeps sign-ins in the system's keychain; files when missing.

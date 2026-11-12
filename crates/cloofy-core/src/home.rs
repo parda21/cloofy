@@ -13,6 +13,14 @@ pub struct Home {
 }
 
 impl Home {
+    /// This Home without the shelves titled as one of `hidden`, whatever the case. The
+    /// shortcuts at the top have no title to hide them by.
+    pub fn without_shelves(mut self, hidden: &[String]) -> Self {
+        let hidden: Vec<String> = hidden.iter().map(|title| title.trim().to_lowercase()).collect();
+        self.shelves.retain(|shelf| shelf.shortcuts || !hidden.contains(&shelf.title.trim().to_lowercase()));
+        self
+    }
+
     /// The chip Home is narrowed to, if any.
     pub fn chip(&self) -> Option<&Chip> {
         self.chips.iter().find(|chip| chip.selected)
@@ -77,5 +85,23 @@ impl HomeItem {
     /// the radio.
     pub fn is_song(&self) -> bool {
         self.kind == ItemKind::Playlist && self.context_uri != self.uri
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_shelves_go_by_title_and_the_shortcuts_stay() {
+        let shelf = |title: &str, shortcuts| Shelf { title: title.into(), shortcuts, ..Shelf::default() };
+        let home = Home {
+            shelves: vec![shelf("", true), shelf("Covers and remixes", false), shelf("Quick picks", false)],
+            ..Home::default()
+        };
+        let shown = home.clone().without_shelves(&["covers and Remixes ".into(), String::new()]);
+        let titles: Vec<&str> = shown.shelves.iter().map(|shelf| shelf.title.as_str()).collect();
+        assert_eq!(titles, ["", "Quick picks"]);
+        assert_eq!(home.without_shelves(&[]).shelves.len(), 3);
     }
 }

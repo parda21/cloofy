@@ -18,7 +18,10 @@ use anyhow::{Context, Result};
 use clap::Subcommand;
 use cloofy_tui::omarchy as theme;
 
-use crate::style;
+use crate::{
+    launcher::{self, ICON},
+    style,
+};
 
 const PLUGIN_ID: &str = "cloofy.nowplaying";
 const PLUGIN: [(&str, &str); 4] = [
@@ -27,7 +30,6 @@ const PLUGIN: [(&str, &str); 4] = [
     ("Equalizer.qml", include_str!("../../../integrations/omarchy/plugin/Equalizer.qml")),
     ("Marquee.qml", include_str!("../../../integrations/omarchy/plugin/Marquee.qml")),
 ];
-const ICON: &str = include_str!("../../../integrations/omarchy/cloofy.svg");
 /// The theme templates earlier releases put in place, which `install` brings up to date and
 /// `remove` takes out as unedited. When the template changes, its old text goes here.
 const OLDER_TEMPLATES: &[&str] = &[];
@@ -344,7 +346,8 @@ impl Omarchy {
 
     fn install_launcher(&self) -> Result<Step> {
         let entry = self.desktop_entry();
-        if entry.exists() && !is_ours(&entry) {
+        // The entry `cloofy launcher install` wrote makes way for Omarchy's.
+        if entry.exists() && !is_ours(&entry) && !launcher::is_ours(&entry) {
             return Ok(Step::Nothing(format!("{} is your own, so it stays", entry.display())));
         }
         // An icon of the user's own stays, and the entry shows that one.
@@ -675,7 +678,7 @@ fn remove_block_from(path: &Path, comment: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn is_ours(desktop_entry: &Path) -> bool {
+pub fn is_ours(desktop_entry: &Path) -> bool {
     fs::read_to_string(desktop_entry).is_ok_and(|entry| entry.lines().any(|line| line.trim() == DESKTOP_MARK))
 }
 
@@ -687,7 +690,7 @@ fn is_our_icon(icon: &Path) -> bool {
 /// Writes `content` unless the file has it already, through a temporary file so that a reader
 /// never sees half of it. A symlink, as stow or chezmoi put in place, stays one: the file it
 /// points to gets the content, and keeps its permissions.
-fn write_if_changed(path: &Path, content: &str) -> Result<()> {
+pub fn write_if_changed(path: &Path, content: &str) -> Result<()> {
     if fs::read_to_string(path).is_ok_and(|current| current == content) {
         return Ok(());
     }
@@ -718,7 +721,7 @@ fn link_target(path: &Path) -> PathBuf {
 }
 
 /// Removes a file; whether there was one.
-fn remove_file(path: &Path) -> Result<bool> {
+pub fn remove_file(path: &Path) -> Result<bool> {
     match fs::remove_file(path) {
         Ok(()) => Ok(true),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),

@@ -23,6 +23,8 @@ sha256sums_aarch64=('@SHA256_YTMUSIC_AARCH64_UNKNOWN_LINUX_GNU@')
 
 package() {
   install -Dm755 cloofy "$pkgdir/usr/bin/cloofy"
+  install -Dm644 cloofy.desktop "$pkgdir/usr/share/applications/cloofy.desktop"
+  install -Dm644 cloofy.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/cloofy.svg"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }

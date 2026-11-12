@@ -3,7 +3,7 @@ title: Settings
 description: cloofy's Settings page, and every option of config.toml.
 ---
 
-<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file.
+<kbd>,</kbd>, the command palette, or a click on your name in the top bar opens the Settings page: crossfade, volume normalization, the shelves hidden from Home, cover art and how covers are drawn, the colors, the accent color, icons, power saving, song notifications and update checks. Changes apply at once and cloofy saves them in `~/.config/cloofy/config.toml`, so there's no need to edit the file.
 
 ## config.toml
 
@@ -13,6 +13,8 @@ You still can; it's read at start:
 client_id = "your client id"
 services = ["ytmusic"]     # "spotify", "ytmusic" or both, in the switch's order; every one built in when missing
 crossfade = 6              # seconds tracks overlap, 0 to 12; off when missing
+normalize_volume = true    # every song at about the same loudness; off when missing
+hidden_shelves = ["Covers and remixes"]  # shelves Home leaves out, by title
 covers = false             # no cover art, for slower computers; on when missing
 colors = "terminal"        # "cloofy" or "terminal"; Omarchy's theme there, cloofy's own elsewhere, when missing
 accent = "violet"          # "theme", "green", "violet", "pink", "blue" or "orange"; follows the cover when missing

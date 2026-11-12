@@ -8,6 +8,8 @@
 mod doctor;
 #[cfg(any(feature = "spotify", feature = "ytmusic"))]
 mod headless;
+#[cfg(target_os = "linux")]
+mod launcher;
 #[cfg(any(feature = "spotify", feature = "ytmusic"))]
 mod media;
 #[cfg(target_os = "linux")]
@@ -94,6 +96,12 @@ enum Command {
         /// Name the device shows up as in Spotify
         #[arg(long, default_value = "cloofy")]
         name: String,
+    },
+    /// Add cloofy to the desktop's app menu, with its icon
+    #[cfg(target_os = "linux")]
+    Launcher {
+        #[command(subcommand)]
+        action: launcher::Action,
     },
     /// Make cloofy part of Omarchy: a bar widget, the theme's colors, menu entries and a launcher
     #[cfg(target_os = "linux")]
@@ -182,6 +190,7 @@ async fn run() -> Result<()> {
         #[cfg(feature = "spotify")]
         Some(Command::DjSample { dir }) => spotify::dj_sample(&paths, &dir).await,
         #[cfg(target_os = "linux")]
+        Some(Command::Launcher { action }) => launcher::run(action),
         Some(Command::Omarchy { action }) => omarchy::run(action),
         None => update::restart_if_asked(cloofy_tui::run(&paths).await?),
     }

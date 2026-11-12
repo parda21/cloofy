@@ -601,6 +601,10 @@ if $uninstall; then
 			warn "Some of cloofy may be left in Omarchy's settings"
 		fi
 	fi
+	# Its entry in the app menu, which only the binary can tell from one of your own.
+	if [ "$(uname -s)" = Linux ] && "$bin" launcher --help </dev/null >/dev/null 2>&1; then
+		"$bin" launcher remove </dev/null >/dev/null 2>&1 || warn "cloofy may be left in the app menu"
+	fi
 	sudo=""
 	[ -w "$(dirname "$bin")" ] || sudo="sudo"
 	$sudo rm -f "$bin"
@@ -832,6 +836,13 @@ else
 	ok "Installed $("$bin" --version) to $(pretty "$bin_dir")"
 	if [ -n "$installed_variant" ] && [ "$installed_variant" != "$variant" ]; then
 		note "In place of the build for $(variant_name "$installed_variant"). Settings and sign-ins stay."
+	fi
+	# The desktop's app menu and launchers find cloofy by its entry. Omarchy has a launcher of
+	# its own, below; releases before 0.5.3 have neither.
+	if [ "$os" = linux ] && ! $omarchy && "$bin" launcher --help </dev/null >/dev/null 2>&1; then
+		if "$bin" launcher install </dev/null >/dev/null 2>&1; then
+			ok "Added cloofy to the app menu"
+		fi
 	fi
 fi
 

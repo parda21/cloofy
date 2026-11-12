@@ -35,17 +35,23 @@ pub struct Engine {
 
 impl Engine {
     /// `crossfade` overlaps consecutive tracks by that long; zero plays them back to back.
+    /// `normalize` plays every track at about the same loudness, as Spotify's apps do.
     ///
     /// The receiver gets the name of each audio output that goes away during playback, such as
     /// headphones being unplugged; playback should pause then.
-    pub fn new(session: &Session, crossfade: Duration) -> Result<(Self, UnboundedReceiver<String>)> {
+    pub fn new(session: &Session, crossfade: Duration, normalize: bool) -> Result<(Self, UnboundedReceiver<String>)> {
         let backend = PREFERRED_BACKENDS
             .iter()
             .find_map(|name| audio_backend::find(Some((*name).to_owned())))
             .or_else(|| audio_backend::find(None))
             .context("No audio backend available")?;
         let mixer = (mixer::find(None).context("No mixer available")?)(MixerConfig::default())?;
-        let config = PlayerConfig { bitrate: Bitrate::Bitrate320, crossfade, ..PlayerConfig::default() };
+        let config = PlayerConfig {
+            bitrate: Bitrate::Bitrate320,
+            crossfade,
+            normalisation: normalize,
+            ..PlayerConfig::default()
+        };
         let (lost_tx, lost_rx) = mpsc::unbounded_channel();
         let player =
             Player::new(config, session.clone(), mixer.get_soft_volume(), move || open_output(backend, lost_tx));

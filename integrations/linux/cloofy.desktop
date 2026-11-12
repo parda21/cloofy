@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=cloofy
+GenericName=Music Player
+Comment=Spotify and YouTube Music in your terminal
+Exec=cloofy
+Icon=cloofy
+Terminal=true
+Categories=AudioVideo;Audio;Player;
+Keywords=music;spotify;youtube;player;
+X-cloofy-launcher=true

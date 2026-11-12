@@ -75,7 +75,15 @@ impl Account {
         let state = Arc::new(watch::Sender::new(SessionState::Connecting));
         let volume = launch.volume.unwrap_or(cloofy_player::DEFAULT_VOLUME);
         let hashes = launch.paths.pathfinder_hashes();
-        player::spawn(launch.paths, launch.crossfade, volume, launch.retry_now, launch.tx.clone(), state.clone());
+        player::spawn(
+            launch.paths,
+            launch.crossfade,
+            launch.normalize,
+            volume,
+            launch.retry_now,
+            launch.tx.clone(),
+            state.clone(),
+        );
         Catalog::new(self.api, state, hashes, launch.tx)
     }
 }

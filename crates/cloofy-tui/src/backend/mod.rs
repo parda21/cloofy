@@ -180,6 +180,8 @@ pub enum Account {
 pub struct Launch {
     pub paths: Paths,
     pub crossfade: Duration,
+    /// Every song at about the same loudness.
+    pub normalize: bool,
     /// Where the last session left the volume, if anywhere.
     pub volume: Option<u16>,
     /// Cuts a wait between attempts to connect short, as when the computer wakes up.
@@ -332,6 +334,11 @@ impl Player {
             #[allow(unreachable_patterns)]
             _ => bail!("{} has no DJ", self.service().name()),
         }
+    }
+
+    /// Plays every song at about the same loudness, or as loud as it is.
+    pub fn set_normalize(&self, normalize: bool) {
+        dispatch!(self, Player, player => player.set_normalize(normalize))
     }
 
     /// Elsewhere songs follow each other as they are.

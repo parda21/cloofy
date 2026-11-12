@@ -447,6 +447,24 @@ impl HomeView {
         }
     }
 
+    /// The title of the selected shelf, if it has one to hide it by.
+    pub fn shelf_title(&self) -> Option<&str> {
+        let shelf = self.home.as_ref()?.shelves.get(self.shelf).filter(|_| self.chip.is_none())?;
+        Some(shelf.title.trim()).filter(|title| !shelf.shortcuts && !title.is_empty())
+    }
+
+    /// Whether this view shows the whole Home rather than a chip's.
+    pub fn is_whole(&self) -> bool {
+        self.filter.is_none()
+    }
+
+    /// Takes the shelves titled as one of `hidden` out of the Home shown.
+    pub fn hide_shelves(&mut self, hidden: &[String]) {
+        if let Some(home) = self.home.clone() {
+            self.set_home(home.without_shelves(hidden));
+        }
+    }
+
     /// Shows a newer Home. Shelves and cards are found again by URI, so the selection and
     /// how far each shelf was paged survive the update.
     pub fn set_home(&mut self, home: Home) {

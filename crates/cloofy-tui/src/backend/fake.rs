@@ -268,6 +268,10 @@ impl Fake {
         Ok(())
     }
 
+    pub fn set_normalize(&self, normalize: bool) {
+        self.record(format!("normalize {normalize}"));
+    }
+
     pub fn shuffle(&self, on: bool) -> Result<()> {
         self.record(format!("shuffle {on}"));
         self.send(PlayerEvent::ShuffleChanged { shuffle: on });

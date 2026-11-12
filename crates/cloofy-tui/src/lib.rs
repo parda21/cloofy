@@ -214,12 +214,18 @@ async fn run_app(
         None => {
             let saved = state::load(&paths.state_file());
             let crossfade = Duration::from_secs(prefs.crossfade);
+            let normalize = prefs.normalize;
             let started: Vec<(Service, Result<Catalog, String>)> = accounts
                 .into_iter()
                 .zip(retries)
                 .map(|((service, account), retry_now)| {
                     let (paths, tx, volume) = (paths.clone(), tx.clone(), saved.volume);
-                    (service, account.map(|account| account.start(Launch { paths, crossfade, volume, retry_now, tx })))
+                    (
+                        service,
+                        account.map(|account| {
+                            account.start(Launch { paths, crossfade, normalize, volume, retry_now, tx })
+                        }),
+                    )
                 })
                 .collect();
             (app::Start::Restore(Box::new(saved)), started)

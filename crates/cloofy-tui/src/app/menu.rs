@@ -64,7 +64,9 @@ impl App {
                 SearchEntry::Artist(a) => Some(target(&a.uri, &a.name, TargetKind::Artist, a.image_url.clone())),
                 SearchEntry::Header(_) => None,
             },
-            View::Home(v) => v.selected().map(|item| self.home_target(item)),
+            View::Home(v) => v
+                .selected()
+                .map(|item| ContextTarget { shelf: v.shelf_title().map(str::to_owned), ..self.home_target(item) }),
             View::Artist(v) => match v.selected()? {
                 ArtistSelection::Track(t) => Some(track_target(&t.track, Some(v.uri.clone()))),
                 ArtistSelection::Item(item) => Some(self.home_target(item)),
@@ -197,6 +199,11 @@ impl App {
                 copy_to_clipboard(&backend::web_link(&target.uri));
                 self.notice("Link copied".into());
             }
+            MenuAction::HideShelf => {
+                if let Some(title) = target.shelf {
+                    self.hide_shelf(title);
+                }
+            }
         }
     }
 
@@ -294,6 +301,7 @@ fn target(uri: &str, name: &str, kind: TargetKind, image_url: Option<String>) ->
         owned: false,
         liked_songs: false,
         upcoming: None,
+        shelf: None,
     }
 }
 
@@ -382,6 +390,9 @@ fn menu_items(target: &ContextTarget, saved: bool) -> Vec<(MenuAction, String)> 
     }
     if !target.liked_songs {
         add(MenuAction::CopyLink, i.link, "Copy link");
+    }
+    if target.shelf.is_some() {
+        add(MenuAction::HideShelf, i.remove, "Hide this shelf");
     }
     items
 }

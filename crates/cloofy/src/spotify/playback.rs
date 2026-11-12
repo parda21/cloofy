@@ -26,7 +26,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
     let uri = parse_uri(input)?;
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
-    let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&session, Duration::ZERO, false)?;
     let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, DEVICE_NAME.into(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;
@@ -94,7 +94,7 @@ pub async fn play(paths: &Paths, input: &str, shuffle: bool) -> Result<()> {
 pub async fn connect(paths: &Paths, name: String) -> Result<()> {
     let pending = session::prepare(paths)?;
     let session = pending.session.clone();
-    let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO)?;
+    let (engine, mut lost_outputs) = Engine::new(&pending.session, Duration::ZERO, false)?;
     let mut player_events = engine.player.get_player_event_channel();
     let (spirc, task) = engine.connect_device(pending, name.clone(), DEFAULT_VOLUME).await?;
     session::remember(paths, &session)?;

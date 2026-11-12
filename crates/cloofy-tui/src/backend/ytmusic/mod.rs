@@ -111,6 +111,10 @@ impl Controller {
         self.0.set_volume(volume)
     }
 
+    pub fn set_normalize(&self, normalize: bool) {
+        let _ = self.0.set_normalize(normalize);
+    }
+
     pub fn shuffle(&self, on: bool) -> Result<()> {
         self.0.shuffle(on)
     }
