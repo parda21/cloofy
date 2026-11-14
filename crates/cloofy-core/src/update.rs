@@ -182,6 +182,13 @@ fn target() -> Option<&'static str> {
     })
 }
 
+/// Whether a release has a build for this machine, and so updates can put it in place of the
+/// running binary. Where there is none, such as Windows so far, the interface says how to update
+/// instead of offering to.
+pub fn supported() -> bool {
+    target().is_some()
+}
+
 /// The release archive of the `variant` build for `target`. Each variant has the services it is
 /// named after: `spotify`, `ytmusic`, or both in `full`.
 fn archive_name(variant: &str, target: &str) -> String {
@@ -340,6 +347,13 @@ mod tests {
         assert_eq!(of("/home/me/.cargo/bin/cloofy"), None);
         assert_eq!(of("/home/me/cloofy/target/release/cloofy"), None);
         assert_eq!(of("/usr/bin-old/cloofy"), None);
+    }
+
+    /// Windows has no prebuilt build yet, so cloofy says how to update rather than offering to.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn has_no_release_to_update_to() {
+        assert!(!supported());
     }
 
     #[test]

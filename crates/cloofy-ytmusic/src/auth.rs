@@ -49,6 +49,8 @@ const fn known(ids: &'static [&'static str], name: &'static str, reader: &'stati
     Known { ids, name, reader, dir, fork: false }
 }
 
+/// Browsers whose profiles yt-dlp reads as another's, on systems with such forks.
+#[cfg(not(windows))]
 const fn fork(ids: &'static [&'static str], name: &'static str, reader: &'static str, dir: &'static str) -> Known {
     Known { ids, name, reader, dir, fork: true }
 }
@@ -71,7 +73,7 @@ const KNOWN: &[Known] = &[
         "Library/Application Support/librewolf",
     ),
 ];
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 const KNOWN: &[Known] = &[
     known(&["chromium.desktop", "chromium-browser.desktop"], "Chromium", "chromium", ".config/chromium"),
     known(&["brave-browser.desktop", "brave.desktop"], "Brave", "brave", ".config/BraveSoftware/Brave-Browser"),
@@ -87,19 +89,29 @@ const KNOWN: &[Known] = &[
     fork(&["librewolf.desktop"], "LibreWolf", "firefox", ".librewolf"),
     fork(&["floorp.desktop"], "Floorp", "firefox", ".floorp"),
 ];
+/// Chromium-based browsers keep their profiles in the local app data folder, Firefox in the
+/// roaming one, which `homes` searches.
+#[cfg(windows)]
+const KNOWN: &[Known] = &[
+    known(&[], "Google Chrome", "chrome", "Google/Chrome/User Data"),
+    known(&[], "Chromium", "chromium", "Chromium/User Data"),
+    known(&[], "Microsoft Edge", "edge", "Microsoft/Edge/User Data"),
+    known(&[], "Brave", "brave", "BraveSoftware/Brave-Browser/User Data"),
+    known(&[], "Vivaldi", "vivaldi", "Vivaldi/User Data"),
+    known(&[], "Firefox", "firefox", "Mozilla/Firefox"),
+];
 
 impl Known {
-    /// The browser, when it has a profile in its folder: a folder alone may be left over, or
+    /// The browser, when it has a profile in one of `homes`: a folder alone may be left over, or
     /// made by another program.
-    fn found(&self, home: &Path) -> Option<Browser> {
-        let dir = home.join(self.dir);
-        let profile = match self.reader {
+    fn found(&self, homes: &[PathBuf]) -> Option<Browser> {
+        let dir = homes.iter().map(|home| home.join(self.dir)).find(|dir| match self.reader {
             "firefox" => dir.join("profiles.ini").is_file(),
             "safari" => dir.is_dir(),
             _ => dir.join("Local State").is_file(),
-        };
+        })?;
         let spec = if self.fork { format!("{}:{}", self.reader, dir.display()) } else { self.reader.into() };
-        profile.then(|| Browser { name: self.name.into(), spec })
+        Some(Browser { name: self.name.into(), spec })
     }
 }
 
@@ -115,15 +127,23 @@ const ADD_ACCOUNT_URL: &str = "https://accounts.google.com/AddSession?service=yo
 /// yt-dlp exports the cookies of every site; this many seconds is plenty for that.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(120);
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+/// The folders browsers keep their profiles in. Chromium-based ones and Firefox split between
+/// the local and the roaming app data folders on Windows; elsewhere they are all under home.
+#[cfg(not(windows))]
+fn homes() -> Vec<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from).into_iter().collect()
+}
+
+#[cfg(windows)]
+fn homes() -> Vec<PathBuf> {
+    ["LOCALAPPDATA", "APPDATA"].into_iter().filter_map(std::env::var_os).map(PathBuf::from).collect()
 }
 
 /// The browsers on this computer that have a profile yt-dlp could read cookies from.
 pub fn browsers() -> Vec<Browser> {
-    let Some(home) = home() else { return Vec::new() };
+    let homes = homes();
     let mut found: Vec<Browser> = Vec::new();
-    for browser in KNOWN.iter().filter_map(|known| known.found(&home)) {
+    for browser in KNOWN.iter().filter_map(|known| known.found(&homes)) {
         if !found.iter().any(|b| b.name == browser.name) {
             found.push(browser);
         }
@@ -134,12 +154,12 @@ pub fn browsers() -> Vec<Browser> {
 /// The browser that opens links, when cloofy knows it and it has a profile.
 pub fn default_browser() -> Option<Browser> {
     let id = default_browser_id()?;
-    let home = home()?;
-    KNOWN.iter().filter(|known| known.ids.contains(&id.as_str())).find_map(|known| known.found(&home))
+    let homes = homes();
+    KNOWN.iter().filter(|known| known.ids.contains(&id.as_str())).find_map(|known| known.found(&homes))
 }
 
 /// The desktop entry of the browser that opens links.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(windows)))]
 fn default_browser_id() -> Option<String> {
     // Omarchy's own entry only hands links on to the browser it names.
     let asks: [(&str, &[&str]); 3] = [
@@ -154,10 +174,18 @@ fn default_browser_id() -> Option<String> {
     })
 }
 
+/// The browser that opens links is left out on Windows: telling it means the registry's
+/// per-user choice, which cloofy doesn't read yet, so the sign-in asks which browser.
+#[cfg(windows)]
+fn default_browser_id() -> Option<String> {
+    None
+}
+
 /// The bundle id of the app that opens https links; Safari unless another was picked.
 #[cfg(target_os = "macos")]
 fn default_browser_id() -> Option<String> {
-    let plist = home()?.join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
+    let plist =
+        homes().first()?.join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
     let handlers = std::process::Command::new("plutil")
         .args(["-extract", "LSHandlers", "json", "-o", "-"])
         .arg(plist)
@@ -508,22 +536,52 @@ mod tests {
         let home = std::env::temp_dir().join(format!("cloofy-ytm-browsers-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         let chromium = known(&[], "Chromium", "chromium", "chromium");
-        let origin = fork(&[], "Brave Origin", "brave", "Brave-Origin");
         let firefox = known(&[], "Firefox", "firefox", "firefox");
+        let homes = [home.clone()];
         // Folders another program left, without a profile.
         fs::create_dir_all(home.join("chromium/NativeMessagingHosts")).unwrap();
         fs::create_dir_all(home.join("firefox")).unwrap();
-        assert_eq!(chromium.found(&home), None);
-        assert_eq!(firefox.found(&home), None);
+        assert_eq!(chromium.found(&homes), None);
+        assert_eq!(firefox.found(&homes), None);
         fs::write(home.join("chromium/Local State"), "{}").unwrap();
         fs::write(home.join("firefox/profiles.ini"), "").unwrap();
-        assert_eq!(chromium.found(&home).unwrap().spec, "chromium");
-        assert_eq!(firefox.found(&home).unwrap().spec, "firefox");
+        assert_eq!(chromium.found(&homes).unwrap().spec, "chromium");
+        assert_eq!(firefox.found(&homes).unwrap().spec, "firefox");
         // yt-dlp doesn't know forks, so it gets their folder.
-        fs::create_dir_all(home.join("Brave-Origin")).unwrap();
-        fs::write(home.join("Brave-Origin/Local State"), "{}").unwrap();
-        assert_eq!(origin.found(&home).unwrap().spec, format!("brave:{}", home.join("Brave-Origin").display()));
+        #[cfg(not(windows))]
+        {
+            let origin = fork(&[], "Brave Origin", "brave", "Brave-Origin");
+            fs::create_dir_all(home.join("Brave-Origin")).unwrap();
+            fs::write(home.join("Brave-Origin/Local State"), "{}").unwrap();
+            assert_eq!(origin.found(&homes).unwrap().spec, format!("brave:{}", home.join("Brave-Origin").display()));
+        }
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// Windows keeps Chromium-based browsers' profiles in the local app data folder, and
+    /// Firefox's in the roaming one.
+    #[cfg(windows)]
+    #[test]
+    fn finds_the_windows_browsers_with_a_profile() {
+        let root = std::env::temp_dir().join(format!("cloofy-ytm-windows-browsers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (local, roaming) = (root.join("local"), root.join("roaming"));
+        let chrome = known(&[], "Google Chrome", "chrome", "Google/Chrome/User Data");
+        let firefox = known(&[], "Firefox", "firefox", "Mozilla/Firefox");
+        let homes = [local.clone(), roaming.clone()];
+
+        // A folder alone, without the Local State or profiles.ini a real profile has.
+        fs::create_dir_all(local.join("Google/Chrome/User Data/Default")).unwrap();
+        fs::create_dir_all(roaming.join("Mozilla/Firefox/Profiles/x")).unwrap();
+        assert_eq!(chrome.found(&homes), None);
+        assert_eq!(firefox.found(&homes), None);
+
+        fs::write(local.join("Google/Chrome/User Data/Local State"), "{}").unwrap();
+        fs::write(roaming.join("Mozilla/Firefox/profiles.ini"), "").unwrap();
+        fs::write(roaming.join("Mozilla/Firefox/Profiles/x/cookies.sqlite"), "").unwrap();
+        assert_eq!(chrome.found(&homes).unwrap().spec, "chrome");
+        assert_eq!(firefox.found(&homes).unwrap().spec, "firefox");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

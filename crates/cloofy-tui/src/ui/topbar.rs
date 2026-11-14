@@ -98,6 +98,10 @@ fn update_button(buf: &mut Buffer, app: &mut App, right: u16, y: u16, padding: u
         Update::Managed { release, .. } => {
             (icons().update, [format!("v{} is out", release.version()), format!("v{}", release.version())])
         }
+        // Nothing to download here either: the button says what's out, and a click how to update.
+        Update::Unsupported(release) => {
+            (icons().update, [format!("v{} is out", release.version()), format!("v{}", release.version())])
+        }
         Update::Installing { percent, .. } => {
             let percent = percent.map(|percent| format!("{percent}%")).unwrap_or_default();
             (text::spinner(app.frame()), [format!("Updating {percent}").trim_end().to_owned(), percent])

@@ -4,6 +4,10 @@ All notable changes to cloofy. The format follows [Keep a Changelog](https://kee
 
 ## [Unreleased]
 
+### Added
+
+- **Windows.** cloofy builds and runs on Windows now: YouTube Music with mpv, Spotify, media keys and the system's Now Playing panel, sleep and wake, low power mode, toasts with the cover, and sign-ins in Credential Manager. `cloofy windows install` puts cloofy in the Start Menu, which Windows needs for notifications; `packaging/windows/install.ps1` builds and installs it. There is no Windows release to download yet, so updates say to build it here, and `cloofy login ytmusic` lists the browsers instead of guessing the default one.
+
 ## [0.5.3] - 2026-11-12
 
 What you asked for: every song at the same loudness, shelves you can hide, cloofy in the app menu on Linux, and a YouTube Music sign-in that lasts.
