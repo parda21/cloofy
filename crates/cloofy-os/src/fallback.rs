@@ -1,6 +1,7 @@
 //! Systems without an integration yet: nothing to set up, nothing shown. Linux uses the parts it
-//! has nothing better for.
+//! has nothing better for, Windows only the audio.
 
+#[cfg(not(target_os = "windows"))]
 pub fn run_main<R>(work: impl FnOnce() -> R) -> R {
     work()
 }
@@ -18,7 +19,7 @@ pub mod audio {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub mod power {
     use std::sync::Arc;
 
@@ -29,7 +30,7 @@ pub mod power {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub mod settings {
     use crate::settings::Settings;
 
@@ -38,6 +39,7 @@ pub mod settings {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub mod secrets {
     use std::io;
 
@@ -60,7 +62,7 @@ pub mod secrets {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub mod media {
     use std::sync::Arc;
 

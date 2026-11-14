@@ -22,9 +22,14 @@ use linux as os;
 #[cfg(target_os = "linux")]
 pub use linux::notifications;
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as os;
+
 #[cfg(not(target_os = "macos"))]
 mod fallback;
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 use fallback as os;
 
 /// Runs `work` while the main thread serves the OS, and returns its result.

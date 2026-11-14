@@ -79,6 +79,12 @@ zeno = "0.3"
 # unixexec: zbus 5 always had it, for session buses reached through a command.
 zbus = { version = "6", default-features = false, features = ["proxy", "service", "tokio", "unixexec"] }
 
+# Windows bindings; each crate turns on the parts it uses.
+windows = { version = "0.62", default-features = false }
+# What `windows` hands back from an asynchronous WinRT call, such as writing a cover into a
+# stream.
+windows-future = "0.3"
+
 # vendor/ holds forks as git submodules, both on branch `cloofy`:
 # - librespot (github.com/parda21/librespot) with two open upstream PRs merged, DJ with
 #   narration (librespot-org/librespot#1797) and crossfade (#1756), plus fixes on top.
