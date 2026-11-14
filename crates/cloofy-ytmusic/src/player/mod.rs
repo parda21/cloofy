@@ -1257,6 +1257,8 @@ mod tests {
         assert!(filters(&mut engine).await.is_empty());
     }
 
+    /// Unix only: what mpv holds up needs a FIFO nothing writes to.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_seek_mpv_turns_down_holds_nothing_back() {
         let Some((mut engine, (mut events, _))) = engine("seek").await else { return };
