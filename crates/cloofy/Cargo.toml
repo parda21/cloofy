@@ -38,6 +38,19 @@ tracing-subscriber.workspace = true
 serde.workspace = true
 unicode-width.workspace = true
 
+# The Start Menu shortcut that Windows shows cloofy's notifications under.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
 # Looks up the sample's songs on Spotify.
 [[example]]
 name = "demo_fixture"

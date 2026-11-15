@@ -457,6 +457,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-width",
+ "windows 0.62.2",
 ]
 
 [[package]]

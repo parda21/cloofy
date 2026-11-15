@@ -18,14 +18,20 @@ use macos as os;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as os;
-/// Linux only: elsewhere the terminal's own notifications are all cloofy needs.
+/// Linux and Windows have notifications of their own, with the cover; elsewhere the terminal's
+/// are all cloofy needs.
 #[cfg(target_os = "linux")]
 pub use linux::notifications;
+#[cfg(target_os = "windows")]
+pub use windows::notifications;
 
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
 use windows as os;
+/// The AppUserModelID and the Start Menu shortcut that Windows shows cloofy's toasts under.
+#[cfg(target_os = "windows")]
+pub use windows::{AUMID, shortcut_path};
 
 #[cfg(not(target_os = "macos"))]
 mod fallback;

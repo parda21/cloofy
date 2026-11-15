@@ -1,0 +1,25 @@
+{
+    "version": "@VERSION@",
+    "description": "Spotify in your terminal",
+    "homepage": "https://github.com/parda21/cloofy",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/parda21/cloofy/releases/download/v@VERSION@/cloofy-spotify-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA256_SPOTIFY_X86_64_PC_WINDOWS_MSVC@"
+        }
+    },
+    "bin": "cloofy.exe",
+    "post_install": ["cloofy windows install"],
+    "pre_uninstall": ["cloofy windows remove"],
+    "checkver": {
+        "github": "https://github.com/parda21/cloofy"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/parda21/cloofy/releases/download/v$version/cloofy-spotify-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}

@@ -1,8 +1,8 @@
 //! Desktop notifications for new tracks while cloofy's window is in the background. They go
 //! through the terminal's own escape sequence, so they need no permission of their own and a
-//! click leads back to the terminal. On Linux they go to the desktop directly in terminals
-//! without notifications of their own, and on Hyprland in all of them: the desktop shows the
-//! cover with them, and there a click brings cloofy's window to the front.
+//! click leads back to the terminal. On Linux and Windows they go to the desktop directly in
+//! terminals without notifications of their own, and on Hyprland in all of them: the desktop
+//! shows the cover with them, and on Hyprland a click brings cloofy's window to the front.
 
 use std::{sync::Arc, time::Duration};
 
@@ -41,19 +41,19 @@ enum Channel {
     },
     /// The desktop's notification server: its notifications show the cover, and on Hyprland a
     /// click on one brings cloofy's window to the front.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Desktop(cloofy_os::notifications::Notifications),
 }
 
 impl Notifier {
-    /// The terminal's notifications, or the desktop's on Linux where they do better. `None`
-    /// without either.
+    /// The terminal's notifications, or the desktop's on Linux and Windows, where they do
+    /// better. `None` without either.
     pub fn detect() -> Option<Self> {
         let terminal = Protocol::detect().map(|protocol| Channel::Terminal { protocol, tmux: set("TMUX") });
         // A click on the terminal's notification brings its window to the front, which only
         // Hyprland lets cloofy do for the desktop's. Over SSH the desktop's session bus belongs
         // to another computer, whose screen nobody is looking at.
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         if (terminal.is_none() || cloofy_os::notifications::click_raises())
             && !set("SSH_CONNECTION")
             && let Some(desktop) = cloofy_os::notifications::Notifications::new()
@@ -103,11 +103,11 @@ impl Notifier {
         }
     }
 
-    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(unused_variables))]
     fn announce(&self, track: &CurrentTrack, artwork: Option<&Arc<[u8]>>) -> Option<String> {
         match &self.channel {
             Channel::Terminal { protocol, tmux } => Some(sequence(*protocol, *tmux, &track.name, &byline(track))),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             Channel::Desktop(desktop) => {
                 desktop.show(&track.name, &byline(track), artwork.cloned());
                 None

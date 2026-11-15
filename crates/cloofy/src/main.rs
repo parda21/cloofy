@@ -20,6 +20,8 @@ mod prompt;
 mod spotify;
 mod style;
 mod update;
+#[cfg(target_os = "windows")]
+mod windows;
 #[cfg(feature = "ytmusic")]
 mod ytmusic;
 
@@ -109,6 +111,12 @@ enum Command {
         #[command(subcommand)]
         action: omarchy::Action,
     },
+    /// Put cloofy in the Start Menu, which Windows needs for its notifications
+    #[cfg(target_os = "windows")]
+    Windows {
+        #[command(subcommand)]
+        action: windows::Action,
+    },
 }
 
 /// The version and the music services built in, like `0.4.0 (spotify)`. The installer reads
@@ -193,6 +201,8 @@ async fn run() -> Result<()> {
         Some(Command::Launcher { action }) => launcher::run(action),
         #[cfg(target_os = "linux")]
         Some(Command::Omarchy { action }) => omarchy::run(action),
+        #[cfg(target_os = "windows")]
+        Some(Command::Windows { action }) => windows::run(action),
         None => update::restart_if_asked(cloofy_tui::run(&paths).await?),
     }
 }
