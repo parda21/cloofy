@@ -23,7 +23,7 @@ use cloofy_core::{
     lyrics::Lyrics,
     paths::Paths,
     player::{CurrentTrack, PlayerEvent},
-    update::{PackageManager, Release},
+    update::{self, PackageManager, Release},
 };
 use cloofy_os::settings::Settings;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -152,6 +152,8 @@ pub enum Update {
         release: Release,
         manager: PackageManager,
     },
+    /// Out, but this system has no prebuilt build to download; the user updates it by building.
+    Unsupported(Release),
     /// Downloading, with the percentage once the size is known.
     Installing {
         release: Release,
@@ -169,6 +171,12 @@ fn managed_update(release: &Release, manager: PackageManager) -> String {
     // Only builds with a service look for updates, and each has its own package.
     let variant = backend::VARIANT.unwrap_or_default();
     format!("cloofy {} is out · {}", release.version(), manager.how_to_update(variant))
+}
+
+/// That `release` is out, where there is no build for this system to download: updating it means
+/// building it here.
+fn unsupported_update(release: &Release) -> String {
+    format!("cloofy {} is out · update by building it here", release.version())
 }
 
 /// Reduced motion and low power as the system has them; all off in tests, whatever the machine.
@@ -934,6 +942,9 @@ impl App {
         }
         let update = match PackageManager::of_running() {
             Some(manager) => Update::Managed { release, manager },
+            // A system without a build to download says how to update, instead of failing when
+            // the button is pressed.
+            None if !update::supported() => Update::Unsupported(release),
             None => Update::Available(release),
         };
         if self.update.as_ref() != Some(&update) {
@@ -947,6 +958,7 @@ impl App {
         match update {
             Update::Available(release) => self.notice(format!("cloofy {} is out · U updates", release.version())),
             Update::Managed { release, manager } => self.notice(managed_update(release, *manager)),
+            Update::Unsupported(release) => self.notice(unsupported_update(release)),
             Update::Installing { .. } | Update::Installed { .. } => {}
         }
     }
@@ -961,6 +973,7 @@ impl App {
                 self.check_for_update(true);
             }
             Some(update @ Update::Managed { .. }) => self.announce(&update),
+            Some(update @ Update::Unsupported(_)) => self.announce(&update),
             Some(Update::Available(release)) => {
                 self.notice(format!("Updating to cloofy {}…", release.version()));
                 self.loader.install_update(release.clone());
@@ -980,6 +993,7 @@ impl App {
             None => Command::Update.label().to_owned(),
             Some(Update::Available(release)) => format!("Update to cloofy {}", release.version()),
             Some(Update::Managed { release, manager }) => managed_update(release, *manager),
+            Some(Update::Unsupported(release)) => unsupported_update(release),
             Some(Update::Installing { .. }) => "Updating cloofy…".to_owned(),
             Some(Update::Installed { release, .. }) => format!("Restart into cloofy {}", release.version()),
         }

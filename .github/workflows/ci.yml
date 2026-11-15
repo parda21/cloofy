@@ -104,6 +104,38 @@ jobs:
           key: ${{ matrix.id }}
       - run: cargo clippy --workspace --all-targets --locked ${{ matrix.features }} -- -D warnings
 
+  # Windows, where mpv's IPC runs over a named pipe instead of a socket pair. aws-lc-rs builds its
+  # assembly with NASM, through CMake; mpv itself plays the player's tests, which skip elsewhere.
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Install NASM
+        run: |
+          choco install nasm --no-progress -y
+          echo "C:\Program Files\NASM" >> "$env:GITHUB_PATH"
+      - name: Install mpv
+        run: |
+          choco install mpv --no-progress -y
+          echo "C:\ProgramData\chocolatey\bin" >> "$env:GITHUB_PATH"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: windows
+      - run: cargo build --locked -p cloofy --no-default-features --features ytmusic
+      - run: cargo build --locked -p cloofy --no-default-features --features spotify
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+        env:
+          CLOOFY_REQUIRE_MPV: 1
+
   # The oldest Rust that builds cloofy from source, as Cargo.toml's rust-version says.
   msrv:
     name: rust-version

@@ -105,7 +105,11 @@ impl Secret {
             Secret::Keychain { name, file } => {
                 // A file wins: it was written by a login, or before the switch to the keychain.
                 if let Some(bytes) = read_file(file)? {
-                    cloofy_os::secrets::set(name, &bytes).context("Saving to the keychain failed")?;
+                    match cloofy_os::secrets::set(name, &bytes) {
+                        // Too long for the keychain: the file is where it stays.
+                        Err(err) if err.kind() == io::ErrorKind::InvalidInput => return Ok(Some(bytes)),
+                        result => result.context("Saving to the keychain failed")?,
+                    }
                     fs::remove_file(file).with_context(|| format!("{} can't be removed", file.display()))?;
                     return Ok(Some(bytes));
                 }
@@ -119,8 +123,15 @@ impl Secret {
             Secret::File(path) => {
                 write_private(path, bytes).with_context(|| format!("{} is not writable", path.display()))
             }
-            Secret::Keychain { name, .. } => {
-                cloofy_os::secrets::set(name, bytes).context("Saving to the keychain failed")
+            Secret::Keychain { name, file } => {
+                match cloofy_os::secrets::set(name, bytes) {
+                    // Credential Manager holds 2560 bytes at most, and YouTube Music's cookies are
+                    // longer: such a secret lives in the file the keychain would have replaced.
+                    Err(err) if err.kind() == io::ErrorKind::InvalidInput => {
+                        write_private(file, bytes).with_context(|| format!("{} is not writable", file.display()))
+                    }
+                    result => result.context("Saving to the keychain failed"),
+                }
             }
         }
     }
@@ -193,6 +204,24 @@ mod tests {
         }
         secret.delete().unwrap();
         assert_eq!(secret.read().unwrap(), None);
+        secret.delete().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Credential Manager holds 2560 bytes at most, and YouTube Music's cookies are longer: such
+    /// a secret stays in a file. Uses no keychain entry, as the store refuses it before writing.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn keeps_a_secret_too_long_for_the_keychain_in_a_file() {
+        let dir = scratch("keychain-too-long");
+        let name: &'static str = format!("test-{}", std::process::id()).leak();
+        let file = dir.join("cookies.txt");
+        let secret = Secret::Keychain { name, file: file.clone() };
+        let cookies = vec![b'x'; 3000];
+        secret.write(&cookies).unwrap();
+        assert_eq!(fs::read(&file).unwrap(), cookies, "it goes straight to the file");
+        assert_eq!(secret.read().unwrap().as_deref(), Some(&cookies[..]), "and reads back");
+        assert!(file.exists(), "reading leaves it there, as it can't move");
         secret.delete().unwrap();
         fs::remove_dir_all(dir).unwrap();
     }

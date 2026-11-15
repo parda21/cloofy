@@ -3,13 +3,13 @@
 //! The IPC runs over one end of a socket pair that mpv inherits (`--input-ipc-client=fd://N`)
 //! instead of a socket file: mpv quits by itself once that connection closes, which happens
 //! when cloofy exits in any way, a crash or `kill -9` included. No mpv is left behind playing.
+//!
+//! Windows has no socket pair to hand over, so there mpv serves its IPC on a named pipe of its
+//! own (`--input-ipc-server`). mpv doesn't quit when that pipe's client goes away, so stopping it
+//! relies on `kill_on_drop` and [`Mpv::quit`]; the pipe disappears with its handle.
 
 use std::{
     collections::HashMap,
-    os::{
-        fd::{AsRawFd, RawFd},
-        unix::net::UnixStream as StdStream,
-    },
     process::Stdio,
     sync::{
         Arc, Mutex,
@@ -21,14 +21,40 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{UnixStream, unix::OwnedWriteHalf},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, Command},
     sync::{mpsc::UnboundedSender, oneshot},
 };
 
+#[cfg(unix)]
+use std::os::{
+    fd::{AsRawFd, RawFd},
+    unix::net::UnixStream as StdStream,
+};
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
+
 /// Waits this long for mpv to answer a command.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long mpv may take to serve the pipe it was told to create. Starting is a few
+/// milliseconds even with a cold disk; waiting longer only delays the complaint about an mpv
+/// that never got there.
+#[cfg(windows)]
+const PIPE_DEADLINE: Duration = Duration::from_secs(2);
+/// Between attempts to open that pipe, for the moment mpv takes to create it.
+#[cfg(windows)]
+const PIPE_RETRY: Duration = Duration::from_millis(10);
+/// Keeps mpv, a console program, from flashing a window of its own.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The read end of mpv's IPC, which [`read`] takes over.
+type ReadEnd = Box<dyn AsyncRead + Send + Unpin>;
+/// The write end, which [`Mpv`] keeps to send commands.
+type WriteEnd = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// Properties observed, by the ID mpv reports them with.
 pub(crate) const TIME_POS: u64 = 1;
@@ -61,7 +87,7 @@ pub(crate) struct Mpv {
     /// Which mpv this is, as its events say.
     pub instance: u64,
     child: Child,
-    writer: OwnedWriteHalf,
+    writer: WriteEnd,
     pending: Pending,
     next_id: u64,
     /// `loadfile` takes options as its fourth argument since mpv 0.38, as its third before.
@@ -71,8 +97,6 @@ pub(crate) struct Mpv {
 impl Mpv {
     pub async fn spawn(args: &[String], events: Events) -> Result<Mpv> {
         let instance = INSTANCES.fetch_add(1, Ordering::Relaxed) + 1;
-        let (ours, theirs) = StdStream::pair().context("Can't create a socket for mpv")?;
-        let fd = theirs.as_raw_fd();
         let mut command = Command::new("mpv");
         command
             .args([
@@ -100,16 +124,12 @@ impl Mpv {
                 "--keep-open=no",
                 "--msg-level=all=error",
             ])
-            .arg(format!("--input-ipc-client=fd://{fd}"))
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        // SAFETY: only async-signal-safe calls between fork and exec.
-        unsafe {
-            command.pre_exec(move || inherit(fd));
-        }
+        let ipc = Ipc::new(&mut command, instance)?;
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -117,7 +137,6 @@ impl Mpv {
             }
             Err(err) => return Err(err).context("Can't start mpv"),
         };
-        drop(theirs);
         // mpv only prints errors; the last one explains a failed start.
         let last_error: Arc<Mutex<Option<String>>> = Arc::default();
         if let Some(stderr) = child.stderr.take() {
@@ -130,18 +149,16 @@ impl Mpv {
                 }
             });
         }
-        ours.set_nonblocking(true)?;
-        let (reader, writer) = UnixStream::from_std(ours)?.into_split();
+        let (reader, writer) = match ipc.connect().await {
+            Ok(pair) => pair,
+            Err(err) => return Err(start_error(&mut child, &last_error, err).await),
+        };
         let pending: Pending = Arc::default();
         tokio::spawn(read(reader, pending.clone(), instance, events));
         let mut mpv = Mpv { instance, child, writer, pending, next_id: 0, legacy_loadfile: false };
         let version = match mpv.get("mpv-version").await {
             Ok(version) => version,
-            Err(err) => {
-                let _ = tokio::time::timeout(Duration::from_secs(1), mpv.child.wait()).await;
-                let reason = last_error.lock().unwrap().take();
-                return Err(err.context(reason.unwrap_or_else(|| "mpv didn't start".into())));
-            }
+            Err(err) => return Err(start_error(&mut mpv.child, &last_error, err).await),
         };
         mpv.legacy_loadfile = version.as_str().is_some_and(older_than_0_38);
         for (id, name) in [(TIME_POS, "time-pos"), (PAUSE, "pause"), (DURATION, "duration")] {
@@ -203,6 +220,81 @@ impl Mpv {
     }
 }
 
+/// Why mpv failed to start, with the last line it printed before it did.
+async fn start_error(child: &mut Child, last_error: &Mutex<Option<String>>, err: anyhow::Error) -> anyhow::Error {
+    let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+    let reason = last_error.lock().unwrap().take();
+    err.context(reason.unwrap_or_else(|| "mpv didn't start".into()))
+}
+
+/// mpv's end of the IPC, which differs by platform: a socket pair cloofy passes as a descriptor,
+/// or a named pipe mpv creates once it runs.
+#[cfg(unix)]
+struct Ipc {
+    ours: StdStream,
+    /// Never read here, just held open until mpv has inherited it; then dropped, so cloofy keeps
+    /// no copy of mpv's end and a gone mpv reads as end of file.
+    theirs: StdStream,
+}
+
+#[cfg(unix)]
+impl Ipc {
+    fn new(command: &mut Command, _instance: u64) -> Result<Self> {
+        let (ours, theirs) = StdStream::pair().context("Can't create a socket for mpv")?;
+        let fd = theirs.as_raw_fd();
+        command.arg(format!("--input-ipc-client=fd://{fd}"));
+        // SAFETY: only async-signal-safe calls between fork and exec.
+        unsafe {
+            command.pre_exec(move || inherit(fd));
+        }
+        Ok(Self { ours, theirs })
+    }
+
+    async fn connect(self) -> Result<(ReadEnd, WriteEnd)> {
+        drop(self.theirs);
+        self.ours.set_nonblocking(true)?;
+        let (reader, writer) = UnixStream::from_std(self.ours)?.into_split();
+        Ok((Box::new(reader), Box::new(writer)))
+    }
+}
+
+/// The pipe mpv serves its IPC on. The process ID keeps cloofy's own mpvs apart, the instance
+/// every mpv of this process, so two cloofys or two restarts never meet on one pipe.
+#[cfg(windows)]
+fn pipe_name(instance: u64) -> String {
+    format!(r"\\.\pipe\cloofy-{}-{instance}", std::process::id())
+}
+
+#[cfg(windows)]
+struct Ipc(String);
+
+#[cfg(windows)]
+impl Ipc {
+    fn new(command: &mut Command, instance: u64) -> Result<Self> {
+        let name = pipe_name(instance);
+        command.arg(format!("--input-ipc-server={name}")).creation_flags(CREATE_NO_WINDOW);
+        Ok(Self(name))
+    }
+
+    /// Opens the pipe mpv creates. It exists only a few milliseconds after mpv starts, so the
+    /// first attempt is expected to find nothing.
+    async fn connect(self) -> Result<(ReadEnd, WriteEnd)> {
+        let deadline = tokio::time::Instant::now() + PIPE_DEADLINE;
+        loop {
+            match ClientOptions::new().open(&self.0) {
+                Ok(stream) => {
+                    let (reader, writer) = tokio::io::split(stream);
+                    return Ok((Box::new(reader), Box::new(writer)));
+                }
+                Err(err) if tokio::time::Instant::now() >= deadline => {
+                    return Err(err).context("Can't connect to mpv's pipe");
+                }
+                Err(_) => tokio::time::sleep(PIPE_RETRY).await,
+            }
+        }
+    }
+}
+
 /// The options of a `loadfile`: where to start, and the title mixers and the window show. mpv
 /// takes `%<bytes>%` before a value as its quoting, so a title may have commas and `=`.
 fn load_options(start: Option<f64>, title: &str) -> String {
@@ -214,6 +306,7 @@ fn load_options(start: Option<f64>, title: &str) -> String {
 }
 
 /// Runs in the child before mpv starts: keeps mpv's end of the socket open across exec.
+#[cfg(unix)]
 fn inherit(fd: RawFd) -> std::io::Result<()> {
     // SAFETY: fcntl on a descriptor this process owns.
     if unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } == -1 {
@@ -222,7 +315,7 @@ fn inherit(fd: RawFd) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn read(reader: tokio::net::unix::OwnedReadHalf, pending: Pending, instance: u64, events: Events) {
+async fn read(reader: impl AsyncRead + Unpin + Send + 'static, pending: Pending, instance: u64, events: Events) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
@@ -307,5 +400,15 @@ mod tests {
         let event = json!({ "event": "property-change", "id": 1, "name": "time-pos", "data": 1.5 });
         assert_eq!(parse_event(&event), Some(MpvEvent::Property { id: 1, data: json!(1.5) }));
         assert_eq!(parse_event(&json!({ "event": "audio-reconfig" })), None);
+    }
+
+    /// Two mpvs must not meet on one pipe, nor must two cloofys.
+    #[test]
+    #[cfg(windows)]
+    fn names_a_pipe_of_its_own() {
+        let first = pipe_name(1);
+        assert!(first.starts_with(r"\\.\pipe\cloofy-"), "{first}");
+        assert!(first.contains(&std::process::id().to_string()), "{first}");
+        assert_ne!(pipe_name(1), pipe_name(2));
     }
 }

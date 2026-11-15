@@ -6,11 +6,29 @@ use std::time::Duration;
 
 use crossterm::event::KeyCode::{self, Char, Down, Enter, Esc};
 
+use crate::app::AppEvent;
 use crate::harness::Harness;
+use crate::loader::DataEvent;
 
 mod playback;
 
 const DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// Windows has no build of a new release to download, so the top bar says what's out, and
+/// <kbd>U</kbd> says how to update without asking GitHub again.
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn an_update_says_to_build_it_here() {
+    let mut h = Harness::demo().await;
+    let release = cloofy_core::update::Release { tag: "v99.0.0".into() };
+    h.app.on_event(AppEvent::Data(DataEvent::UpdateAvailable(release)));
+    h.settle().await;
+    let said = "cloofy 99.0.0 is out · update by building it here";
+    assert!(h.shows(said), "{}", h.screen());
+    h.press(Char('U')).await;
+    assert!(h.shows(said), "{}", h.screen());
+    assert!(!h.shows("Looking for updates"), "pressing U doesn't ask again");
+}
 
 #[tokio::test]
 async fn starts_at_home() {

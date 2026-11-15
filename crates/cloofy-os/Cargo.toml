@@ -37,6 +37,22 @@ tokio.workspace = true
 url.workspace = true
 zbus.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "Media",
+    "Media_Playback",
+    "Storage_Streams",
+    "UI_Notifications",
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_System_Power",
+    "Win32_System_WinRT",
+    "Win32_UI_WindowsAndMessaging",
+] }
+windows-future.workspace = true
+
 [[test]]
 name = "run_main"
 harness = false

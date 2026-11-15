@@ -63,7 +63,7 @@ impl Config {
         match self.credentials.as_deref() {
             None | Some("files") => Ok(false),
             Some("keychain") if cloofy_os::secrets::available() => Ok(true),
-            Some("keychain") => bail!("credentials = \"keychain\" works on macOS only for now"),
+            Some("keychain") => bail!("credentials = \"keychain\" works on macOS and Windows only for now"),
             Some(other) => bail!("credentials = \"{other}\" is unknown: use \"keychain\" or \"files\""),
         }
     }
@@ -140,7 +140,10 @@ mod tests {
     fn keeps_sign_ins_in_files_unless_asked() {
         assert!(!credentials(None).keychain().unwrap());
         assert!(!credentials(Some("files")).keychain().unwrap());
-        assert_eq!(credentials(Some("keychain")).keychain().is_ok(), cfg!(target_os = "macos"));
+        assert_eq!(
+            credentials(Some("keychain")).keychain().is_ok(),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
         assert!(credentials(Some("vault")).keychain().is_err());
     }
 

@@ -135,6 +135,22 @@ YouTube Music needs no headers to build, and [mpv](https://mpv.io), [yt-dlp](htt
 
 </details>
 
+### Windows
+
+Windows builds from source: Rust 1.90 or newer, plus CMake and NASM for Spotify's audio.
+
+```powershell
+cargo build --release --no-default-features --features ytmusic   # or --features spotify, or both
+```
+
+`packaging/windows/install.ps1` builds it, copies it to `%LOCALAPPDATA%\cloofy\bin` and puts cloofy in the Start Menu, which is what lets Windows show its notifications; `-AddToPath` puts that folder on your `PATH` as well. `uninstall.ps1` takes the folder and that one entry out again, and `cloofy windows remove` only the Start Menu shortcut. `cloofy windows status` shows whether it is there.
+
+YouTube Music needs [mpv](https://mpv.io), [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [deno](https://deno.com) on `PATH`; [scoop](https://scoop.sh) has all three.
+
+Covers are block art unless your terminal does Sixel: Windows Terminal 1.22 or newer does, and `images = "sixel"` in `config.toml` forces it.
+
+Three things differ on Windows. Releases have no Windows build yet, so the update button says **update by building it here** instead of downloading. `cloofy login ytmusic` lists the browsers that have a profile instead of guessing the default one, which cloofy doesn't read from the registry. And plugging in headphones or switching the default output doesn't pause playback. `packaging/windows/README.md` lists what to check by hand.
+
 ## Setup
 
 Set up the services you installed; the installer does it with you. With both, `cloofy login` signs in to each in turn, and asks before YouTube Music, which plays without an account.
@@ -269,10 +285,10 @@ On [Omarchy](https://omarchy.org), cloofy takes its colors from the theme and fo
 | Ghostty, kitty, WezTerm | Real images | Built in | Yes |
 | iTerm2 | Real images | With a Nerd Font | Yes |
 | foot, Konsole, VS Code, xterm, mlterm | Real images | With a Nerd Font | On Linux |
-| Windows Terminal | Real images | With a Nerd Font | No |
+| Windows Terminal | Real images | With a Nerd Font | Yes |
 | Others | Real images with Sixel, else blocks | With a Nerd Font | On Linux |
 
-Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. On Linux, terminals without notifications of their own get them from the desktop, with the cover, and on Hyprland and Omarchy every terminal does.
+Every terminal needs true color. Without a Nerd Font, pick text icons in Settings. VS Code shows images once `terminal.integrated.enableImages` is on, xterm when started with `-ti 340`, and Windows Terminal from version 1.22. Inside tmux, covers are real images in Ghostty and kitty and blocks elsewhere, because tmux keeps only a few Sixel images at a time. On Linux, terminals without notifications of their own get them from the desktop, with the cover, and on Hyprland and Omarchy every terminal does. On Windows they come from the desktop too, as toasts, which need the Start Menu shortcut `cloofy windows install` makes.
 
 ## FAQ
 
